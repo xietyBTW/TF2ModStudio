@@ -1,0 +1,97 @@
+"""
+Воркер для асинхронного извлечения текстуры из VPK в фоновом потоке
+"""
+
+from typing import List, Optional, Tuple
+
+from src.services.base_worker import StandardWorker
+from src.services.tf2_vpk_extract_service import TF2VPKExtractService
+from src.shared.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+class ExtractTextureWorker(StandardWorker):
+    """
+    Воркер для выполнения извлечения текстуры в фоновом потоке
+
+    Поддерживает два режима:
+      • weapon_key задан, hand_textures=None -> извлечение текстуры оружия
+      • hand_textures задан -> извлечение текстур рук (materials/models/player/...)
+    """
+
+    def __init__(
+        self,
+        textures_vpk_path: str,
+        weapon_key: str,
+        export_folder: str,
+        export_format: str = "PNG",
+        language: str = "en",
+        hand_textures: Optional[List[Tuple[str, str]]] = None,
+        use_explicit_list: bool = False,
+        misc_vpk_path: Optional[str] = None,
+        parent=None,
+    ):
+        """
+        Args:
+            textures_vpk_path:  Путь к tf2_textures_dir.vpk
+            weapon_key:         Ключ оружия (например, c_scattergun) - используется
+                                только при hand_textures=None
+            export_folder:      Папка для экспорта
+            export_format:      Формат экспорта (VTF, PNG, TGA, JPG)
+            language:           Язык для сообщений
+            hand_textures:      Если задан - список (folder, vtf_name) для рук;
+                                тогда weapon_key игнорируется
+            use_explicit_list:  True -> извлекать только явно перечисленные файлы
+                                из hand_textures (не сканировать папки целиком).
+                                Используется при экспорте тел персонажей с диалогом.
+            parent:             Родительский объект Qt
+        """
+        super().__init__(parent)
+        self.textures_vpk_path  = textures_vpk_path
+        self.weapon_key         = weapon_key
+        self.export_folder      = export_folder
+        self.export_format      = export_format
+        self.language           = language
+        self.hand_textures      = hand_textures
+        self.use_explicit_list  = use_explicit_list
+        self.misc_vpk_path      = misc_vpk_path
+
+    def work(self) -> Tuple[bool, str]:
+        """Выполняет извлечение текстуры в фоновом потоке"""
+        if self.hand_textures is not None:
+            # Режим рук / тел персонажей
+            success, message, cancelled = TF2VPKExtractService.extract_hand_textures_with_progress(
+                self.textures_vpk_path,
+                self.hand_textures,
+                self.export_folder,
+                self.export_format,
+                language=self.language,
+                progress_callback=self.progress.emit,
+                cancel_callback=self.isInterruptionRequested,
+                use_explicit_list=self.use_explicit_list,
+                misc_vpk_path=self.misc_vpk_path,
+                arm_model_key=self.weapon_key,
+            )
+        else:
+            # Режим оружия
+            success, message, cancelled = TF2VPKExtractService.extract_texture_with_progress(
+                self.textures_vpk_path,
+                self.weapon_key,
+                self.export_folder,
+                self.export_format,
+                language=self.language,
+                progress_callback=self.progress.emit,
+                cancel_callback=self.isInterruptionRequested,
+            )
+
+        if cancelled:
+            return False, message
+
+        if success:
+            label = self.weapon_key if not self.hand_textures else "hands"
+            logger.info(f"Текстура успешно извлечена [{label}]: {message}")
+        else:
+            logger.error(f"Не удалось извлечь текстуру для {self.weapon_key}: {message}")
+        return success, message
+

@@ -1,0 +1,311 @@
+"""
+Контекст сборки для управления временными путями
+"""
+
+import os
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple
+from src.shared.logging_config import get_logger
+from src.shared.file_utils import ensure_directory_exists, safe_remove, copy_file_safe
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class TextureBuildContext:
+    """
+    Общие параметры рендера VTF-текстур внутри одной сборки
+
+    Бандлит константы, которые иначе пришлось бы прокидывать в кучу
+    вспомогательных функций (vtf-папка, размер, формат, флаги, опции,
+    готовый VTF пользователя). Содержит общий рендер вторичных текстур
+    """
+
+    vtf_output_path: Path
+    size: Tuple[int, int]
+    format_type: str
+    flags: List[str]
+    vtf_options: dict
+    custom_vtf_path: Optional[str] = None
+    #: Можно ли класть рельеф поверх родной нормали материала: у своей
+    #: (заменённой) модели развёртка другая, и родная нормаль легла бы мимо
+    stock_normal_ok: bool = True
+    #: Главная - игровая без вопроса (BuildRequest.main_from_game)
+    main_from_game: bool = False
+    #: Свои настройки карточки поверх общих: имя -> (size, format, flags,
+    #: options), как `_eff` сборки. Нет - у всех материалов общие
+    settings_for: Optional[Callable[[str], tuple]] = None
+    #: VtfJobs стадии текстур: обычные картинки жмутся в фоне
+    jobs: Optional[object] = None
+
+    def image_to_vtf(self, image_path, png_name: str, flags, options) -> None:
+        """Картинка -> VTF в папке мода через временный png_name: в фоне,
+        если стадия его ведёт, иначе сразу"""
+        from src.services.texture_service import TextureService
+        png = self.vtf_output_path / png_name
+        args = (image_path, self.vtf_output_path, png, "", self.size,
+                self.format_type, flags, options)
+        if self.jobs is not None:
+            self.jobs.submit(TextureService.image_to_vtf, *args, key=str(png))
+        else:
+            TextureService.image_to_vtf(*args)
+
+    def wait_vtfs(self) -> None:
+        """Перед чтением уже собранного VTF: фоновое сжатие должно закончиться"""
+        if self.jobs is not None:
+            self.jobs.wait()
+
+    def for_material(self, name: str) -> "TextureBuildContext":
+        """Контекст с настройками карточки `name`: ими собирается её VTF.
+        Доп. материалы (голова тела, «Прочее») тоже со своими"""
+        if not self.settings_for:
+            return self
+        size, fmt, flags, options = self.settings_for(name)
+        if isinstance(size, int):
+            size = (size, size)
+        return replace(self, size=tuple(size), format_type=fmt,
+                       flags=list(flags or []), vtf_options=dict(options or {}))
+
+    def render_user_image_vtf(
+        self, image_path: str, target_vtf_path: Path, png_name: str
+    ) -> Optional[float]:
+        """
+        Рендерит пользовательское изображение во вторичный VTF
+
+        custom VTF -> копия, анимированное изображение -> анимированный VTF
+        (возвращает fps), иначе -> обычный VTF через PNG. Опция normal всегда
+        снимается (вторичные материалы не бывают normal-map)
+
+        Returns:
+            fps анимации или None
+        """
+        from src.services.texture_service import TextureService
+
+        if self.custom_vtf_path:
+            copy_file_safe(image_path, target_vtf_path)
+            return None
+
+        # Делегируем единому рендеру главной текстуры. Вторичные материалы не
+        # бывают normal-map -> снимаем опцию 'normal' (тогда idёт обычная ветка
+        # PNG->VTF, без создания *_normal.vtf)
+        opts = dict(self.vtf_options) if self.vtf_options else {}
+        opts.pop("normal", None)
+        animated_fps, _ = TextureService.render_image_to_vtf(
+            image_path,
+            vtf_output_path=self.vtf_output_path,
+            out_vtf_path=target_vtf_path,
+            temp_png_path=self.vtf_output_path / png_name,
+            normal_base="",
+            size=self.size,
+            format_type=self.format_type,
+            flags=self.flags,
+            vtf_options=opts,
+            jobs=self.jobs,
+        )
+        return animated_fps
+
+
+@dataclass
+class MaterialSlots:
+    """
+    Куда мод пишет материалы и где искать их оригиналы в игре
+
+    Эта шестёрка ходит вместе через всю сборку: у функций, которые пишут
+    материалы, было по 12-21 аргументу, и больше половины - вот эти пути
+    (плюс параметры рендера, для которых уже есть TextureBuildContext).
+    Перечислять их по одному в каждой сигнатуре - верный способ однажды
+    передать не тот путь и заметить это только по фиолетовой модели в игре
+    """
+
+    #: Папка мода, куда кладутся VTF и VMT материалов
+    vtf_output_path: Path
+    #: Готовый VMT главного материала - образец для вторичных
+    vmt_path: Path
+    #: Путь materials/... внутри мода (куда указывает $basetexture)
+    patched_cdmaterials_path: str
+    #: Пути $cdmaterials ОРИГИНАЛЬНОЙ модели - где искать текстуры игры
+    original_cdmaterials_paths: List[str] = field(default_factory=list)
+    tf2_textures_vpk: Optional[str] = None
+    tf2_misc_vpk: Optional[str] = None
+    #: Материалы, чей VTF в моде - копия игрового, а не работа человека
+    #: (ответ «из игры»). «Скопировать главную» у убер/зомби-варианта такую
+    #: пару не копирует: вариант остаётся игровым
+    game_copies: set = field(default_factory=set)
+
+    def vtf(self, name: str) -> Path:
+        """Путь VTF материала внутри мода"""
+        return self.vtf_output_path / f"{name}.vtf"
+
+    def own_vtf(self, name: str) -> Optional[Path]:
+        """VTF материала со своей картинкой человека (не копия игровой) или None"""
+        path = self.vtf(name)
+        return path if path.exists() and name.lower() not in self.game_copies else None
+
+    def vmt(self, name: str) -> Path:
+        """Путь VMT материала внутри мода"""
+        return self.vtf_output_path / f"{name}.vmt"
+
+
+@dataclass
+class BuildContext:
+    """Контекст сборки с временными путями"""
+    
+    build_id: str
+    mode: str
+    weapon_key: str
+    temp_dir: Path
+    # Пользовательские предупреждения о НЕкритичных, но важных проблемах сборки
+    # (текстура/материал не найдены -> в игре будет фиолет). Показываются после
+    # сборки, чтобы пользователь не искал причину «успешного» но битого мода
+    warnings: List[str] = field(default_factory=list)
+
+    def warn(self, message: str) -> None:
+        """Добавляет предупприждение пользователю (без дублей) + лог"""
+        if message not in self.warnings:
+            self.warnings.append(message)
+        logger.warning(f"[BUILD WARN] {message}")
+
+    @property
+    def vpkroot_dir(self) -> Path:
+        """Корень VPK для упаковки"""
+        return self.temp_dir / "vpkroot"
+    
+    @property
+    def extract_dir(self) -> Path:
+        """Директория для извлечения файлов из VPK"""
+        return self.temp_dir / "extract"
+    
+    @property
+    def decompile_dir(self) -> Path:
+        """Директория для декомпилированных файлов"""
+        return self.temp_dir / "decompile"
+    
+    @property
+    def compile_dir(self) -> Path:
+        """Директория для скомпилированных файлов"""
+        return self.temp_dir / "compile_out"
+    
+    @property
+    def logs_dir(self) -> Path:
+        """Директория для логов"""
+        return self.temp_dir / "logs"
+    
+    @property
+    def debug_dir(self) -> Path:
+        """Директория для отладки (если включен режим отладки)"""
+        return self.temp_dir / "debug"
+    
+    @property
+    def debug_stage1_extracted_dir(self) -> Path:
+        """Папка отладки: после извлечения MDL"""
+        return self.debug_dir / "01_extracted"
+    
+    @property
+    def debug_stage2_decompiled_dir(self) -> Path:
+        """Папка отладки: после декомпиляции"""
+        return self.debug_dir / "02_decompiled"
+    
+    @property
+    def debug_stage3_patched_dir(self) -> Path:
+        """Папка отладки: после редактирования (патчинга)"""
+        return self.debug_dir / "03_patched"
+    
+    @property
+    def debug_stage4_compiled_dir(self) -> Path:
+        """Папка отладки: после компиляции"""
+        return self.debug_dir / "04_compiled"
+    
+    def create_directories(self, debug_mode: bool = False) -> None:
+        """
+        Создает все необходимые директории
+        
+        Args:
+            debug_mode: Включен ли режим отладки
+        """
+        ensure_directory_exists(self.vpkroot_dir)
+        ensure_directory_exists(self.extract_dir)
+        ensure_directory_exists(self.decompile_dir)
+        ensure_directory_exists(self.compile_dir)
+        ensure_directory_exists(self.logs_dir)
+        
+        if debug_mode:
+            ensure_directory_exists(self.debug_dir)
+            ensure_directory_exists(self.debug_stage1_extracted_dir)
+            ensure_directory_exists(self.debug_stage2_decompiled_dir)
+            ensure_directory_exists(self.debug_stage3_patched_dir)
+            ensure_directory_exists(self.debug_stage4_compiled_dir)
+        
+        logger.debug(f"Созданы директории для сборки: {self.temp_dir}")
+    
+    def cleanup(self, on_error: bool = False, keep_on_error: bool = False, debug_mode: bool = False) -> None:
+        """
+        Удаляет временную папку
+        
+        Args:
+            on_error: True если очистка происходит после ошибки
+            keep_on_error: True если нужно сохранить файлы при ошибке
+            debug_mode: True если включен режим отладки (сохраняет файлы даже при успехе)
+        """
+        if debug_mode:
+            # В режиме отладки всегда сохраняем файлы
+            logger.debug(f"Режим отладки: временные файлы сохранены в {self.temp_dir}")
+            return
+        
+        if on_error and keep_on_error:
+            # Сохраняем при ошибке если включено
+            logger.warning(f"Ошибка сборки: временные файлы сохранены в {self.temp_dir}")
+            return
+        
+        # Удаляем временную папку
+        if self.temp_dir.exists():
+            if safe_remove(self.temp_dir, is_dir=True):
+                logger.debug(f"Временная папка удалена: {self.temp_dir}")
+            else:
+                logger.warning(f"Не удалось удалить временную папку: {self.temp_dir}")
+    
+    @staticmethod
+    def create(
+        mode: str,
+        weapon_key: str,
+        base_temp_dir: Optional[Path] = None,
+        debug_mode: bool = False
+    ) -> 'BuildContext':
+        """
+        Создает новый контекст сборки
+        
+        Args:
+            mode: Режим оружия
+            weapon_key: Ключ оружия
+            base_temp_dir: Базовая директория для временных файлов (если None, используется из констант)
+            debug_mode: Включен ли режим отладки
+            
+        Returns:
+            BuildContext: Новый контекст сборки
+        """
+        # Папка сборки - прямо в системном %TEMP% и с коротким именем: внутри
+        # неё лежат пути вида vpkroot\materials\vgui\replay\thumbnails\models\
+        # workshop\…, а vpk.exe и studiomdl не умеют путей длиннее 260
+        # символов, а у шапок длинные пути и так на грани. Префикс
+        # `tf2sg_` - уборка %TEMP% при старте снимает брошенные папки сама
+        # (file_utils.cleanup_stale_temp_artifacts), каждую по своему возрасту
+        if base_temp_dir is None:
+            import tempfile
+            base_temp_dir = Path(tempfile.gettempdir())
+
+        # Случайный суффикс исключает коллизию двух сборок разом, режим - в лог
+        build_id = f"tf2sg_b_{os.urandom(3).hex()}"
+        temp_dir = base_temp_dir / build_id
+        
+        ctx = BuildContext(
+            build_id=build_id,
+            mode=mode,
+            weapon_key=weapon_key,
+            temp_dir=temp_dir
+        )
+        
+        ctx.create_directories(debug_mode=debug_mode)
+        logger.info(f"Создан контекст сборки: {build_id} для режима {mode}")
+        
+        return ctx
+

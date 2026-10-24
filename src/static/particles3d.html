@@ -1,0 +1,1833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Particle Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1a1a1a;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  #canvas-container { width: 100%; height: 100%; }
+
+  /* Статус (idle / loading / error) - как в viewer3d */
+  #status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #status-spinner {
+    width: 26px; height: 26px;
+    border: 2px solid #3a3a3a;
+    border-top-color: #8a867f;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+    display: none;
+    flex-shrink: 0;
+  }
+
+  #status-icon { font-size: 32px; color: #8a867f; opacity: 0.5; line-height: 1; }
+
+  /* Фон тёмный в обеих темах: огонь и свечение на светлом теряются. Зато
+     подписи не тонут в нём, как прежние #454545 */
+  #status-text {
+    color: #8a867f;
+    font-size: 12px;
+    letter-spacing: 0.045em;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.55;
+  }
+
+  #status.loading #status-spinner { display: block; }
+  #status.loading #status-icon    { display: none; }
+  #status.loading #status-text    { color: #8a867f; }
+  #status.error   #status-icon    { opacity: 0.3; }
+  #status.error   #status-text    { color: #a05050; }
+  #status.hidden  { display: none; }
+
+  /* Счётчик частиц */
+  #stats {
+    position: absolute;
+    left: 10px; bottom: 8px;
+    color: #7a766f;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    user-select: none;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+<div id="status">
+  <div id="status-spinner"></div>
+  <div id="status-icon">&#10038;</div>
+  <div id="status-text"></div>
+</div>
+<div id="stats"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":          "./js/three.module.js",
+    "three/addons/":  "./js/addons/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
+import { ParticleSystemInstance, implementedModules } from './js/particles/engine.js';
+import { modAttr, moduleFn, findModule, findOrigin, ORIGIN_OFFSET, toWorld, toLocal, effectScope,
+         originScope, effectNames, shiftLive } from './js/particles/gizmo_scope.js';
+
+// i18n
+
+const I18N = {
+  en: {
+    prompt: 'Select a particle system on the left to preview it',
+    error_load: 'Failed to load effect',
+  },
+  ru: {
+    prompt: 'Выберите систему частиц слева, чтобы увидеть превью',
+    error_load: 'Не удалось загрузить эффект',
+  },
+};
+let lang = 'en';
+window.setLanguage = (l) => {
+  lang = I18N[l] ? l : 'en';
+  // Подсказка «выберите систему» уже в кадре: язык приходит после старта, и
+  // без перерисовки она осталась бы на прежнем
+  if (statusEl && statusEl.className === '' && statusTxt.textContent) {
+    statusTxt.textContent = I18N[lang].prompt;
+  }
+};
+
+// Статус
+
+const statusEl  = document.getElementById('status');
+const statusTxt = document.getElementById('status-text');
+const statsEl   = document.getElementById('stats');
+
+function setStatus(mode, text) {
+  statusEl.className = mode;
+  statusTxt.textContent = text || '';
+}
+window.showPrompt  = (t) => setStatus('', t || I18N[lang].prompt);
+window.showLoading = (t) => setStatus('loading', t || '');
+window.showError   = (t) => setStatus('error', t || I18N[lang].error_load);
+
+// Сцена
+
+const container = document.getElementById('canvas-container');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x1a1a1a);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+// Source: Z вверх, единицы - юниты Хаммера
+const camera = new THREE.PerspectiveCamera(
+  60, window.innerWidth / window.innerHeight, 1, 20000);
+camera.up.set(0, 0, 1);
+camera.position.set(110, -190, 80);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 40);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+// Без предела колесо уводило камеру на миллионы юнитов - за дальнюю
+// плоскость (20000), и сцена просто исчезала. Самые большие эффекты (небо,
+// эмбиент карты) - несколько тысяч юнитов, им хватает
+controls.maxDistance = 8000;
+controls.update();
+controls.saveState();   // «дом» камеры для returnIfLost
+
+//: Дальше этого считаем, что человек улетел: центр обзора ушёл за край
+//: сетки (она 512 юнитов) или камера отъехала так, что эффект - точка
+const LOST_TARGET = 400;
+const LOST_DISTANCE = 2000;
+
+/** Вернуть камеру домой, если её увели далеко. Ближний ракурс не трогаем:
+ *  его выбирали нарочно, чтобы сравнить эффекты с одной точки */
+function returnIfLost() {
+  const far = controls.target.distanceTo(controls.target0) > LOST_TARGET
+    || camera.position.distanceTo(controls.target) > LOST_DISTANCE;
+  if (far) controls.reset();
+}
+
+const grid = new THREE.GridHelper(512, 16, 0x333333, 0x262626);
+grid.rotation.x = Math.PI / 2;   // XZ -> XY (пол Source)
+scene.add(grid);
+
+const axes = new THREE.AxesHelper(24);
+scene.add(axes);
+
+// Модель под эффектом
+// Спрайты рисуются своим шейдером и на свет не реагируют - эти источники
+// нужны только мешу модели, чтобы форма читалась без текстуры
+scene.add(new THREE.HemisphereLight(0xbfc6cf, 0x202024, 2.0));
+const modelSun = new THREE.DirectionalLight(0xffffff, 1.2);
+modelSun.position.set(60, -120, 140);
+scene.add(modelSun);
+
+let modelObject = null;
+let modelVisible = false;
+
+function disposeModel() {
+  if (modelObject === null) return;
+  scene.remove(modelObject);
+  const seen = new Set();
+  modelObject.traverse(child => {
+    if (!child.isMesh) return;
+    child.geometry.dispose();
+    const mat = child.material;
+    // Материал общий на несколько мешей - освобождаем один раз, вместе с картой
+    if (mat && !seen.has(mat)) {
+      seen.add(mat);
+      if (mat.map) mat.map.dispose();
+      if (mat.dispose) mat.dispose();
+    }
+  });
+  modelObject = null;
+}
+
+/**
+ * Меш модели в сцене: OBJ приходит строкой из smd_to_obj_service с флагом
+ * keep_source_axes, то есть уже в координатах Source - той же системе, в
+ * которой живут контрол-пойнты и частицы. Никаких доворотов здесь быть не
+ * должно, иначе эффект «съедет» с точки крепления
+ *
+ * textures - {имя материала: data URL}; имена приходят из usemtl того же OBJ.
+ * Материал без текстуры остаётся серым: силуэт под эффектом всё равно нужен.
+ */
+// Случайная точка на поверхности показанной модели - для «Position on Model
+// Random»: в игре частица рождается в хитбоксах игрока, здесь - на его же
+// сетке. Треугольники взвешены по площади. «hitbox scale» приближён
+// масштабом точки относительно центра модели (в игре - каждый хитбокс
+// относительно своего центра, точнее без хитбоксов не сделать)
+let modelSampler = null;
+
+function buildModelSampler(obj) {
+  const tris = [], cum = [];
+  let total = 0;
+  const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  obj.updateMatrixWorld(true);
+  obj.traverse(child => {
+    if (!child.isMesh) return;
+    const pos = child.geometry.getAttribute('position');
+    const idx = child.geometry.getIndex();
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i + 2 < n; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        const vi = idx ? idx.getX(i + k) : i + k;
+        v[k].fromBufferAttribute(pos, vi).applyMatrix4(child.matrixWorld);
+      }
+      const area = new THREE.Triangle(v[0], v[1], v[2]).getArea();
+      if (!(area > 0)) continue;
+      tris.push([v[0].clone(), v[1].clone(), v[2].clone()]);
+      total += area;
+      cum.push(total);
+    }
+  });
+  if (!tris.length) return null;
+  const box = new THREE.Box3().setFromObject(obj);
+  const center = box.getCenter(new THREE.Vector3());
+  return { tris, cum, total, center };
+}
+
+function sampleModel(out, scale) {
+  const m = modelSampler;
+  if (!m) return false;
+  const r = Math.random() * m.total;
+  let lo = 0, hi = m.cum.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (m.cum[mid] < r) lo = mid + 1; else hi = mid; }
+  const [a, b, c] = m.tris[lo];
+  let u = Math.random(), w = Math.random();
+  if (u + w > 1) { u = 1 - u; w = 1 - w; }
+  const s = scale || 1;
+  for (let i = 0; i < 3; i++) {
+    const k = 'xyz'[i];
+    const p = a[k] + (b[k] - a[k]) * u + (c[k] - a[k]) * w;
+    out[i] = m.center[k] + (p - m.center[k]) * s;
+  }
+  return true;
+}
+
+window.loadModelObj = function(objText, textures) {
+  try {
+    disposeModel();
+    modelSampler = null;
+    if (!objText) return;
+    const obj = new OBJLoader().parse(objText);
+    const maps = textures || {};
+    const loader = new THREE.TextureLoader();
+    const byName = {};
+    const plain = new THREE.MeshLambertMaterial({
+      color: 0x9aa0a8, side: THREE.DoubleSide,
+    });
+    const materialFor = (name) => {
+      const url = maps[name];
+      if (!url) return plain;
+      if (!byName[name]) {
+        const map = loader.load(url);
+        map.colorSpace = THREE.SRGBColorSpace;
+        byName[name] = new THREE.MeshLambertMaterial({
+          map: map, side: THREE.DoubleSide,
+        });
+      }
+      return byName[name];
+    };
+    obj.traverse(child => {
+      if (!child.isMesh) return;
+      const name = child.material && child.material.name;
+      child.material = materialFor(name);
+    });
+    obj.visible = modelVisible;
+    // Модель непрозрачна и пишет глубину: частицы за ней корректно скрываются
+    obj.renderOrder = 0;
+    scene.add(obj);
+    modelObject = obj;
+    modelSampler = buildModelSampler(obj);
+  } catch (e) {
+    console.log('loadModelObj error:', e);
+  }
+};
+
+window.setModelVisible = function(v) {
+  modelVisible = !!v;
+  if (modelObject !== null) modelObject.visible = modelVisible;
+};
+
+window.clearModel = function() {
+  disposeModel();
+};
+
+/** Состояние меша модели - для автопроверки загрузки (см. particleDebugState) */
+window.particleDebugModel = function() {
+  if (modelObject === null) return { loaded: false, visible: modelVisible };
+  let meshes = 0, textured = 0;
+  modelObject.traverse(child => {
+    if (!child.isMesh) return;
+    meshes++;
+    if (child.material && child.material.map) textured++;
+  });
+  const box = new THREE.Box3().setFromObject(modelObject);
+  return {
+    loaded: true,
+    visible: modelObject.visible,
+    meshes: meshes,
+    textured: textured,
+    min: [box.min.x, box.min.y, box.min.z],
+    max: [box.max.x, box.max.y, box.max.z],
+  };
+};
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Инстансный рендер спрайтов
+
+const VERT = `
+  attribute vec3 iPos;
+  attribute float iRadius;
+  attribute float iRot;
+  attribute vec3 iColor;
+  attribute float iAlpha;
+  attribute vec4 iUV0;
+  attribute vec4 iUV1;
+  attribute float iBlend;
+  attribute float iOrient;
+  attribute vec3 iRight;
+  attribute vec3 iUp;
+  varying vec2 vUv0;
+  varying vec2 vUv1;
+  varying float vBlend;
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec2 vLocal;
+  void main() {
+    vec2 corner = position.xy;
+    float c = cos(iRot), s = sin(iRot);
+    vec2 rc = vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
+    vec4 pos;
+    if (iOrient > 1.5) {
+      // orientation_type 2/3: спрайт лежит в плоскости осей iRight/iUp. Без
+      // «orientation control point» это XY-плоскость мира,
+      // с ним - базис контрол-пойнта
+      pos = modelViewMatrix * vec4(iPos + (iRight * rc.x + iUp * rc.y) * iRadius, 1.0);
+    } else if (iOrient > 0.5) {
+      // orientation_type 1: билборд, зафиксированный по мировой вертикали -
+      // разворачивается к камере только вокруг Z
+      vec3 up = vec3(0.0, 0.0, 1.0);
+      vec3 c = cross(up, cameraPosition - iPos);
+      vec3 right = length(c) < 1e-5 ? vec3(1.0, 0.0, 0.0) : normalize(c);
+      pos = modelViewMatrix * vec4(iPos + (right * rc.x + up * rc.y) * iRadius, 1.0);
+    } else {
+      pos = modelViewMatrix * vec4(iPos, 1.0);
+      pos.xy += rc * iRadius;
+    }
+    gl_Position = projectionMatrix * pos;
+    vUv0 = uv * iUV0.xy + iUV0.zw;
+    vUv1 = uv * iUV1.xy + iUV1.zw;
+    vBlend = iBlend;
+    vColor = iColor;
+    vAlpha = iAlpha;
+    vLocal = uv;
+  }
+`;
+
+const FRAG = `
+  uniform sampler2D uTex;
+  uniform float uHasTex;
+  uniform float uSoft;
+  uniform float uMod2x;
+  varying vec2 vUv0;
+  varying vec2 vUv1;
+  varying float vBlend;
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec2 vLocal;
+  void main() {
+    vec4 t = vec4(1.0);
+    if (uHasTex > 0.5) {
+      vec4 t0 = texture2D(uTex, vUv0);
+      vec4 t1 = texture2D(uTex, vUv1);
+      t = mix(t0, t1, vBlend);
+    } else if (uSoft > 0.5) {
+      // Нет текстуры (refract-материал и т.п.) - мягкий круг вместо квада
+      float d = length(vLocal * 2.0 - 1.0);
+      t.a = smoothstep(1.0, 0.45, d);
+    }
+    if (uMod2x > 0.5) {
+      // $mod2x: фон × цвет × 2 (бленд DstColor/SrcColor), прозрачность
+      // ведёт к нейтральному серому, а не к чёрному
+      gl_FragColor = vec4(mix(vec3(0.5), t.rgb * vColor, t.a * vAlpha), 1.0);
+      return;
+    }
+    gl_FragColor = vec4(t.rgb * vColor, t.a * vAlpha);
+    if (gl_FragColor.a < 0.004) discard;
+  }
+`;
+
+// Лента (render_rope): треугольная полоса через частицы, мягкие края по ширине
+// Текстура ложится вдоль ленты: U поперёк (0..1), V - пройденная длина в
+// проходах текстуры (texel_size × высота текстуры), плюс сдвиг и скролл.
+// Без текстуры - мягкая полоса
+const ROPE_VERT = `
+  attribute vec3 aColor;
+  attribute float aAlpha;
+  attribute float aU;
+  attribute float aV;
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec2 vUv;
+  void main() {
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vColor = aColor;
+    vAlpha = aAlpha;
+    vUv = vec2(aU, aV);
+  }
+`;
+
+const ROPE_FRAG = `
+  uniform sampler2D uTex;
+  uniform float uHasTex;
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec2 vUv;
+  void main() {
+    vec4 t = vec4(1.0);
+    if (uHasTex > 0.5) {
+      t = texture2D(uTex, vUv);
+    } else {
+      float e = 1.0 - abs(vUv.x * 2.0 - 1.0);
+      t.a = smoothstep(0.0, 0.6, e);
+    }
+    gl_FragColor = vec4(t.rgb * vColor, t.a * vAlpha);
+    if (gl_FragColor.a < 0.004) discard;
+  }
+`;
+
+const textureLoader = new THREE.TextureLoader();
+const textureCache = {};   // materialName -> THREE.Texture | null
+
+function getTexture(materialName, materials) {
+  if (materialName in textureCache) return textureCache[materialName];
+  const info = materials[materialName];
+  let tex = null;
+  if (info && info.dataUrl) {
+    // Пока картинка из data-URL декодируется (1024-2048² у workshop-эффектов -
+    // это секунды), three.js привязывает пустой GL-объект, а WebGL читает из
+    // него непрозрачный ЧЁРНЫЙ: спрайт с обычным блендом висел чёрным
+    // квадратом, пока текстура не догрузится. Батчи ждут ready
+    tex = textureLoader.load(info.dataUrl, () => { tex.userData.ready = true; });
+    tex.flipY = false;                       // UV sheet-кадров - top-left, как в Source
+    // colorSpace не задаём: кастомный ShaderMaterial не делает обратного
+    // sRGB-преобразования, декод в линейное пространство затемнил бы текстуры
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+  }
+  textureCache[materialName] = tex;
+  return tex;
+}
+
+/** Мягкий фолбэк вместо квада: материала нет вовсе или это refract без $basetexture */
+function isSoftFallback(materialName) {
+  const info = materialsJson[materialName];
+  if (!info) return true;
+  return !info.dataUrl && info.shader === 'refract';
+}
+
+/** Батч: один материал (текстура+блендинг) -> один инстансный меш */
+class SpriteBatch {
+  constructor(texture, additive, soft, mod2x = false) {
+    this._soft = soft ? 1.0 : 0.0;
+    this._texture = texture;
+    this.capacity = 256;
+    this.geometry = new THREE.InstancedBufferGeometry();
+
+    // Квад ±1; uv: top-left origin (flipY=false)
+    const positions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
+    const uvs       = new Float32Array([ 0,  1,     1,  1,     1, 0,      0, 0]);
+    const index     = [0, 1, 2, 0, 2, 3];
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    this.geometry.setIndex(index);
+    this._allocAttributes();
+
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex:    { value: texture },
+        uHasTex: { value: texture ? 1.0 : 0.0 },
+        uSoft:   { value: this._soft },
+        uMod2x:  { value: mod2x ? 1.0 : 0.0 },
+      },
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.CustomBlending,
+      blendSrc: mod2x ? THREE.DstColorFactor : THREE.SrcAlphaFactor,
+      blendDst: mod2x ? THREE.SrcColorFactor
+              : additive ? THREE.OneFactor : THREE.OneMinusSrcAlphaFactor,
+      // Альфу ХОЛСТА не трогаем. three создаёт контекст с alpha:true и
+      // premultipliedAlpha:true (свой alpha:false - лишь про цвет очистки), и
+      // обычный бленд опускал альфу буфера (0.3² + 0.7 = 0.79): сквозь холст
+      // просвечивал фон страницы - тёмный в приложении. На экране это был
+      // «чёрный ящик» ровно по границам полупрозрачных квадов
+      blendSrcAlpha: THREE.ZeroFactor,
+      blendDstAlpha: THREE.OneFactor,
+      side: THREE.DoubleSide,
+    });
+
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    // ponytail: без пер-частичной сортировки; additive поверх обычных
+    this.mesh.renderOrder = additive ? 2 : 1;
+    scene.add(this.mesh);
+  }
+
+  _allocAttributes() {
+    const n = this.capacity;
+    const mk = (arr, itemSize) => {
+      const a = new THREE.InstancedBufferAttribute(arr, itemSize);
+      a.setUsage(THREE.DynamicDrawUsage);
+      return a;
+    };
+    this.aPos    = mk(new Float32Array(n * 3), 3);
+    this.aRadius = mk(new Float32Array(n), 1);
+    this.aRot    = mk(new Float32Array(n), 1);
+    this.aColor  = mk(new Float32Array(n * 3), 3);
+    this.aAlpha  = mk(new Float32Array(n), 1);
+    this.aUV0    = mk(new Float32Array(n * 4), 4);
+    this.aUV1    = mk(new Float32Array(n * 4), 4);
+    this.aBlend  = mk(new Float32Array(n), 1);
+    this.aOrient = mk(new Float32Array(n), 1);
+    this.aRight  = mk(new Float32Array(n * 3), 3);
+    this.aUp     = mk(new Float32Array(n * 3), 3);
+    const g = this.geometry;
+    g.setAttribute('iPos', this.aPos);
+    g.setAttribute('iRadius', this.aRadius);
+    g.setAttribute('iRot', this.aRot);
+    g.setAttribute('iColor', this.aColor);
+    g.setAttribute('iAlpha', this.aAlpha);
+    g.setAttribute('iUV0', this.aUV0);
+    g.setAttribute('iUV1', this.aUV1);
+    g.setAttribute('iBlend', this.aBlend);
+    g.setAttribute('iOrient', this.aOrient);
+    g.setAttribute('iRight', this.aRight);
+    g.setAttribute('iUp', this.aUp);
+  }
+
+  update(sprites) {
+    if (sprites.length > this.capacity) {
+      while (this.capacity < sprites.length) this.capacity *= 2;
+      this._allocAttributes();
+    }
+    for (let i = 0; i < sprites.length; i++) {
+      const s = sprites[i];
+      this.aPos.array[i * 3]     = s.pos[0];
+      this.aPos.array[i * 3 + 1] = s.pos[1];
+      this.aPos.array[i * 3 + 2] = s.pos[2];
+      this.aRadius.array[i] = s.radius;
+      this.aRot.array[i]    = s.rotation;
+      this.aColor.array[i * 3]     = s.color[0];
+      this.aColor.array[i * 3 + 1] = s.color[1];
+      this.aColor.array[i * 3 + 2] = s.color[2];
+      this.aAlpha.array[i] = s.alpha;
+      for (let j = 0; j < 4; j++) {
+        this.aUV0.array[i * 4 + j] = s.uv0[j];
+        this.aUV1.array[i * 4 + j] = s.uv1[j];
+      }
+      this.aBlend.array[i]  = s.blend;
+      this.aOrient.array[i] = s.orientation;
+      // Оси плоскости приходят только у ориентированных по CP спрайтов;
+      // без них - XY-плоскость мира
+      const right = s.right || SPRITE_PLANE_RIGHT;
+      const up = s.up || SPRITE_PLANE_UP;
+      for (let j = 0; j < 3; j++) {
+        this.aRight.array[i * 3 + j] = right[j];
+        this.aUp.array[i * 3 + j] = up[j];
+      }
+    }
+    for (const a of [this.aPos, this.aRadius, this.aRot, this.aColor,
+                     this.aAlpha, this.aUV0, this.aUV1, this.aBlend, this.aOrient,
+                     this.aRight, this.aUp])
+      a.needsUpdate = true;
+    this.geometry.instanceCount = sprites.length;
+    this.mesh.visible = sprites.length > 0
+      && (!this._texture || Boolean(this._texture.userData.ready));
+  }
+
+  dispose() {
+    scene.remove(this.mesh);
+    this.geometry.dispose();
+    this.material.dispose();
+  }
+}
+
+/** Батч лент (render_rope): полоса, повёрнутая к камере, мягкие края.
+    Геометрия пересобирается каждый кадр - лент единицы, вершин сотни */
+class RopeBatch {
+  constructor(additive, materialName) {
+    this.geometry = new THREE.BufferGeometry();
+    // Своя копия текстуры: спрайтам нужен clamp, ленте - повтор вдоль V.
+    // Копия делит с оригиналом Source, так что грузится вместе с ним
+    const base = getTexture(materialName, materialsJson);
+    this._base = base;
+    let texture = null;
+    if (base) {
+      texture = base.clone();
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.needsUpdate = true;
+    }
+    const info = materialsJson[materialName];
+    this.texHeight = (info && info.height) || 1;
+    this.material = new THREE.ShaderMaterial({
+      uniforms: { uTex: { value: texture }, uHasTex: { value: texture ? 1.0 : 0.0 } },
+      vertexShader: ROPE_VERT,
+      fragmentShader: ROPE_FRAG,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor,
+      blendDst: additive ? THREE.OneFactor : THREE.OneMinusSrcAlphaFactor,
+      blendSrcAlpha: THREE.ZeroFactor,      // альфа холста - см. SpriteBatch
+      blendDstAlpha: THREE.OneFactor,
+      side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = additive ? 2 : 1;
+    scene.add(this.mesh);
+  }
+
+  update(ropes) {
+    const pos = [], col = [], alp = [], us = [], vs = [], idx = [];
+    const cam = camera.position;
+    for (const rope of ropes) {
+      const pts = rope.points;
+      const base = pos.length / 3;
+      // Длина одного прохода текстуры в юнитах; 0 в файле - как умолчание 4
+      const span = ((rope.texel || 4) * this.texHeight) || 1;
+      let v = (rope.offset || 0) + (rope.scroll || 0) * (rope.time || 0);
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const prev = pts[Math.max(0, i - 1)], next = pts[Math.min(pts.length - 1, i + 1)];
+        if (i > 0) v += Math.hypot(p.pos[0] - prev.pos[0], p.pos[1] - prev.pos[1],
+                                   p.pos[2] - prev.pos[2]) / span;
+        vs.push(v, v);
+        // Направление сегмента и вектор «в сторону» лицом к камере
+        let dx = next.pos[0] - prev.pos[0], dy = next.pos[1] - prev.pos[1], dz = next.pos[2] - prev.pos[2];
+        const vx = p.pos[0] - cam.x, vy = p.pos[1] - cam.y, vz = p.pos[2] - cam.z;
+        let sx = dy * vz - dz * vy, sy = dz * vx - dx * vz, sz = dx * vy - dy * vx;
+        const sl = Math.hypot(sx, sy, sz) || 1;
+        const r = p.radius;
+        sx = sx / sl * r; sy = sy / sl * r; sz = sz / sl * r;
+        pos.push(p.pos[0] - sx, p.pos[1] - sy, p.pos[2] - sz,
+                 p.pos[0] + sx, p.pos[1] + sy, p.pos[2] + sz);
+        col.push(p.color[0], p.color[1], p.color[2], p.color[0], p.color[1], p.color[2]);
+        alp.push(p.alpha, p.alpha);
+        us.push(0, 1);
+        if (i > 0) {
+          const a = base + (i - 1) * 2, b = base + i * 2;
+          idx.push(a, a + 1, b, a + 1, b + 1, b);
+        }
+      }
+    }
+    this.geometry.dispose();
+    this.geometry = new THREE.BufferGeometry();
+    this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.geometry.setAttribute('aColor', new THREE.Float32BufferAttribute(col, 3));
+    this.geometry.setAttribute('aAlpha', new THREE.Float32BufferAttribute(alp, 1));
+    this.geometry.setAttribute('aU', new THREE.Float32BufferAttribute(us, 1));
+    this.geometry.setAttribute('aV', new THREE.Float32BufferAttribute(vs, 1));
+    this.geometry.setIndex(idx);
+    this.mesh.geometry = this.geometry;
+    this.mesh.visible = idx.length > 0
+      && (!this._base || Boolean(this._base.userData.ready));
+  }
+
+  dispose() {
+    scene.remove(this.mesh);
+    this.geometry.dispose();
+    this.material.dispose();
+  }
+}
+
+// Гизмо области спавна
+// Показывает, ОТКУДА вылетают частицы: каркас сферы/бокса из инициализаторов
+// позиции выбранной системы. Геометрия строится по тем же атрибутам, что
+// читает симуляция (engine.js INITIALIZERS) - иначе каркас врал бы
+
+const gizmoGroup = new THREE.Group();
+scene.add(gizmoGroup);
+let gizmoEnabled = false;
+
+const GIZMO_OUTER  = 0x4a90d9;  // каркас области спавна
+const GIZMO_HANDLE = 0xe0a33a;  // ручки (resize)
+const GIZMO_MOVE   = 0xf2f2f2;  // ручка перемещения (центр)
+
+const gizmoHandles = [];        // меши-ручки для рейкаста
+let moveGizmoCenter = null;     // центр манипулятора перемещения (THREE.Vector3)
+
+function gizmoMaterial(color, opacity) {
+  return new THREE.LineBasicMaterial({
+    color, transparent: true, opacity, depthWrite: false,
+  });
+}
+
+function disposeGizmo() {
+  gizmoHandles.length = 0;
+  moveGizmoCenter = null;
+  hoveredHandle = null;   // меши сейчас удалим - ссылка станет висячей
+  for (const child of [...gizmoGroup.children]) {
+    gizmoGroup.remove(child);
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) child.material.dispose();
+  }
+}
+
+function addHandleMesh(kind, meta, geom, color, pos, opacity = 0.92) {
+  const mat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, depthTest: false,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.position.set(pos[0], pos[1], pos[2]);
+  mesh.renderOrder = 5;
+  mesh.frustumCulled = false;
+  mesh.userData.handle = { kind, ...meta };
+  mesh.userData.baseColor = color;
+  mesh.userData.baseOpacity = opacity;
+  gizmoGroup.add(mesh);
+  gizmoHandles.push(mesh);
+  return mesh;
+}
+
+//: Ручка под курсором подсвечивается - видно, что её можно тянуть
+let hoveredHandle = null;
+const HOVER_WHITE = new THREE.Color(0xffffff);
+
+function setHoveredHandle(mesh) {
+  if (hoveredHandle === mesh) return;
+  if (hoveredHandle && hoveredHandle.material) {
+    hoveredHandle.material.color.setHex(hoveredHandle.userData.baseColor);
+    hoveredHandle.material.opacity = hoveredHandle.userData.baseOpacity;
+  }
+  hoveredHandle = mesh || null;
+  if (hoveredHandle && hoveredHandle.material) {
+    hoveredHandle.material.color
+      .setHex(hoveredHandle.userData.baseColor).lerp(HOVER_WHITE, 0.45);
+    hoveredHandle.material.opacity =
+      Math.min(1, hoveredHandle.userData.baseOpacity + 0.35);
+  }
+}
+
+function addHandle(kind, meta, pos, size, color) {
+  addHandleMesh(kind, meta, new THREE.SphereGeometry(size, 12, 8), color, pos);
+}
+
+//: Цвета осей - как у AxesHelper: X красная, Y зелёная, Z синяя
+const AXIS_COLORS = [0xd9534f, 0x5cb85c, 0x4a90d9];
+
+/** Геометрия вдоль оси axis (0=X,1=Y,2=Z) из заготовки вдоль +Y */
+function orientAlongAxis(geom, axis) {
+  if (axis === 0) geom.rotateZ(-Math.PI / 2);
+  else if (axis === 2) geom.rotateX(Math.PI / 2);
+  return geom;
+}
+
+/**
+ * Манипулятор перемещения: три оси (движение строго по одной координате),
+ * три квадрата-плоскости (движение в плоскости двух координат) и белая
+ * сфера в центре (свободно, в плоскости камеры).
+ */
+function addMoveGizmo(center, scale, span) {
+  moveGizmoCenter = new THREE.Vector3(center[0], center[1], center[2]);
+  // Оси держим ВНУТРИ области: иначе манипулятор перекрывает ручки граней
+  // и клик по краю попадает в него, а не в грань
+  const L = Math.max(scale * 3.5, span * 0.4);
+  const rod = Math.max(scale * 0.14, L * 0.011);  // толщина стержня
+  const tip = rod * 3.4;                          // радиус наконечника
+
+  for (let axis = 0; axis < 3; axis++) {
+    const color = AXIS_COLORS[axis];
+    const dir = [0, 0, 0]; dir[axis] = 1;
+    const mid = center.map((c, i) => c + dir[i] * L * 0.5);
+    const end = center.map((c, i) => c + dir[i] * L);
+    addHandleMesh('move_axis', { axis },
+      orientAlongAxis(new THREE.CylinderGeometry(rod, rod, L, 8), axis),
+      color, mid);
+    addHandleMesh('move_axis', { axis },
+      orientAlongAxis(new THREE.ConeGeometry(tip, tip * 2.2, 10), axis),
+      color, end);
+
+    // Квадрат в плоскости двух ДРУГИХ осей (нормаль = эта ось)
+    const j = (axis + 1) % 3, k = (axis + 2) % 3;
+    const quadPos = [...center];
+    quadPos[j] += L * 0.45;
+    quadPos[k] += L * 0.45;
+    // PlaneGeometry лежит в XY (нормаль +Z) - доворачиваем до нужной нормали
+    const quad = new THREE.PlaneGeometry(L * 0.26, L * 0.26);
+    if (axis === 0) quad.rotateY(Math.PI / 2);        // нормаль X
+    else if (axis === 1) quad.rotateX(Math.PI / 2);   // нормаль Y
+    addHandleMesh('move_plane', { axis }, quad, color, quadPos, 0.45);
+  }
+  addHandle('move', {}, center, Math.max(rod * 2.2, scale * 0.8), GIZMO_MOVE);
+}
+
+/** Кольцо радиуса r в плоскости: 0=XY, 1=XZ, 2=YZ */
+function ringPoints(r, plane, segments = 48) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = i / segments * Math.PI * 2;
+    const c = Math.cos(a) * r, s = Math.sin(a) * r;
+    if (plane === 0) pts.push(new THREE.Vector3(c, s, 0));
+    else if (plane === 1) pts.push(new THREE.Vector3(c, 0, s));
+    else pts.push(new THREE.Vector3(0, c, s));
+  }
+  return pts;
+}
+
+function addSphereGizmo(center, radius, color, opacity) {
+  if (!(radius > 0)) return;
+  for (let plane = 0; plane < 3; plane++) {
+    const geom = new THREE.BufferGeometry().setFromPoints(ringPoints(radius, plane));
+    const line = new THREE.Line(geom, gizmoMaterial(color, opacity));
+    line.position.set(center[0], center[1], center[2]);
+    line.frustumCulled = false;
+    gizmoGroup.add(line);
+  }
+}
+
+function addBoxGizmo(min, max, color, opacity) {
+  const size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+  if (!size.some(v => Math.abs(v) > 1e-6)) return;
+  const box = new THREE.BoxGeometry(
+    Math.abs(size[0]) || 0.01, Math.abs(size[1]) || 0.01, Math.abs(size[2]) || 0.01);
+  const edges = new THREE.EdgesGeometry(box);
+  box.dispose();
+  const line = new THREE.LineSegments(edges, gizmoMaterial(color, opacity));
+  line.position.set((min[0] + max[0]) / 2, (min[1] + max[1]) / 2,
+                    (min[2] + max[2]) / 2);
+  line.frustumCulled = false;
+  gizmoGroup.add(line);
+}
+
+/** Точка, как её видит живой эффект: часть точек ставят его операторы */
+function cpAt(n) {
+  return rootInstance ? rootInstance.getControlPoint(n)
+                      : controller.controlPoints[n] || [0, 0, 0];
+}
+
+/** Суммарное среднее смещение от Position Modify Offset Random */
+function offsetOf(def) {
+  const out = [0, 0, 0];
+  for (const mod of def.initializers || []) {
+    if (moduleFn(mod) !== 'position modify offset random') continue;
+    let min = modAttr(mod, 'offset min', [0, 0, 0]);
+    let max = modAttr(mod, 'offset max', [0, 0, 0]);
+    if (modAttr(mod, 'offset in local space 0/1', false)) {
+      const basis = rootInstance?.getControlPointBasis(modAttr(mod, 'control_point_number', 0));
+      min = toWorld(basis, min); max = toWorld(basis, max);
+    }
+    for (let i = 0; i < 3; i++) out[i] += (min[i] + max[i]) / 2;
+  }
+  return out;
+}
+
+function rebuildGizmo(def) {
+  disposeGizmo();
+  gizmoGroup.visible = gizmoEnabled;
+  if (!gizmoEnabled || !def) return;
+  const shift = offsetOf(def);
+  let moveCenter = null;   // один манипулятор перемещения на всё гизмо
+  let moveScale = 8;
+  let moveSpan = 40;
+
+  (def.initializers || []).forEach((mod, modIndex) => {
+    const fn = moduleFn(mod);
+    if (fn === 'position within sphere random') {
+      const cp = cpAt(modAttr(mod, 'control_point_number', 0));
+      const center = [cp[0] + shift[0], cp[1] + shift[1], cp[2] + shift[2]];
+      const rMax = modAttr(mod, 'distance_max', 0);
+      addSphereGizmo(center, rMax, GIZMO_OUTER, 0.5);
+      addSphereGizmo(center, modAttr(mod, 'distance_min', 0), GIZMO_OUTER, 0.22);
+      const hs = Math.min(8, Math.max(2.5, rMax * 0.06));
+      // На -X: на +X лежит стрелка перемещения, и при радиусе в её длину
+      // щелчок по стрелке хватал радиус
+      addHandle('sphere_radius', { modIndex, center },
+                [center[0] - rMax, center[1], center[2]], hs, GIZMO_HANDLE);
+      if (moveCenter === null) {
+        moveCenter = center; moveScale = hs; moveSpan = rMax;
+      }
+    } else if (fn === 'position within box random') {
+      const cp = cpAt(modAttr(mod, 'control point number', 0));
+      const min = modAttr(mod, 'min', [0, 0, 0]);
+      const max = modAttr(mod, 'max', [0, 0, 0]);
+      const base = [cp[0] + shift[0], cp[1] + shift[1], cp[2] + shift[2]];
+      const lo = [base[0] + min[0], base[1] + min[1], base[2] + min[2]];
+      const hi = [base[0] + max[0], base[1] + max[1], base[2] + max[2]];
+      addBoxGizmo(lo, hi, GIZMO_OUTER, 0.5);
+      const ctr = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+      const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+      const hs = Math.min(8, Math.max(2.5, span * 0.05));
+      for (let axis = 0; axis < 3; axis++) {
+        const j = (axis + 1) % 3, k = (axis + 2) % 3;
+        // Накладка на грань вместо шара: не загораживает содержимое области
+        const w = Math.max(hs * 1.2, Math.abs(hi[j] - lo[j]) * 0.24);
+        const hgt = Math.max(hs * 1.2, Math.abs(hi[k] - lo[k]) * 0.24);
+        for (const sign of [-1, 1]) {
+          const p = [...ctr];
+          p[axis] = sign > 0 ? hi[axis] : lo[axis];
+          const quad = new THREE.PlaneGeometry(
+            axis === 0 ? hgt : w, axis === 0 ? w : hgt);
+          if (axis === 0) quad.rotateY(Math.PI / 2);
+          else if (axis === 1) quad.rotateX(Math.PI / 2);
+          addHandleMesh('box_face', { modIndex, axis, sign, base },
+                        quad, GIZMO_HANDLE, p, 0.34);
+        }
+      }
+      if (moveCenter === null) {
+        moveCenter = ctr; moveScale = hs; moveSpan = span;
+      }
+    }
+  });
+
+  if (moveCenter !== null) addMoveGizmo(moveCenter, moveScale, moveSpan);
+
+  // Матрицы свежих мешей обновляются только при рендере - рейкаст в том же
+  // тике (драг сразу после пересборки) иначе видит ручки в (0,0,0)
+  gizmoGroup.updateMatrixWorld(true);
+}
+
+// Драг ручек гизмо
+// Мутируем systemsJson НА МЕСТЕ: инициализаторы движка читают атрибуты в
+// момент спавна по ссылке на эти же объекты, так что новые частицы сразу
+// летят по-новому - без пересоздания ParticleSystemInstance (без мигания).
+// Итог отпускания ручки страница пишет в документ (sendGizmoEdits), во время
+// драга Python в превью НИЧЕГО не пушит
+
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const dragPlane = new THREE.Plane();
+const tmpVec = new THREE.Vector3();
+let dragState = null;
+
+function ndcFromEvent(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function viewPlanePoint(p0) {
+  // Точка под курсором на плоскости, параллельной экрану, через p0
+  raycaster.setFromCamera(pointerNdc, camera);
+  dragPlane.setFromNormalAndCoplanarPoint(
+    camera.getWorldDirection(tmpVec).negate(), p0);
+  const out = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(dragPlane, out) ? out : null;
+}
+
+/** Точка под курсором на плоскости с нормалью-осью normalAxis через p0.
+    null - луч почти параллелен плоскости (движение было бы бесконечным) */
+function planePoint(p0, normalAxis) {
+  raycaster.setFromCamera(pointerNdc, camera);
+  const n = new THREE.Vector3(); n.setComponent(normalAxis, 1);
+  if (Math.abs(n.dot(raycaster.ray.direction)) < 0.08) return null;
+  dragPlane.setFromNormalAndCoplanarPoint(n, p0);
+  const out = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(dragPlane, out) ? out : null;
+}
+
+function axisPoint(origin, axisDir) {
+  // Ближайшая к лучу курсора точка на прямой (origin, axisDir)
+  raycaster.setFromCamera(pointerNdc, camera);
+  const r0 = raycaster.ray.origin, rd = raycaster.ray.direction;
+  const w0 = new THREE.Vector3().subVectors(origin, r0);
+  const b = axisDir.dot(rd);
+  const d = axisDir.dot(w0), ee = rd.dot(w0);
+  const denom = 1 - b * b;
+  if (Math.abs(denom) < 1e-6) return null;
+  const t = (b * ee - d) / denom;    // параметр вдоль оси от origin
+  return origin.clone().addScaledVector(axisDir, t);
+}
+
+function r2(x) { return Math.round(x * 100) / 100; }
+
+//: Шаг сетки Хаммера - Shift при перемещении даёт ровные значения
+const SNAP_STEP = 8;
+function snap(x) { return Math.round(x / SNAP_STEP) * SNAP_STEP; }
+
+function setModAttr(mod, name, type, value) {
+  const key = name.toLowerCase();
+  if (mod.attrs[key]) mod.attrs[key].v = value;
+  else mod.attrs[key] = { t: type, v: value };
+}
+
+// Правки во время протяжки живут только здесь, в документ уходит итог,
+// одним шагом истории (window.onGizmoEdit ставит страница)
+function sendGizmoEdits(edits, final) {
+  if (final && typeof window.onGizmoEdit === 'function')
+    window.onGizmoEdit(currentRootName, edits);
+}
+
+//: Что двигает гизмо: 'effect' - корень вместе с дочерними, 'system' - только корень
+let gizmoScope = 'effect';
+window.setGizmoScope = (s) => { gizmoScope = s === 'system' ? 'system' : 'effect'; };
+
+function applyDrag(e, final) {
+  const def = systemsJson[currentRootName];
+  if (!def || !dragState) return;
+  const h = dragState.handle;
+  const edits = [];
+
+  if (h.kind === 'sphere_radius') {
+    const mod = def.initializers[h.modIndex];
+    if (!mod) return;
+    const hit = viewPlanePoint(dragState.centerV);
+    if (!hit) return;
+    // Радиус - от стартового значения на дельту расстояния до центра:
+    // без скачка в момент захвата ручки
+    const dist = hit.distanceTo(dragState.centerV);
+    const r = r2(Math.max(0, dragState.startR + dist - dragState.startDist));
+    setModAttr(mod, 'distance_max', 'float', r);
+    edits.push({ group: 'initializers', index: def.initializers.indexOf(mod), fn: mod.functionName,
+                 attr: 'distance_max', type: 'float', value: r });
+    if (modAttr(mod, 'distance_min', 0) > r) {
+      setModAttr(mod, 'distance_min', 'float', r);
+      edits.push({ group: 'initializers', index: def.initializers.indexOf(mod), fn: mod.functionName,
+                   attr: 'distance_min', type: 'float', value: r });
+    }
+  } else if (h.kind === 'box_face') {
+    const mod = def.initializers[h.modIndex];
+    if (!mod) return;
+    const axisDir = new THREE.Vector3(); axisDir.setComponent(h.axis, 1);
+    const hit = axisPoint(dragState.p0, axisDir);
+    if (!hit) return;
+    const local = r2(hit.getComponent(h.axis) - h.base[h.axis]);
+    const min = [...modAttr(mod, 'min', [0, 0, 0])];
+    const max = [...modAttr(mod, 'max', [0, 0, 0])];
+    if (e && e.shiftKey) {
+      // Shift - симметрично: противоположная грань едет зеркально,
+      // центр области остаётся на месте
+      const c = dragState.faceCenter;
+      const half = Math.abs(local - c);
+      min[h.axis] = r2(c - half);
+      max[h.axis] = r2(c + half);
+    } else if (h.sign > 0) {
+      max[h.axis] = Math.max(local, min[h.axis]);
+    } else {
+      min[h.axis] = Math.min(local, max[h.axis]);
+    }
+    setModAttr(mod, 'min', 'vec3', min);
+    setModAttr(mod, 'max', 'vec3', max);
+    edits.push({ group: 'initializers', index: def.initializers.indexOf(mod), fn: mod.functionName,
+                 attr: 'min', type: 'vec3', value: min });
+    edits.push({ group: 'initializers', index: def.initializers.indexOf(mod), fn: mod.functionName,
+                 attr: 'max', type: 'vec3', value: max });
+  } else if (h.kind === 'move' || h.kind === 'move_axis'
+             || h.kind === 'move_plane') {
+    // Дельта считается от точки ЗАХВАТА - иначе гизмо прыгает под курсор
+    let hit, delta;
+    if (h.kind === 'move_axis') {
+      const dir = new THREE.Vector3(); dir.setComponent(h.axis, 1);
+      hit = axisPoint(dragState.center, dir);
+      if (!hit) return;
+      delta = [0, 0, 0];
+      delta[h.axis] = hit.getComponent(h.axis)
+                    - dragState.startHit.getComponent(h.axis);
+    } else if (h.kind === 'move_plane') {
+      hit = planePoint(dragState.center, h.axis);
+      if (!hit) return;
+      delta = [hit.x - dragState.startHit.x, hit.y - dragState.startHit.y,
+               hit.z - dragState.startHit.z];
+      delta[h.axis] = 0;              // нормаль плоскости не двигаем
+    } else {
+      hit = viewPlanePoint(dragState.center);
+      if (!hit) return;
+      delta = [hit.x - dragState.startHit.x, hit.y - dragState.startHit.y,
+               hit.z - dragState.startHit.z];
+    }
+    // Shift при перемещении - шаг по сетке (ровные значения вместо 22.47).
+    // Округляем ТОЛЬКО оси, по которым реально двигали: иначе снап сдвигал
+    // и неподвижные координаты
+    const snapping = !!(e && e.shiftKey);
+    const step = (v, i) => (snapping && delta[i] !== 0) ? snap(v) : r2(v);
+
+    // Бокс двигаем ИМ САМИМ (min/max), место рождения - через Position
+    // Modify Offset Random, весь эффект - смещением точки «начало эффекта»
+    // (в осях точки 0). Симуляция подхватывает сразу: атрибуты читаются по ссылке
+    const basis = rootInstance?.getControlPointBasis(0);
+    let moved = null;
+    for (const m of dragState.movers) {
+      const mod = systemsJson[m.name]?.[m.group]?.[m.idx];
+      if (!mod) continue;
+      for (const [attr, base] of m.pairs) {
+        const from = m.local ? toWorld(basis, base) : base;
+        const to = from.map((v, i) => step(v + delta[i], i));
+        const value = m.local ? toLocal(basis, to).map(r2) : to;
+        setModAttr(mod, attr, 'vec3', value);
+        edits.push({ system: m.name, group: m.group, index: m.idx,
+                     fn: mod.functionName, attr, type: 'vec3', value });
+        if (!moved) moved = to.map((v, i) => v - from[i]);
+      }
+    }
+    // На столько же, уже со снапом, едут живые частицы
+    if (moved) {
+      shiftLive(rootInstance, dragState.moving,
+                moved.map((v, i) => v - dragState.applied[i]));
+      dragState.applied = moved;
+    }
+  }
+
+  rebuildGizmo(def);
+  if (edits.length) sendGizmoEdits(edits, final);
+}
+
+//: Номер нажатия, для которого документ ставит точку «начало эффекта»; 0 -
+//: не ставит или кнопку уже отпустили. По номеру, а не флагом: отпустили и
+//: нажали снова, пока документ отвечал на первое - первый ответ не должен
+//: начать протяжку второго нажатия
+let preparing = 0;
+let prepareTurn = 0;
+//: Эффекты, которым точку ставить нельзя (считают свои точки): их весь
+//: эффект двигают места рождения, и документ второй раз не спрашиваем
+const noOrigin = new Set();
+
+/**
+ * Начало протяжки ручки перемещения: что двигаем и откуда считаем сдвиг.
+ * null - начать нельзя (курсор не попал в плоскость ручки)
+ */
+function beginMove(state, whole) {
+  const root = currentRootName;
+  let scope;
+  if (whole && findOrigin(systemsJson[root]) >= 0) {
+    scope = originScope(systemsJson, root);
+  } else {
+    const sc = effectScope(systemsJson, root, whole);
+    scope = { movers: [], moving: sc.moving };
+    let restart = false;
+    for (const name of sc.movers) {
+      const d = systemsJson[name];
+      if (!d) continue;
+      d.initializers = d.initializers || [];
+      let idx = findModule(d, 'position within box random');
+      let names = ['min', 'max'];
+      // Своё смещение места рождения, не «Effect origin offset»: то в осях
+      // точки и едет вместе с началом эффекта
+      const ownOffset = () => d.initializers.findIndex((m) =>
+        moduleFn(m) === 'position modify offset random' && m.name !== ORIGIN_OFFSET);
+      if (idx < 0) {
+        if (ownOffset() < 0) {
+          // Модуль обязан существовать ДО начала драга: живой инстанс
+          // фиксирует список инициализаторов при создании, и дописанный
+          // на лету модуль он бы не увидел (каркас ехал бы без частиц)
+          d.initializers.push({
+            functionName: 'Position Modify Offset Random',
+            name: 'Position Modify Offset Random', attrs: {},
+          });
+          restart = true;
+        }
+        idx = ownOffset();
+        names = ['offset min', 'offset max'];
+      }
+      const mod = d.initializers[idx];
+      scope.movers.push({ name, group: 'initializers', idx, local: false,
+                          pairs: names.map((a) => [a, [...modAttr(mod, a, [0, 0, 0])]]) });
+    }
+    if (restart) window.setRootSystem(root);   // единственный перезапуск
+  }
+  state.movers = scope.movers;
+  state.moving = scope.moving;
+  state.applied = [0, 0, 0];
+  // Центр манипулятора = центр области (ручка оси смещена от него)
+  state.center = moveGizmoCenter ? moveGizmoCenter.clone() : state.p0?.clone();
+  if (!state.center) return null;
+  const h = state.handle;
+  let start = null;
+  if (h.kind === 'move_axis') {
+    const dir = new THREE.Vector3(); dir.setComponent(h.axis, 1);
+    start = axisPoint(state.center, dir);
+  } else if (h.kind === 'move_plane') {
+    start = planePoint(state.center, h.axis);
+  } else {
+    start = viewPlanePoint(state.center);
+  }
+  if (!start) return null;
+  state.startHit = start;
+  return state;
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!gizmoEnabled || !currentRootName || e.button !== 0) return;
+  ndcFromEvent(e);
+  raycaster.setFromCamera(pointerNdc, camera);
+  const hit = raycaster.intersectObjects(gizmoHandles, false)[0];
+  if (!hit) return;
+  const h = hit.object.userData.handle;
+  const def = systemsJson[currentRootName];
+  const state = { handle: h, p0: hit.object.position.clone() };
+  if (h.kind === 'move' || h.kind === 'move_axis' || h.kind === 'move_plane') {
+    if (!def) return;
+    // Alt на время меняет режим: «весь эффект» <-> «эта система»
+    const whole = (gizmoScope === 'effect') !== !!e.altKey;
+    // Весь эффект едет точкой «начало эффекта». Её ставит документ, один раз:
+    // эффект пересоберётся, и протяжка начнётся с ручки на новом месте
+    if (preparing) return;
+    if (whole && findOrigin(def) < 0 && !noOrigin.has(currentRootName)
+        && typeof window.onGizmoPrepare === 'function') {
+      const turn = ++prepareTurn;
+      preparing = turn;
+      controls.enabled = false;
+      try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+      const root = currentRootName;
+      window.onGizmoPrepare(root).then((ok) => {
+        const held = preparing === turn;
+        if (held) preparing = 0;
+        if (ok === 'fallback') noOrigin.add(root);
+        // Отпустили раньше ответа: точка уже в документе, и её надо записать
+        // шагом истории, иначе она уйдёт в чужую правку
+        if (ok === true && !held) window.onGizmoEdit?.(root, []);
+        if (!held) return;
+        const st = ok ? beginMove({ handle: h }, true) : null;
+        if (st) dragState = st;
+        else controls.enabled = true;
+      });
+      return;
+    }
+    if (!beginMove(state, whole)) return;
+  } else if (h.kind === 'box_face') {
+    // Центр области по этой оси - опора для симметричного изменения (Shift)
+    const mod = def ? def.initializers[h.modIndex] : null;
+    const lo = mod ? modAttr(mod, 'min', [0, 0, 0]) : [0, 0, 0];
+    const hi = mod ? modAttr(mod, 'max', [0, 0, 0]) : [0, 0, 0];
+    state.faceCenter = (lo[h.axis] + hi[h.axis]) / 2;
+  } else if (h.kind === 'sphere_radius') {
+    const mod = def ? def.initializers[h.modIndex] : null;
+    state.centerV = new THREE.Vector3(h.center[0], h.center[1], h.center[2]);
+    state.startR = mod ? modAttr(mod, 'distance_max', 0) : 0;
+    const hit0 = viewPlanePoint(state.centerV);
+    state.startDist = hit0 ? hit0.distanceTo(state.centerV) : state.startR;
+  }
+  dragState = state;
+  controls.enabled = false;
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
+  renderer.domElement.style.cursor = 'grabbing';
+  e.preventDefault();
+});
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (dragState) {
+    ndcFromEvent(e);
+    applyDrag(e, false);
+    return;
+  }
+  if (!gizmoEnabled || gizmoHandles.length === 0) {
+    setHoveredHandle(null);
+    return;
+  }
+  ndcFromEvent(e);
+  raycaster.setFromCamera(pointerNdc, camera);
+  const hit = raycaster.intersectObjects(gizmoHandles, false)[0];
+  setHoveredHandle(hit ? hit.object : null);
+  renderer.domElement.style.cursor = hit ? 'grab' : '';
+});
+
+function endDrag(e) {
+  // Отпустили, пока документ ставил точку: протяжки не было
+  if (preparing) { preparing = 0; controls.enabled = true; }
+  if (!dragState) return;
+  ndcFromEvent(e);
+  applyDrag(e, true);
+  dragState = null;
+  controls.enabled = true;
+  renderer.domElement.style.cursor = '';
+}
+renderer.domElement.addEventListener('pointerup', endDrag);
+renderer.domElement.addEventListener('pointercancel', endDrag);
+// При захваченном указателе leave не приходит, сработает только если
+// setPointerCapture не удался - чтобы драг не «залип» с выключенной камерой
+renderer.domElement.addEventListener('pointerleave', (e) => {
+  if (dragState) endDrag(e);
+});
+
+window.setGizmoVisible = function(v) {
+  gizmoEnabled = !!v;
+  rebuildGizmo(currentRootName ? systemsJson[currentRootName] : null);
+};
+
+/** Экранные позиции ручек гизмо - для автотестов драга (module-scope
+    недоступен снаружи) */
+window.gizmoHandleScreenPos = function() {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return gizmoHandles.map(m => {
+    const v = m.position.clone().project(camera);
+    const h = m.userData.handle;
+    return { kind: h.kind, axis: h.axis, sign: h.sign,
+             x: rect.left + (v.x + 1) / 2 * rect.width,
+             y: rect.top + (1 - v.y) / 2 * rect.height };
+  });
+};
+
+// Состояние эффекта
+
+let systemsJson = {};
+let materialsJson = {};
+let rootInstance = null;
+let currentRootName = '';
+let batches = {};          // ключ материала -> SpriteBatch
+let ropeBatches = {};      // ключ материала -> RopeBatch
+let paused = false;
+let loop = true;
+let finishedAt = null;
+const controller = { controlPoints: [[0, 0, 0]], controlPointBases: {},
+                     sampleModel };   // точка на показанной модели, см. buildModelSampler
+
+//: Плоскость ориентированных спрайтов, когда «orientation control point» не задан
+const SPRITE_PLANE_RIGHT = [1, 0, 0];
+const SPRITE_PLANE_UP = [0, 1, 0];
+
+function disposeBatches() {
+  for (const b of Object.values(batches)) b.dispose();
+  batches = {};
+  for (const b of Object.values(ropeBatches)) b.dispose();
+  ropeBatches = {};
+}
+
+//: Что движок умеет симулировать: странице этот список нужен прямо из окна
+//: кадра
+window.implementedModules = implementedModules;
+
+// Сочетания клавиш редактора (Ctrl+Z, Ctrl+C…) принадлежат СТРАНИЦЕ, а
+// фокус после щелчка по кадру достаётся этому iframe - и они молча не
+// работали, пока не щёлкнешь мимо. Своей обработки здесь нет: только
+// передача нажатия наверх (так же делает viewer3d -> onPartsKey)
+window.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (typeof window.onEditorKey === 'function') window.onEditorKey(e);
+});
+
+window.loadParticleData = function(dataJson) {
+  try {
+    const data = (typeof dataJson === 'string') ? JSON.parse(dataJson) : dataJson;
+    systemsJson = data.systems || {};
+    materialsJson = data.materials || {};
+    for (const k of Object.keys(textureCache)) {
+      if (textureCache[k]) textureCache[k].dispose();
+      delete textureCache[k];
+    }
+    if (data.rootName) window.setRootSystem(data.rootName);
+    else {
+      rootInstance = null;
+      currentRootName = '';
+      disposeBatches();
+      disposeGizmo();
+      window.showPrompt();
+    }
+  } catch (e) {
+    console.log('loadParticleData error:', e);
+    window.showError(I18N[lang].error_load + ': ' + e.message);
+  }
+};
+
+/** Добавляет текстуры ещё одного эффекта того же файла: файл приходит с
+    текстурами только открытого эффекта, остальные - при выборе. Готовые
+    GPU-текстуры не трогаем, «текстуры нет», запомненное раньше, забываем */
+window.addMaterials = function(more, asked) {
+  for (const [name, info] of Object.entries(more || {})) {
+    if (textureCache[name] === null) delete textureCache[name];
+    if (!materialsJson[name]) materialsJson[name] = info;
+  }
+  // Спрошенные, но не найденные в игре - запоминаем «нет», чтобы страница
+  // не спрашивала их на каждую правку (null движок и так рисует фолбэком)
+  for (const name of asked || []) if (!(name in materialsJson)) materialsJson[name] = null;
+};
+
+/** Материалы эффекта `root` (с дочерними), о которых движок ещё не знает */
+window.missingMaterials = function(root) {
+  const out = new Set();
+  const seen = new Set();
+  const stack = [root || currentRootName];
+  while (stack.length) {
+    const name = stack.pop();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const def = systemsJson[name];
+    if (!def) continue;
+    const mat = def.attrs && def.attrs.material && def.attrs.material.v;
+    if (mat && !(mat in materialsJson)) out.add(mat);
+    for (const child of def.children || []) stack.push(child.childName);
+  }
+  return [...out];
+};
+
+/** Обновление только определений систем (правка атрибутов): материалы и
+    GPU-текстуры переиспользуются - без ремаршалинга PNG и роста VRAM */
+window.updateSystems = function(systemsOnly, rootName, { soft = false } = {}) {
+  try {
+    const next = (typeof systemsOnly === 'string')
+      ? JSON.parse(systemsOnly) : (systemsOnly || {});
+    // Итог перетаскивания гизмо: значения в кадре уже те же, что в документе,
+    // и пересборка только перезапустила бы эффект. Нужна она, лишь когда
+    // документ поменял состав (своя копия общей системы)
+    if (soft && rootName === currentRootName
+        && effectNames(next, rootName) === effectNames(systemsJson, rootName)) return;
+    systemsJson = next;
+    if (rootName) window.setRootSystem(rootName);
+  } catch (e) {
+    console.log('updateSystems error:', e);
+    window.showError(I18N[lang].error_load + ': ' + e.message);
+  }
+};
+
+window.setRootSystem = function(name) {
+  try {
+    const def = systemsJson[name];
+    if (!def) { window.showError(I18N[lang].error_load + ': ' + name); return; }
+    disposeBatches();
+    // Только при СМЕНЕ эффекта: правка атрибута тоже приходит сюда, и
+    // камера не должна прыгать, пока человек крутит ползунок
+    if (name !== currentRootName) returnIfLost();
+    rootInstance = new ParticleSystemInstance(def, systemsJson, materialsJson, controller);
+    currentRootName = name;
+    rebuildGizmo(def);
+    finishedAt = null;
+    setStatus('hidden', '');
+    statsEl.style.display = 'block';
+  } catch (e) {
+    console.log('setRootSystem error:', e);
+    window.showError(I18N[lang].error_load + ': ' + e.message);
+  }
+};
+
+window.restartEffect = function() {
+  if (rootInstance) { rootInstance.reset(); finishedAt = null; }
+};
+
+window.setPaused = function(v) { paused = !!v; };
+// Фон кадра. Полупрозрачные тёмные слои (дымка воды у seamine) на чёрном
+// выглядят чёрным ящиком, а на светлом - как в игре на освещённой карте
+window.setBackground = function(hex) { renderer.setClearColor(hex); };
+window.setLoop = function(v) { loop = !!v; };
+
+//: Базовые (заданные пользователем) значения CP - мотор двигает относительно них
+const cpBase = {};
+//: Пресеты движения CP: i -> {kind, amp, period}
+const cpMotion = {};
+//: Время, накопленное для пресетов (на паузе стоит)
+let cpMotionTime = 0;
+
+function cpBaseOf(i) {
+  return cpBase[i] || (cpBase[i] = { pos: [0, 0, 0], angles: [0, 0, 0], hasAngles: false });
+}
+
+window.setControlPoint = function(i, x, y, z) {
+  cpBaseOf(i).pos = [x, y, z];
+  controller.controlPoints[i] = [x, y, z];
+};
+
+/**
+ * Ориентация контрол-пойнта из углов Source (pitch, yaw, roll в градусах) -
+ * порт AngleVectors из mathlib. От неё зависят локальные системы координат
+ * инициализаторов и плоскость спрайтов при orientation_type 2/3.
+ * Тот же формат углов пишет Crowbar в «$attachment ... rotate P Y R», поэтому
+ * привязка к attachment модели ляжет сюда без пересчётов
+ *
+ * Нули здесь дают Forward=(1,0,0), Right=(0,-1,0), Up=(0,0,1) - это НЕ дефолт
+ * движка (Forward=(0,1,0), Right=(1,0,0)): дефолтом Source заполняет CP, пока
+ * ориентацию никто не выставил. Сбросить обратно - clearControlPointOrientation.
+ */
+function basisFromAngles(pitch, yaw, roll) {
+  const d = Math.PI / 180;
+  const sp = Math.sin(pitch * d), cp = Math.cos(pitch * d);
+  const sy = Math.sin(yaw * d), cy = Math.cos(yaw * d);
+  const sr = Math.sin(roll * d), cr = Math.cos(roll * d);
+  return {
+    fwd: [cp * cy, cp * sy, -sp],
+    right: [-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp],
+    up: [cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp],
+  };
+}
+
+window.setControlPointOrientation = function(i, pitch, yaw, roll) {
+  const b = cpBaseOf(i);
+  b.angles = [pitch, yaw, roll];
+  b.hasAngles = true;
+  controller.controlPointBases[i] = basisFromAngles(pitch, yaw, roll);
+};
+
+/** Сброс ориентации CP к дефолту движка */
+window.clearControlPointOrientation = function(i) {
+  delete controller.controlPointBases[i];
+  const b = cpBase[i];
+  if (b) { b.angles = [0, 0, 0]; b.hasAngles = false; }
+};
+
+/**
+ * Пресет движения контрол-пойнта. В игре эффект висит на движущемся игроке, и
+ * именно движение CP проявляет Movement Lock to Control Point, drag и инерцию
+ * Верле - на неподвижной точке этого не увидеть.
+ *   kind: 'none' | 'bob' (вверх-вниз) | 'sway' (шаг вбок с подскоком)
+ *       | 'orbit' (по кругу, CP смотрит по касательной) | 'spin' (разворот на месте)
+ * amp - юниты, period - секунды на цикл.
+ * Пресеты orbit и spin ЗАДАЮТ ориентацию CP, даже если углы не выставлялись.
+ */
+window.setControlPointMotion = function(i, kind, amp, period) {
+  if (!kind || kind === 'none') {
+    delete cpMotion[i];
+    const b = cpBaseOf(i);
+    applyControlPoint(i, b.pos, b.angles, b.hasAngles);
+    return;
+  }
+  cpMotion[i] = { kind: kind, amp: amp, period: period > 0 ? period : 1 };
+};
+
+/** Ставит CP на кадр, НЕ трогая базовые значения (их правит только UI) */
+function applyControlPoint(i, pos, angles, withAngles) {
+  controller.controlPoints[i] = [pos[0], pos[1], pos[2]];
+  if (withAngles) controller.controlPointBases[i] = basisFromAngles(
+    angles[0], angles[1], angles[2]);
+  else delete controller.controlPointBases[i];
+}
+
+/** Двигает CP по пресетам - вызывается каждый кадр до симуляции */
+function updateControlPointMotion(dt) {
+  const keys = Object.keys(cpMotion);
+  if (keys.length === 0) return;
+  cpMotionTime += dt;
+  for (const key of keys) {
+    const m = cpMotion[key];
+    const b = cpBaseOf(key | 0);
+    const w = 2 * Math.PI * cpMotionTime / m.period;
+    const pos = [b.pos[0], b.pos[1], b.pos[2]];
+    const ang = [b.angles[0], b.angles[1], b.angles[2]];
+    let withAngles = b.hasAngles;
+    if (m.kind === 'bob') {
+      pos[2] += Math.sin(w) * m.amp;
+    } else if (m.kind === 'sway') {
+      pos[0] += Math.sin(w) * m.amp;
+      pos[2] += Math.abs(Math.cos(w)) * m.amp * 0.25;
+    } else if (m.kind === 'orbit') {
+      pos[0] += Math.cos(w) * m.amp;
+      pos[1] += Math.sin(w) * m.amp;
+      ang[1] += w * 180 / Math.PI + 90;   // смотрим по касательной
+      withAngles = true;
+    } else if (m.kind === 'spin') {
+      ang[1] += w * 180 / Math.PI;
+      withAngles = true;
+    }
+    applyControlPoint(key | 0, pos, ang, withAngles);
+  }
+}
+
+/** Прокрутить симуляцию на steps шагов по dt секунд - детерминированно,
+    без зависимости от кадров (в фоновой вкладке rAF не тикает) */
+window.particleDebugAdvance = function(dt = 1 / 60, steps = 60) {
+  if (!rootInstance) return null;
+  for (let i = 0; i < steps; i++) {
+    updateControlPointMotion(dt);
+    rootInstance.movement(dt);
+  }
+  return window.particleDebugState();
+};
+
+/** Состояние частиц корневой системы - для автопроверки операторов
+    (движок большой, глазами регрессии в нём не видно) */
+window.particleDebugState = function(limit = 8) {
+  if (!rootInstance) return null;
+  const out = [];
+  for (const p of rootInstance.particles.slice(0, limit))
+    out.push({
+      pos: [...p.pos], radius: p.radius, alpha: p.alpha,
+      color: [...p.color], rotation: p.rotation,
+      age: rootInstance.curTime - p.spawnTime,
+    });
+  return { time: rootInstance.curTime, count: rootInstance.particles.length,
+           particles: out };
+};
+
+/** Дерево систем: имя, число частиц, первая частица, точки 0..3 - чтобы
+    видеть, куда дети ставят свои контрольные точки */
+window.particleDebugTree = function(depth = 4) {
+  if (!rootInstance) return null;
+  const node = (sys, d) => ({
+    name: sys.def && sys.def.name, count: sys.particles.length,
+    first: sys.particles[0] ? [...sys.particles[0].pos].map(v => +v.toFixed(1)) : null,
+    cps: [0, 1, 2, 3].map(i => [...sys.getControlPoint(i)].map(v => +v.toFixed(1))),
+    ops: sys.operators.map(o => (o.mod.functionName || o.mod.name || '?')),
+    children: d > 0 ? sys.children.map(c => node(c, d - 1)) : undefined,
+  });
+  return node(rootInstance, depth);
+};
+window.particleDebugSystem = (name) => {
+  const find = (sys) => (sys.def && sys.def.name) === name ? sys
+    : sys.children.map(find).find(Boolean);
+  return rootInstance && find(rootInstance);
+};
+
+/** Экранные углы спрайтов после render_screen_velocity_rotate - для
+    автотеста камеро-зависимого поворота */
+window.particleDebugSpriteRotations = function() {
+  if (!rootInstance) return [];
+  const pool = [];
+  rootInstance.collectSprites(pool, []);
+  const out = [];
+  for (const s of pool) {
+    if (!s.screenVel || !s.vel) continue;
+    _orientVec.set(s.vel[0], s.vel[1], s.vel[2]);
+    if (_orientVec.lengthSq() < 1e-10) continue;
+    _orientVec.transformDirection(camera.matrixWorldInverse);
+    out.push(Math.atan2(_orientVec.y, _orientVec.x)
+             + s.screenVel.forward + s.screenVel.rate * (s.age || 0));
+  }
+  return out;
+};
+
+window.resetViewer = function() {
+  rootInstance = null;
+  currentRootName = '';
+  disposeBatches();
+  disposeGizmo();
+  statsEl.style.display = 'none';
+  window.showPrompt();
+};
+
+// Цикл
+
+const clock = new THREE.Clock();
+const spritePool = [];
+const _orientVec = new THREE.Vector3();   // переиспользуем для orient-to-2d
+const ropePool = [];
+
+//: Скорость времени: 1 - как в игре, 0.25 - замедленно. Крит длится
+//: полсекунды, и на глаз в нём ничего не разобрать без замедления
+let timeScale = 1;
+window.setTimeScale = function(k) { timeScale = Math.max(0.05, Number(k) || 1); };
+
+let frameId = 0;
+function animate() {
+  frameId = requestAnimationFrame(animate);
+  drawFrame(Math.min(clock.getDelta(), 0.3) * timeScale);
+}
+
+// Спрятанный iframe браузер не глушит: ушли со страницы частиц, а эффект
+// крутился на полной частоте экрана, впустую грузя поток страницы и
+// видеокарту. Страница выключает цикл, уходя из раздела
+window.setActive = function(on) {
+  if (on && !frameId) {
+    clock.getDelta();          // простой не должен прийти одним шагом
+    animate();
+  } else if (!on && frameId) {
+    cancelAnimationFrame(frameId);
+    frameId = 0;
+  }
+};
+
+/** Кадр: шаг симуляции на dt и отрисовка. Отдельно от animate - пока
+    вкладка скрыта, requestAnimationFrame не идёт, а автопроверке кадр нужен
+    (particleDebugRender) */
+function drawFrame(dt) {
+  controls.update();
+
+  if (rootInstance && !paused) {
+    updateControlPointMotion(dt);
+    rootInstance.movement(dt);
+
+    if (loop && rootInstance.isFinished()) {
+      if (finishedAt === null) finishedAt = performance.now();
+      else if (performance.now() - finishedAt > 600) {
+        rootInstance.reset();
+        finishedAt = null;
+      }
+    } else {
+      finishedAt = null;
+    }
+  }
+
+  spritePool.length = 0;
+  ropePool.length = 0;
+  if (rootInstance) {
+    rootInstance.collectSprites(spritePool, ropePool);
+
+    // render_screen_velocity_rotate: спрайт смотрит вдоль своей скорости
+    // на экране (бабочки/пауки/призраки). Считаем здесь - только тут есть
+    // камера, и угол должен пересчитываться при её вращении
+    for (const s of spritePool) {
+      if (!s.screenVel || !s.vel) continue;
+      _orientVec.set(s.vel[0], s.vel[1], s.vel[2]);
+      if (_orientVec.lengthSq() < 1e-10) continue;
+      // Направление скорости в пространстве камеры: x,y - оси экрана
+      _orientVec.transformDirection(camera.matrixWorldInverse);
+      s.rotation = Math.atan2(_orientVec.y, _orientVec.x)
+                 + s.screenVel.forward + s.screenVel.rate * (s.age || 0);
+    }
+
+    // Группировка по материалу (текстура + блендинг)
+    const groups = {};
+    for (const s of spritePool) {
+      // Маска-refract (nothing2 и подобные) в игре невидима - см. загрузчик
+      const mi = materialsJson[s.material];
+      if (mi && mi.invisible) continue;
+      const key = s.material + (s.additive ? '|a' : '|n');
+      (groups[key] || (groups[key] = [])).push(s);
+    }
+    for (const [key, sprites] of Object.entries(groups)) {
+      if (!batches[key]) {
+        const tex = getTexture(sprites[0].material, materialsJson);
+        const info = materialsJson[sprites[0].material];
+        batches[key] = new SpriteBatch(
+          tex, sprites[0].additive, isSoftFallback(sprites[0].material),
+          Boolean(info && info.mod2x));
+      }
+      batches[key].update(sprites);
+    }
+    for (const [key, batch] of Object.entries(batches))
+      if (!groups[key]) batch.update([]);
+
+    // Ленты (render_rope)
+    const ropeGroups = {};
+    let ropePts = 0;
+    for (const r of ropePool) {
+      const key = r.material + (r.additive ? '|a' : '|n');
+      (ropeGroups[key] || (ropeGroups[key] = [])).push(r);
+      ropePts += r.points.length;
+    }
+    for (const [key, ropes] of Object.entries(ropeGroups)) {
+      if (!ropeBatches[key])
+        ropeBatches[key] = new RopeBatch(ropes[0].additive, ropes[0].material);
+      ropeBatches[key].update(ropes);
+    }
+    for (const [key, batch] of Object.entries(ropeBatches))
+      if (!ropeGroups[key]) batch.update([]);
+
+    statsEl.textContent = (spritePool.length + ropePts) + ' particles';
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.particleDebugRender = () => drawFrame(0);
+window.particleDebugCamera = () => ({ pos: camera.position.toArray(),
+                                      target: controls.target.toArray() });
+window.showPrompt();
+animate();
+
+// Кадр без страницы: ?pcf=…&system=…&t=…[&cam=x,y,z&look=x,y,z]
+// Для оракула (ParticleOracle/harness/lookbook.py): headless-браузер
+// открывает вьювер напрямую, данные берутся у dev-сервера тем же запросом,
+// что у страницы, а симуляция прогоняется ровно до t фиксированным шагом и
+// замирает - кадр детерминирован, а не «сколько успело за секунду». Готовность
+// видна по заголовку документа
+{
+  const q = new URLSearchParams(location.search);
+  if (q.get('pcf') && q.get('system')) {
+    paused = true;
+    const vec = (s) => (s || '').split(',').map(Number);
+    if (q.get('cam')) camera.position.set(...vec(q.get('cam')));
+    if (q.get('bg')) window.setBackground(parseInt(q.get('bg'), 16));
+    if (q.get('look')) { controls.target.set(...vec(q.get('look'))); controls.update(); }
+    const post = (name, body) => fetch('/api/' + name, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+    // &model=<qc> - показать модель из кэша декомпиляции (как «Точки» на
+    // странице): эффекты «на игроке» без неё сидят в одной точке
+    const withModel = q.get('model')
+      ? post('particle_model_scene', { qc: q.get('model') }).then(({ result, error }) => {
+          if (error) throw new Error(error);
+          window.loadModelObj(result.obj, result.textures || {});
+          window.setModelVisible(true);
+        })
+      : Promise.resolve();
+    withModel.then(() => post('load_particles', { source: q.get('pcf') }))
+    .then(({ result, error }) => {
+      if (error) throw new Error(error);
+      // &hide=a,b - убрать дочерние системы из корня: так ищут, чей слой
+      // портит кадр (у seamine - какой из девяти детей даёт «чёрный ящик»)
+      const hide = (q.get('hide') || '').split(',').filter(Boolean);
+      const root = result.systems[q.get('system')];
+      if (hide.length && root && root.children)
+        root.children = root.children.filter(c => !hide.includes(c.childName));
+      window.loadParticleData({ ...result, rootName: q.get('system') });
+      if (!rootInstance) throw new Error('no system ' + q.get('system'));
+      const dt = 1 / Number(q.get('fps') || 30);
+      const t = Number(q.get('t') || 1);
+      for (let s = 0; s < t - 1e-6; s += dt) {
+        updateControlPointMotion(dt);
+        rootInstance.movement(dt);
+      }
+      document.title = 'ready';
+    }).catch(e => { document.title = 'error: ' + e.message; window.showError(String(e)); });
+  }
+}
+</script>
+</body>
+</html>

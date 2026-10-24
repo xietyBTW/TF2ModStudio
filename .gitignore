@@ -1,0 +1,46 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Тесты и линтеры
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.json
+htmlcov/
+
+# Результаты сборки
+/build/
+/dist/
+/installer/Output/
+
+# Данные
+/cache/
+/config/
+/export/
+/mods/
+/work/
+/.devwork/
+/tools/temp/
+/tools/temp_vmt_extract/
+/tools/edited_vmt/
+/tools/backupVMT/
+
+# Valve
+/tools/VPK/
+/tools/Model/
+/tools/mod_data/
+
+# Логи
+*.log
+*.log.*
+*.tmp
+
+# Редакторы и система
+.vscode/
+frontend/node_modules/
+Thumbs.db
+Desktop.ini
+.DS_Store

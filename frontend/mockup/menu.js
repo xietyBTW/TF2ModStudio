@@ -1,0 +1,86 @@
+/*
+ * Контекстное меню по правой кнопке
+ *
+ * Список пунктов даёт вызывающий - модуль решает только, где меню встанет и
+ * как закроется. Пункт со значением null рисуется разделителем, пункт
+ * `{ heading }` - заголовком группы, `hint` у пункта - строкой пояснения под
+ * подписью (в длинном меню одной подписи мало, чтобы понять, что выбираешь).
+ */
+
+// Контекстные меню
+// Как в панели приложения: набор пунктов зависит от того, на чём щёлкнули.
+// Правая кнопка на системе даёт одно, на модуле - другое, на параметре -
+// третье. Разделитель - пункт со значением null
+
+const menuEl = document.createElement('div');
+menuEl.className = 'menu__list ctx';
+menuEl.hidden = true;
+// Popover - ради верхнего слоя: меню зовут и из модальных окон (редактор
+// VMT -> «Вставить»), а модальный <dialog> лежит выше любого z-index. Показ
+// popover'ом после окна ставит меню над ним. `manual` - закрытием ведаем
+// сами (щелчок мимо, Esc), а не браузер. Одного слоя мало: всё вне
+// модального окна инертно, и по меню нельзя было бы щёлкнуть - поэтому на
+// время показа оно переезжает ВНУТРЬ открытого окна (см. contextMenu)
+menuEl.setAttribute('popover', 'manual');
+document.body.append(menuEl);
+
+/** Показывает меню в точке события, отдаёт значение пункта или null */
+export function contextMenu(e, items) {
+  e.preventDefault();
+  menuEl.innerHTML = '';
+  return new Promise((resolve) => {
+    const close = (value) => {
+      if (menuEl.matches(':popover-open')) menuEl.hidePopover();
+      menuEl.hidden = true;
+      document.removeEventListener('mousedown', onAway, true);
+      document.removeEventListener('keydown', onKey, true);
+      resolve(value);
+    };
+    const onAway = (ev) => { if (!menuEl.contains(ev.target)) close(null); };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(null); };
+
+    for (const item of items) {
+      if (!item) {
+        const hr = document.createElement('div');
+        hr.className = 'ctx__sep';
+        menuEl.append(hr);
+        continue;
+      }
+      if (item.heading) {
+        const h = document.createElement('div');
+        h.className = 'label ctx__head';
+        h.textContent = item.heading;
+        menuEl.append(h);
+        continue;
+      }
+      const b = document.createElement('button');
+      b.className = 'menu__item';
+      b.type = 'button';
+      b.textContent = item.label;
+      if (item.hint) {
+        const hint = document.createElement('span');
+        hint.className = 'ctx__hint';
+        hint.textContent = item.hint;
+        b.append(hint);
+      }
+      b.disabled = Boolean(item.disabled);
+      b.addEventListener('click', () => close(item.value));
+      menuEl.append(b);
+    }
+
+    // Из модального окна - внутрь него, иначе меню инертно, в верхнем слое
+    // координаты всё равно от окна браузера
+    (document.querySelector('dialog:modal') || document.body).append(menuEl);
+    menuEl.hidden = false;
+    if (menuEl.showPopover) menuEl.showPopover();
+    // Меню не должно уезжать за край: у нижних строк дерева места вниз нет
+    const box = menuEl.getBoundingClientRect();
+    const x = Math.min(e.clientX, innerWidth - box.width - 8);
+    const y = Math.min(e.clientY, innerHeight - box.height - 8);
+    menuEl.style.left = Math.max(8, x) + 'px';
+    menuEl.style.top = Math.max(8, y) + 'px';
+
+    document.addEventListener('mousedown', onAway, true);
+    document.addEventListener('keydown', onKey, true);
+  });
+}

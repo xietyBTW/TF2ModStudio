@@ -1,0 +1,125 @@
+/*
+ * Точка входа страницы
+ *
+ * Здесь нет логики - только сборка целого из модулей и старт. Каждый модуль
+ * сам вешает свои обработчики при загрузке, поэтому порядок импортов задаёт
+ * порядок подключения, а не порядок работы
+ *
+ * Карта модулей (снизу вверх, от «ничего не знает» к «знает всё»):
+ *
+ *   api        мост к Python: единственное место, знающее о транспорте
+ *   curve      кривая ползунка - порт services/simple_params
+ *   util       мелочи: экранирование, склонение, выбор файла
+ *   ask menu   окно вопроса и контекстное меню
+ *   picker     свой выбор цвета вместо системного диалога Windows
+ *   stage      кадр: вьювер моделей и движок частиц в своих iframe
+ *   layout     раскладка окна, панели, строка состояния
+ *   album      альбом текстур: кадры, вкладки, прокрутка
+ *   catalog    левая панель: списки, фильтры, выбор предмета
+ *   controls   что показывать при режиме + правка настроек материала
+ *   preview    показ предмета: модель, текстуры, команды, стили
+ *   parts      покраска кусков геометрии
+ *   place      посадка картинки на часть
+ *   particles  раздел эффектов: дерево систем, свойства, превью
+ *   maps vmt   диалоги материала
+ *   custom-model settings diagnostics tools build log   остальное окно
+ *   events     поток событий от воркеров - он и оживляет всё вышеперечисленное
+ */
+
+import { group } from './util.js';
+import './picker.js';
+import './dropdown.js';
+import './layout.js';
+import './titlebar.js';
+import './album.js';
+import './controls.js';
+import './preview.js';
+import './parts.js';
+import './place.js';
+import './particles/index.js';
+import './maps.js';
+import './vmt.js';
+import './custom-model.js';
+import './settings.js';
+import './diagnostics.js';
+import './build.js';
+import './tools.js';
+import './events.js';
+import './paint.js';
+import './warpaint.js';
+import { boot, els } from './catalog.js';
+import { syncViewerTheme } from './log.js';
+// Диалог «не получилось»: подписывается на свои кнопки при загрузке
+import './fail.js';
+import { say, viewer } from './stage.js';
+import { firstStart, prepareWelcome } from './welcome.js';
+import { hideSplash, splashStep } from './splash.js';
+
+/*
+ * Последняя сеть под всеми обработчиками
+ *
+ * Обработчики кнопок асинхронные, а `api.call` бросает на ошибке Python и на
+ * обрыве связи. Непойманное такой обработчик хоронил молча: кнопка просто не
+ * срабатывала, а текст оставался в журнале - который может быть и закрыт.
+ * Пусть лучше человек увидит, что именно сломалось.
+ */
+const shout = (err) => {
+  const text = (err && err.message) || String(err || 'неизвестная ошибка');
+  say(text);
+  console.error(err);
+};
+window.addEventListener('unhandledrejection', (e) => shout(e.reason));
+window.addEventListener('error', (e) => {
+  // Не загрузилась картинка или иконка - это не поломка страницы: карточки
+  // такие случаи разбирают сами (иконки предмета в игре может не быть)
+  if (e.target && e.target !== window) return;
+  shout(e.error || e.message);
+});
+
+/*
+ * Файл, брошенный МИМО цели, иначе открывается вместо страницы
+ *
+ * Картинки таскают на модель и на кадры альбома постоянно, промахнуться на
+ * пару пикселей легко, и браузер по умолчанию уходит на брошенный файл - окно
+ * приложения показывает картинку, а несохранённая работа пропадает. Свои цели
+ * (кадры альбома, вьювер в своём iframe) обрабатывают drop раньше и до этой
+ * сети не доходят.
+ */
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => e.preventDefault());
+
+// Перетаскивание над СТРАНИЦЕЙ - значит, не над кадром модели (его события
+// идут в документ iframe). Вьювер не всегда слышит, что курсор ушёл, и его
+// подсказка «Отпустите…» оставалась висеть, говорим ему сами. Фаза захвата:
+// карточки альбома останавливают свои события, и до окна они не всплывают
+const leaveViewer = () => viewer()?.endDrag?.();
+addEventListener('dragover', leaveViewer, true);
+addEventListener('drop', leaveViewer, true);
+
+// Взаимоисключающий выбор в рядах, где кнопка ничего не грузит: команда,
+// вариант оружия, анимация вида от первого лица
+group('.title__side', '.tag');
+group('#skinbar', '.tag');
+group('#fpbar', '.tag');
+
+// Модули на месте - половина пути заставки. Вторая половина - настройки и
+// каталог: заставка уходит, когда boot() их собрал
+splashStep(.5);
+
+// Первый запуск: встречающее окно (язык, игра, куда собирать моды) и за ним
+// обучение - см. welcome.js. Кто уже работал с приложением, получает только
+// вопрос про игру, если пути нет. Окно строится ещё под заставкой (заставка
+// уходит прямо в него), а оживает и спрашивает - когда она ушла
+boot().then(prepareWelcome).then(hideSplash).then(firstStart).catch((err) => {
+  hideSplash();
+  els.note.hidden = false;
+  els.note.textContent = `Нет связи с Python: ${err.message}`;
+  console.error(err);
+});
+
+// Все модули загрузились: счётчик повторов из index.html больше не нужен
+window.__booted = true;
+try { sessionStorage.removeItem('bootTries'); } catch (e) { /* приватный режим */ }
+
+// Стартовые вызовы - в самом конце: до них должны отработать все модули
+syncViewerTheme();

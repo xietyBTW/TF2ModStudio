@@ -1,0 +1,175 @@
+import logging
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from src.shared.constants import ToolPaths, ToolTimeouts
+from src.shared.file_utils import ensure_directory_exists
+from src.shared.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+class PackagingService:
+
+    #: Предел длины пути у vpk.exe (Win32 MAX_PATH, с нулём в конце)
+    MAX_PATH = 260
+
+    @staticmethod
+    def longest_path(folder: Path) -> str:
+        """Самый длинный абсолютный путь среди файлов папки ('' - пусто)"""
+        root = Path(os.path.abspath(folder))
+        return max((str(p) for p in root.rglob('*') if p.is_file()), key=len, default='')
+
+    @staticmethod
+    def create_vpk_file(ctx, filename: str, export_folder: str = "export", language: str = "en") -> str:
+        """Создаёт VPK из ctx.vpkroot_dir и перемещает в export_folder/filename"""
+        if not ctx.vpkroot_dir.exists():
+            logger.warning(f"vpkroot_dir не существует: {ctx.vpkroot_dir}")
+        elif logger.isEnabledFor(logging.DEBUG):
+            # Дамп дерева vpkroot - только когда debug-лог реально включён,
+            # чтобы не обходить всё дерево впустую на обычных сборках
+            logger.debug(f"Создание VPK из: {ctx.vpkroot_dir}")
+            for root, _dirs, files in os.walk(ctx.vpkroot_dir):
+                level = root.replace(str(ctx.vpkroot_dir), '').count(os.sep)
+                logger.debug(f"{'  ' * level}{os.path.basename(root)}/")
+                for file in files:
+                    logger.debug(f"{'  ' * (level + 1)}{file}")
+
+        return PackagingService.pack_directory(
+            vpkroot_dir=ctx.vpkroot_dir,
+            filename=filename,
+            export_folder=export_folder,
+            language=language,
+        )
+
+    @staticmethod
+    def pack_directory(
+        vpkroot_dir: Path,
+        filename: str,
+        export_folder: str = "export",
+        language: str = "en",
+    ) -> str:
+        """
+        Запускает vpk.exe -v <vpkroot_dir>, перемещает результат в export_folder/filename
+
+        Это единственное место в проекте где вызывается vpk.exe.
+        MergeVPKService и CustomVPKService должны использовать этот метод
+
+        Args:
+            vpkroot_dir:   Директория с содержимым мода (любое имя; vpk.exe
+                           создаст рядом <имя_папки>.vpk)
+            filename:      Имя выходного .vpk файла (например, "my_mod.vpk")
+            export_folder: Куда переместить готовый файл
+            language:      Язык для сообщений об ошибках
+
+        Returns:
+            Абсолютный путь к созданному VPK файлу
+
+        Raises:
+            VPKCreationError:         vpk.exe вернул ненулевой код
+            RequiredFileMissingError: vpk.exe не создал файл
+        """
+        from src.data.translations import TRANSLATIONS
+        from src.shared.exceptions import (
+            FileLockedError, RequiredFileMissingError, VPKCreationError,
+        )
+
+        t = TRANSLATIONS.get(language, TRANSLATIONS['en'])
+
+        # Маски своих узоров блеска, на которые ссылаются VMT мода: файл
+        # задаётся именем и строится здесь - через это место идут все сборки.
+        # Не вышло - сборка падает: без маски на оружии была бы «шахматка»
+        from src.services import sheen_patterns
+        # Своя подпапка по имени мода: два мода не делят один путь маски
+        sheen_patterns.materialize(Path(vpkroot_dir), namespace=Path(filename).stem)
+
+        def _locked(path: Path, exc: OSError) -> FileLockedError:
+            """Понятная ошибка вместо сырого WinError 32
+
+            Файл держит запущенная игра с примонтированным модом, GCFScape или
+            проводник с превью - самый частый сценарий повторной сборки. Из
+            системного сообщения не следует, что делать
+            """
+            msg = t.get(
+                'error_vpk_locked',
+                'The file {path} is in use by another process.'
+            ).format(path=path)
+            logger.error(f"{msg} ({exc})")
+            return FileLockedError(str(path), msg)
+
+        # vpk.exe не умеет путей длиннее 260 символов: на таком он падает с
+        # «error opening required file …» и обрезанным именем, из которого
+        # причину не понять. Говорим её сами, до запуска
+        longest = PackagingService.longest_path(vpkroot_dir)
+        if len(longest) >= PackagingService.MAX_PATH:
+            raise VPKCreationError("", f"path too long: {len(longest)} > "
+                                       f"{PackagingService.MAX_PATH - 1}: {longest}")
+
+        vpkroot_parent = vpkroot_dir.parent
+        # vpk.exe называет результат по имени упакованной папки (<dir>.vpk),
+        # поэтому имя папки может быть любым - не только "vpkroot"
+        temp_vpk_path = vpkroot_parent / f"{vpkroot_dir.name}.vpk"
+
+        if temp_vpk_path.exists():
+            try:
+                temp_vpk_path.unlink()
+            except OSError as exc:
+                raise _locked(temp_vpk_path, exc) from exc
+
+        # vpk.exe берётся из bin установленной TF2 (или из бандла). Если ни того,
+        # ни другого нет - сразу понятная ошибка «укажите папку TF2», а не сырой
+        # FileNotFoundError из subprocess. У упаковки python-fallback'а нет
+        vpk_tool = ToolPaths.get_vpk_tool()
+        if not Path(vpk_tool).exists():
+            msg = t.get('error_vpk_tool_not_found', 'vpk.exe tool not found')
+            logger.error(msg)
+            raise RequiredFileMissingError(str(vpk_tool), msg)
+
+        logger.info("Запуск vpk.exe для создания VPK...")
+        try:
+            result = subprocess.run(
+                [str(vpk_tool), "-v", str(vpkroot_dir.resolve())],
+                cwd=str(vpkroot_parent),
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=ToolTimeouts.VPK,
+            )
+        except subprocess.TimeoutExpired:
+            raise VPKCreationError(
+                "", f"vpk.exe timed out after {ToolTimeouts.VPK}s"
+            )
+
+        logger.debug(f"vpk.exe завершился с кодом: {result.returncode}")
+        if result.stdout:
+            logger.debug(f"STDOUT: {result.stdout}")
+        if result.stderr:
+            logger.debug(f"STDERR: {result.stderr}")
+
+        if result.returncode != 0:
+            error_msg = t.get('error_vpk_creation_failed', 'VPK creation failed').format(
+                stdout=result.stdout, stderr=result.stderr,
+            )
+            logger.error(f"Ошибка создания VPK: {error_msg}")
+            raise VPKCreationError(result.stdout, result.stderr)
+
+        if not temp_vpk_path.exists():
+            error_msg = t.get('error_vpkroot_not_found', 'VPK file not found after creation').format(
+                path=vpkroot_parent,
+            )
+            logger.error(error_msg)
+            raise RequiredFileMissingError(str(temp_vpk_path), error_msg)
+
+        export_folder_path = Path(export_folder)
+        ensure_directory_exists(export_folder_path)
+        final_output = export_folder_path / filename
+        try:
+            if final_output.exists():
+                final_output.unlink()
+            shutil.move(str(temp_vpk_path), str(final_output))
+        except OSError as exc:
+            raise _locked(final_output, exc) from exc
+
+        logger.info(f"VPK успешно создан: {final_output}")
+        return str(final_output)

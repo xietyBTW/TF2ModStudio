@@ -1,0 +1,3359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>3D Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1a1a1a;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  #canvas-container { width: 100%; height: 100%; }
+  /* Новая модель проявляется: фон холста тот же, что у страницы, поэтому
+     прозрачность холста - это прозрачность модели. См. _revealCanvas */
+  #canvas-container canvas { transition: opacity 220ms; }
+  #canvas-container canvas.is-hidden { opacity: 0; transition: none; }
+  @media (prefers-reduced-motion: reduce) {
+    #canvas-container canvas { transition: none; }
+  }
+  body.no-motion #canvas-container canvas { transition: none; }
+  #canvas-container.inspecting { cursor: help; }
+  #canvas-container.cutting  { cursor: crosshair; }
+
+  /* Кнопка инспекции материала (?) */
+  #inspect-btn {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 14px; font-weight: 700;
+    display: none;
+    align-items: center; justify-content: center;
+    cursor: pointer; user-select: none;
+    z-index: 20;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  #inspect-btn:hover { background: rgba(255, 255, 255, 0.12); color: #ddd; }
+  #inspect-btn.active {
+    background: rgba(204, 85, 34, 0.25);
+    border-color: #cc5522;
+    color: #ffae80;
+  }
+  body.is-light #inspect-btn {
+    background: rgba(20, 18, 15, 0.04);
+    border-color: rgba(20, 18, 15, 0.28);
+    color: #57534d;
+  }
+  body.is-light #inspect-btn:hover { background: rgba(20, 18, 15, 0.08); color: #14120f; }
+  body.is-light #inspect-btn.active {
+    background: rgba(204, 85, 34, 0.14);
+    border-color: #cc5522;
+    color: #cc5522;
+  }
+
+  /* Тултип материала/текстуры у курсора */
+  #inspect-tip {
+    position: absolute;
+    display: none;
+    pointer-events: none;
+    z-index: 30;
+    background: rgba(18, 18, 18, 0.94);
+    border: 1px solid #444;
+    border-radius: 5px;
+    padding: 6px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
+  }
+  #inspect-tip img {
+    display: block;
+    width: 96px; height: 96px;
+    object-fit: contain;
+    background: #000;
+    border-radius: 3px;
+    image-rendering: pixelated;
+  }
+  #inspect-tip img.empty { display: none; }
+  #inspect-tip .mat {
+    color: #e0e0e0;
+    font-size: 11px;
+    margin-top: 5px;
+    max-width: 110px;
+    word-break: break-all;
+    text-align: center;
+    line-height: 1.35;
+  }
+
+  /* Статус (idle / loading / error) */
+  #status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+  }
+
+  /* Кубик-каркас: в пустом кадре стоит, при загрузке перекатывается с грани
+     на грань, начиная с той же позы, так что щелчок по предмету оживляет его
+     на месте. Подпись под ним по центру кадра: в пустом кадре своя, при
+     загрузке стадию рисует страница, поэтому кубик стоит выше середины */
+  #status-spinner {
+    display: none;
+    width: 22px;
+    height: 22px;
+    margin-bottom: 96px;
+    perspective: 180px;
+  }
+  .cube {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transform: rotateX(-24deg) rotateY(45deg);
+  }
+  #status.loading .cube { animation: cube-roll 2.8s cubic-bezier(.7, 0, .3, 1) infinite; }
+  .cube i {
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(226, 102, 44, .7);
+    background: rgba(226, 102, 44, .07);
+  }
+  .cube i:nth-child(1) { transform: translateZ(11px); }
+  .cube i:nth-child(2) { transform: rotateY(180deg) translateZ(11px); }
+  .cube i:nth-child(3) { transform: rotateY(90deg) translateZ(11px); }
+  .cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(11px); }
+  .cube i:nth-child(5) { transform: rotateX(90deg) translateZ(11px); }
+  .cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(11px); }
+  /* тень на полу дышит в такт перекату */
+  #status-spinner::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    width: 30px;
+    height: 6px;
+    margin: 14px 0 0 -15px;
+    border-radius: 50%;
+    background: radial-gradient(rgba(0, 0, 0, .55), transparent 70%);
+  }
+  #status.loading #status-spinner::after { animation: cube-shadow 0.7s cubic-bezier(.7, 0, .3, 1) infinite; }
+  @keyframes cube-roll {
+    0%   { transform: rotateX(-24deg) rotateY(45deg); }
+    25%  { transform: rotateX(-24deg) rotateY(135deg); }
+    50%  { transform: rotateX(66deg)  rotateY(135deg); }
+    75%  { transform: rotateX(66deg)  rotateY(225deg); }
+    100% { transform: rotateX(-24deg) rotateY(405deg); }
+  }
+  @keyframes cube-shadow { 50% { transform: scaleX(.6); opacity: .5; } }
+  @media (prefers-reduced-motion: reduce) {
+    #status.loading .cube { animation-duration: 8s; }
+    #status.loading #status-spinner::after { animation: none; }
+  }
+
+  #status-icon {
+    font-size: 32px;
+    opacity: 0.18;
+    line-height: 1;
+  }
+
+  #status-text {
+    color: #454545;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.045em;
+    text-align: center;
+    max-width: 300px;
+    line-height: 1.55;
+  }
+
+  /* Пусто и загрузка: кубик на одном и том же месте, значок не нужен */
+  #status:not(.error) #status-spinner { display: block; position: relative; }
+  #status:not(.error) #status-icon    { display: none; }
+  #status.loading #status-text        { display: none; }
+  /* Подпись пустого кадра - там же, где страница пишет стадию загрузки, и в
+     том же виде. Цвет под тему хоста (setViewerBackground) */
+  body { --status-ink: #6f6b65; }
+  body.is-light { --status-ink: #57534d; }
+  #status:not(.loading):not(.error) #status-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: none;
+    white-space: nowrap;
+    color: var(--status-ink);
+    font-size: 10px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+  }
+
+  /* error */
+  #status.error #status-text { color: #c0392b; font-size: 12px; }
+  #status.error #status-icon { opacity: 0.45; }
+
+  /* Подсказка управления */
+  #hint {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #333;
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    pointer-events: none;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+
+
+
+
+
+
+  /* Drop-overlay (drag & drop текстуры) */
+  #drop-overlay {
+    position: absolute;
+    inset: 6px;
+    border: 1.5px dashed #444;
+    border-radius: 6px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    z-index: 20;
+  }
+  #drop-overlay.visible { display: flex; }
+
+  #drop-icon {
+    width: 30px;
+    height: 30px;
+    fill: none;
+    stroke: #888;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  #drop-text {
+    color: #666;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div id="status">
+  <div id="status-spinner"><div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+  <div id="status-icon">⬛</div>
+  <div id="status-text"></div>
+</div>
+
+<div id="hint" style="display:none;"></div>
+
+<div id="drop-overlay">
+  <!-- Рамка с горой и солнцем - «картинка» линией, как значки палитры;
+       эмодзи здесь рисовался цветным и по-разному в каждой системе -->
+  <svg id="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="3" y="5" width="18" height="14" rx="1.5"/>
+    <circle cx="9" cy="10" r="1.6"/>
+    <path d="M3.5 17 9.5 12l4 3.5 2.5-2 4.5 3.5"/>
+  </svg>
+  <div id="drop-text"></div>
+</div>
+
+<!-- Инспекция материала: кнопка «?» (вкл/выкл) + тултип у курсора -->
+<div id="inspect-btn">?</div>
+<div id="inspect-tip">
+  <img id="inspect-tip-img" alt="">
+  <div class="mat" id="inspect-tip-mat"></div>
+</div>
+
+
+<!-- Three.js (локальные файлы; CDN как запасной вариант) -->
+<script type="importmap">
+{
+  "imports": {
+    "three":          "./js/three.module.js",
+    "three/addons/":  "./js/addons/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE        from 'three';
+import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { makeMeshMaterial as _makeMeshMaterial } from './js/viewer_materials.js';
+import { firstPersonCamera as _firstPersonCamera } from './js/viewer_camera.js';
+import { firstEditableHit as _firstEditableHit } from './js/viewer_meshes.js';
+import { buildSkinnedScene as _buildSkinnedScene,
+         applyClip as _applyViewmodelClip,
+         updateHidden as _updateSkinnedHidden } from './js/viewer_skinned.js';
+import { applyBends as _applyBends, toSmd as _bendToSmd } from './js/viewer_bend.js';
+import * as _select from './js/viewer_select.js';
+import { buildSoldierGroup } from './js/viewer/soldier.js';
+import { SRC_FACE_MAP, buildSkyCube } from './js/viewer/skybox.js';
+
+// Что было на window до модуля: в конце отличаем свой API от чужого
+const _globalsBefore = new Set(Object.keys(window));
+
+// i18n
+const I18N = {
+  ru: {
+    select_weapon : 'Выберите предмет',
+    loading       : 'Загрузка...',
+    error_model   : 'Ошибка загрузки модели',
+    error_sky     : 'Ошибка загрузки текстуры неба',
+    no_internet   : 'Нет подключения к интернету (Three.js CDN недоступен)',
+    hint          : 'ЛКМ - вращение · Колесо - масштаб · ПКМ - панорама',
+    drop_texture  : 'Отпустите, чтобы применить текстуру',
+    inspect       : 'Инспектор материалов - наведи на модель',
+  },
+  en: {
+    select_weapon : 'Select an item',
+    loading       : 'Loading...',
+    error_model   : 'Model load error',
+    error_sky     : 'Sky texture load error',
+    no_internet   : 'No internet connection (Three.js CDN unavailable)',
+    hint          : 'LMB - rotate · Wheel - zoom · RMB - pan',
+    drop_texture  : 'Release to apply texture',
+    inspect       : 'Material inspector - hover over the model',
+  },
+};
+
+let _lang = 'en';
+let _t    = I18N['en'];
+
+window.setLanguage = function(lang) {
+  _lang = (lang in I18N) ? lang : 'en';
+  _t    = I18N[_lang];
+  document.getElementById('hint').textContent     = _t.hint;
+  document.getElementById('drop-text').textContent = _t.drop_texture;
+  document.getElementById('inspect-btn').title = _t.inspect;
+  // Обновляем текст статуса только если показан начальный экран (не loading/error)
+  if (!status.classList.contains('loading') && !status.classList.contains('error')) {
+    if (!currentModel) {
+      statusText.textContent = _t.select_weapon;
+    }
+  }
+};
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x1a1a1a);
+
+// Кадр рисуется по запросу: неподвижная модель с частотой монитора грузила
+// GPU рядом с игрой. Кто меняет сцену, зовёт requestRender()
+let _renderQueued = true;
+function requestRender() { _renderQueued = true; }
+
+// Фон под тему хоста
+// Вьювер живёт и в окне приложения, и в веб-интерфейсе, а тема там своя.
+// Хост зовёт это при старте и при смене темы, без вызова остаётся тёмный фон,
+// как было
+window.setViewerBackground = function(css) {
+  if (!css) return;
+  document.body.style.background = css;
+  const probe = document.createElement('div');
+  probe.style.color = css;
+  document.body.appendChild(probe);
+  const rgb = getComputedStyle(probe).color.match(/\d+/g);
+  probe.remove();
+  if (rgb && rgb.length >= 3) {
+    renderer.setClearColor((+rgb[0] << 16) + (+rgb[1] << 8) + (+rgb[2]));
+    // Светлый фон - подписи темнее. Тему хост не называет, судим по яркости
+    const luma = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+    document.body.classList.toggle('is-light', luma > 0.5);
+    // Рядом со светлым фоном та же модель кажется темнее и мутнее, чем на
+    // тёмном, поэтому света больше
+    const light = luma > 0.5;
+    ambient.intensity = light ? 1.0 : 0.5;
+    key.intensity = light ? 1.6 : 1.2;
+    requestRender();
+  }
+};
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+// Scene / Camera
+const DEFAULT_FOV = 45;
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  DEFAULT_FOV, window.innerWidth / window.innerHeight, 0.001, 1000
+);
+camera.position.set(0, 0.5, 3);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance   = 0.1;
+controls.maxDistance   = 20;
+// Затухание после отпускания мыши тоже шлёт 'change', пока камера едет
+controls.addEventListener('change', requestRender);
+
+// Lighting
+const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambient);
+const key  = new THREE.DirectionalLight(0xffffff, 1.2);
+key.position.set(2, 4, 3);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xaaccff, 0.4);
+fill.position.set(-3, 1, -2);
+scene.add(fill);
+const rim  = new THREE.DirectionalLight(0xffffff, 0.3);
+rim.position.set(0, -2, -3);
+scene.add(rim);
+
+// State
+let currentModel  = null;
+// Риг камеры: null - орбита, объект - вид от первого лица (setViewRig)
+let _viewRig      = null;
+// Анимированная сцена вьюмодели: { group, mixer, action, meshes } либо null
+let _skinned      = null;
+const _animClock  = new THREE.Clock();
+let _animTimer    = null;
+let _animFrames   = [];
+let _pendingAnim        = null;
+let _pendingMaterialMap = null;  // {mat_name: dataUrl} - ожидает загрузки OBJ
+let _pendingTexUrl      = null;  // одиночная текстура - ожидает загрузки OBJ
+// null  -> обновляем все меши (обычный режим)
+// Set   -> обновляем только меши с именами из множества (режим рук)
+let _editableMeshNames  = null;
+// null  -> анимация применяется согласно _editableMeshNames (или ко всем)
+// Set   -> анимируются только эти конкретные меши/материалы (per-mesh GIF)
+let _animMeshNames      = null;
+// Счётчик поколения анимации - инкрементируется при каждом stopAnimation().
+// Используется для отмены устаревших async _loadTextureThen-коллбэков
+let _animGeneration     = 0;
+
+let _critSprite   = null;   // THREE.Sprite - CritHIT billboard
+let _isCritHitMode = false; // Режим CritHIT (персонаж + billboard)
+// Последняя ЗАПРОШЕННАЯ текстура billboard'а: async-колбэк загрузки OBJ ставит
+// её, а не значение, захваченное на момент старта - иначе смена текстуры во
+// время парсинга модели перезатиралась бы устаревшей
+let _lastCritTexUrl = '';
+
+// CritHIT billboard animation (GIF / animated VTF)
+let _critAnimTimer  = null;   // setInterval для анимации billboard'а
+
+// Generation counter: инкрементируется при каждом новом вызове load/reset.
+// Все async-колбэки проверяют, что их gen _sceneGeneration,
+// прежде чем трогать сцену - это устраняет все race condition'ы
+let _sceneGeneration = 0;
+
+const status      = document.getElementById('status');
+const statusText  = document.getElementById('status-text');
+const statusIcon  = document.getElementById('status-icon');
+const hint        = document.getElementById('hint');
+const dropOverlay = document.getElementById('drop-overlay');
+
+// Инициализируем тексты
+statusText.textContent          = _t.select_weapon;
+hint.textContent                = _t.hint;
+document.getElementById('drop-text').textContent = _t.drop_texture;
+
+// Status helpers
+function setStatus(text, isError = false, isLoading = false) {
+  status.style.display  = 'flex';
+  status.className      = isError ? 'error' : (isLoading ? 'loading' : '');
+  statusText.textContent = text;
+  statusIcon.textContent = isError ? '⚠' : '⬛';
+  hint.style.display    = 'none';
+}
+
+function hideStatus() {
+  status.style.display = 'none';
+  hint.style.display   = 'block';
+}
+
+// Texture animation
+function stopAnimation() {
+  if (_animTimer !== null) { clearInterval(_animTimer); _animTimer = null; }
+  _animFrames         = [];
+  _animMeshNames      = null;
+  _pendingAnim        = null;
+  _pendingMaterialMap = null;
+  _pendingTexUrl      = null;
+  if (_critAnimTimer !== null) { clearInterval(_critAnimTimer); _critAnimTimer = null; }
+  ++_animGeneration;   // делаем все незавершённые _loadTextureThen-коллбэки устаревшими
+}
+
+// Гирлянда поверх оружия
+//
+// Праздничная версия и фестивайзер: отдельная модель, которую игра рисует
+// костями оружия. Здесь это СВОЙ слой. Меши с материалами `deco:` висят в
+// currentModel, но не в группе подгонки своей модели - у гирлянды своя
+// подгонка (цель 'decor'), и игра вешает её по стоковой, пока её не сдвинули.
+// Текстуру предмета они не берут: makeMeshMaterial отдаёт им их собственные
+// кадры либо свою картинку человека (`_decorOverrides`). Мышь их видит: на
+// гирлянду кладут картинку и режут её на части, как любой меш. Сцена от
+// первого лица приезжает с гирляндой внутри - с теми же именами, так что
+// кадры ей даёт тот же реестр
+const DECOR_PREFIX = 'deco:';
+const DECOR_TICK_MS = 125;       // лампочки мигают раз в секунду - хватает
+let _decorObject = null;         // THREE.Group из OBJ гирлянды
+let _decorMats   = {};           // {имя: {red:[url], blu:[url], fps, glow}}
+let _decorTex    = {};           // {url: THREE.Texture}
+let _decorHints  = {};
+let _decorTeam   = 'red';
+let _decorTimer  = null;
+let _decorGen    = 0;
+const _decorT0   = performance.now();
+let _decorOverrides = {};        // {имя: {red: url, blu: url}} - свои картинки
+// Изгибы гирлянды ({c, r, d} в осях SMD, по порядку) и инструмент «гнуть»:
+// схватили гирлянду - всё в радиусе тянется следом (js/viewer_bend.js)
+let _decorBends     = [];
+let _decorBendsKey  = '';
+let _bendOn         = false;
+let _bendRadius     = 4;
+let _bendDrag       = null;      // {start, plane, parts, bend}
+let _bendMarker     = null;      // кольцо радиуса захвата
+let _bendMarkerAt_  = null;      // где оно стоит (в осях гирлянды)
+let _decorFitState  = null;      // [scale, rotate, offset] подгонки гирлянды
+
+function _isDecorName(name) { return String(name || '').startsWith(DECOR_PREFIX); }
+
+function _isDecorMesh(obj) {
+  return obj.isMesh && obj.material && !Array.isArray(obj.material)
+    && _isDecorName(obj.material.name);
+}
+
+/** Кадр материала гирлянды сейчас: команда, мигание, «без анимаций» */
+function _decorUrl(name) {
+  // Своя картинка человека приходит кадрами мигания (их считает Python по
+  // игровым кадрам) - мигает так же, как игровая
+  const m = _decorMats[name];
+  const own = _decorOverrides[name];
+  const mine = own && own[_decorTeam];
+  const frames = (mine && mine.length) ? mine
+    : (m ? ((_decorTeam === 'blu' ? m.blu : m.red) || []) : []);
+  if (!frames.length) return null;
+  const fps = m ? m.fps : 0;
+  if (!(fps > 0) || frames.length < 2 || _noMotion()) return frames[0];
+  const i = Math.floor((performance.now() - _decorT0) / 1000 * fps);
+  return frames[i % frames.length];
+}
+
+function _decorMaterial(name) {
+  const url = _decorUrl(name);
+  const tex = (url && _decorTex[url]) || null;
+  const mat = _makeMeshMaterial(THREE, { map: tex, name }, _decorHints);
+  // Лампочки в игре светятся сами ($selfillum): под одним Ламбертом они
+  // выглядели бы крашеным пластиком.
+  // Маска свечения в своих кадрах - игровая, поэтому светятся и они
+  if (tex && _decorMats[name] && _decorMats[name].glow) {
+    mat.emissive = new THREE.Color(0xffffff);
+    mat.emissiveMap = tex;
+    mat.emissiveIntensity = 0.6;
+  }
+  mat.userData.decorUrl = tex ? url : null;
+  return mat;
+}
+
+/** Переодевает меши гирлянды в текущий кадр - только те, где он сменился */
+function _paintDecor() {
+  scene.traverse(obj => {
+    if (!_isDecorMesh(obj)) return;
+    const name = obj.material.name;
+    const url = _decorUrl(name);
+    if (obj.material.userData.decorUrl === url && (!url || _decorTex[url])) return;
+    if (url && !_decorTex[url]) { _loadDecorTex(url); return; }   // ещё грузится
+    const old = obj.material;
+    obj.material = _decorMaterial(name);
+    old.dispose();
+    requestRender();
+  });
+}
+
+/** Текстура кадра или своей картинки - один раз на адрес */
+const _decorLoading = new Set();
+function _loadDecorTex(url) {
+  if (_decorTex[url] || _decorLoading.has(url)) return;
+  _decorLoading.add(url);
+  const gen = _decorGen;
+  _loadTextureThen(url, tex => {
+    _decorLoading.delete(url);
+    if (gen !== _decorGen) { tex.dispose(); return; }
+    _decorTex[url] = tex;
+    _paintDecor();
+  });
+}
+
+/** Вешает гирлянду на показанную модель. Сцены (руки, насмешка) - мимо:
+ *  у рук гирлянда уже в сцене, у насмешки её нет */
+function _mountDecor() {
+  if (!_decorObject) return;
+  if (_decorObject.parent) _decorObject.parent.remove(_decorObject);
+  if (!currentModel || _viewRig || _skinned || _isCritHitMode) return;
+  currentModel.add(_decorObject);
+  _placeDecorFit();
+}
+
+/** Своя картинка на гирлянде: {меш: {red: [кадры], blu: [кадры]}}. Пусто -
+ *  игровые кадры */
+window.setDecorOverrides = function(map) {
+  _decorOverrides = map || {};
+  Object.values(_decorOverrides).forEach(teams =>
+    Object.values(teams || {}).forEach(list => (list || []).forEach(_loadDecorTex)));
+  _paintDecor();
+};
+
+window.setDecor = function(objText, mats, hints, groups) {
+  window.clearDecor();
+  _decorMats = mats || {};
+  _decorHints = hints || {};
+  try {
+    _decorObject = new OBJLoader().parse(objText || '');
+  } catch (err) {
+    console.error('decor OBJ error:', err);
+    _decorObject = null;
+    return;
+  }
+  _decorObject.name = 'decor';
+  let bendable = true;
+  _decorObject.traverse(c => {
+    if (!c.isMesh) return;
+    const name = (c.material && !Array.isArray(c.material) && c.material.name) || c.name;
+    c.material = makeMeshMaterial({ name });
+    // Для изгиба: исходные вершины и жёсткие группы (их считает Python по
+    // тому же SMD и в том же порядке). Не сошлось число - меш не гнём
+    const pos = c.geometry.attributes.position;
+    const g = (groups || {})[name];
+    c.userData.bendGroups = g || null;
+    c.userData.basePos = Float32Array.from(pos.array);
+    if (!g || g.length !== pos.count) bendable = false;
+  });
+  // Жёсткая группа тянется через меши (лампочка и патрон - разные материалы):
+  // без одного меша центры посчитались бы не как у сборки. Не сошлось хоть
+  // где-то - не гнём гирлянду вовсе, чем гнуть её не так
+  if (!bendable) {
+    console.warn('decor: группы вершин не сошлись с мешами - изгиб выключен');
+    _decorObject.traverse(c => { if (c.isMesh) c.userData.bendGroups = null; });
+  }
+  _mountDecor();
+  _paintDecor();
+
+  Object.values(_decorMats).forEach(m =>
+    [...(m.red || []), ...(m.blu || [])].forEach(_loadDecorTex));
+  if (Object.values(_decorMats).some(m => m.fps > 0 && (m.red || []).length > 1)) {
+    _decorTimer = setInterval(_paintDecor, DECOR_TICK_MS);
+  }
+};
+
+window.clearDecor = function() {
+  ++_decorGen;
+  _cancelBendDrag();
+  if (_fitTarget === 'decor') window.setFitMode(false);
+  _decorFitState = null;
+  _decorOverrides = {};
+  _decorBends = [];
+  _decorBendsKey = '';
+  if (_bendMarker) {              // кольцо живёт в сцене, а не в гирлянде
+    scene.remove(_bendMarker);
+    _bendMarker.traverse(o => { if (o.geometry) o.geometry.dispose();
+                                if (o.material) o.material.dispose(); });
+    _bendMarker = null;
+  }
+  _decorLoading.clear();
+  if (_decorTimer !== null) { clearInterval(_decorTimer); _decorTimer = null; }
+  if (_decorObject) {
+    if (_decorObject.parent) _decorObject.parent.remove(_decorObject);
+    _decorObject.traverse(c => {
+      if (!c.isMesh) return;
+      if (c.geometry) c.geometry.dispose();
+      if (c.material && c.material.dispose) c.material.dispose();
+    });
+    _decorObject = null;
+  }
+  Object.values(_decorTex).forEach(t => t.dispose());
+  _decorTex = {};
+  _decorMats = {};
+  _decorHints = {};
+};
+
+window.setDecorTeam = function(team) {
+  const next = String(team || '').toLowerCase() === 'blu' ? 'blu' : 'red';
+  if (next === _decorTeam) return;
+  _decorTeam = next;
+  _paintDecor();
+};
+
+// Изгиб гирлянды
+
+/** Вершины мешей гирлянды: исходные ('base') или после сделанных изгибов */
+function _bendParts(source) {
+  const parts = [];
+  if (!_decorObject) return parts;
+  _decorObject.traverse(c => {
+    if (!c.isMesh || !c.userData.bendGroups) return;
+    const src = source === 'base' ? c.userData.basePos
+      : (c.userData.shaped || c.userData.basePos);
+    parts.push({ mesh: c, positions: Float32Array.from(src), groups: c.userData.bendGroups });
+  });
+  return parts;
+}
+
+/** Вершины - в меши. `keep` - это новое «сделанное», от него гнут дальше */
+function _writeParts(parts, keep) {
+  for (const p of parts) {
+    const attr = p.mesh.geometry.attributes.position;
+    attr.array.set(p.positions);
+    attr.needsUpdate = true;
+    p.mesh.geometry.computeBoundingSphere();   // иначе мышь промахивалась бы
+    p.mesh.geometry.computeBoundingBox();
+    if (keep) p.mesh.userData.shaped = p.positions;
+  }
+}
+
+function _reshapeDecor() {
+  const parts = _bendParts('base');
+  _applyBends(parts, _decorBends);
+  _writeParts(parts, true);
+}
+
+/** Изгибы из состояния (отмена, возврат работы). Тот же список - не трогаем */
+window.setDecorBends = function(bends) {
+  const key = JSON.stringify(bends || []);
+  if (key === _decorBendsKey || _bendDrag) return;
+  _decorBendsKey = key;
+  _decorBends = (bends || []).map(b => ({ ...b }));
+  _reshapeDecor();
+};
+
+window.setBendRadius = function(r) {
+  const v = Number(r);
+  if (!(v > 0)) return;
+  _bendRadius = Math.min(60, Math.max(0.3, v));
+  if (_bendMarker && _bendMarker.visible && _bendMarkerAt_) _bendMarkerAt(_bendMarkerAt_);
+};
+
+// Радиус захвата - тонкое кольцо лицом к камере с точкой в центре. Сплошная
+// сфера закрывала то, что тянут. И кольцо стоит в САМОЙ сцене, а не внутри
+// модели: одноматериальную модель страница красит обходом всех её мешей, и
+// сфера внутри неё получала текстуру оружия
+function _bendMarkerAt(local) {
+  if (!_decorObject) return;
+  if (!_bendMarker) {
+    const pts = [];
+    for (let i = 0; i < 64; i++) {
+      const a = i / 64 * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0));
+    }
+    const ring = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffc04d, transparent: true, opacity: 0.9,
+                                    depthTest: false }));
+    const dot = new THREE.Mesh(
+      new THREE.CircleGeometry(0.05, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffc04d, depthTest: false }));
+    _bendMarker = new THREE.Group();
+    for (const o of [ring, dot]) {
+      o.renderOrder = 999;
+      o.raycast = () => {};
+      _bendMarker.add(o);
+    }
+  }
+  if (_bendMarker.parent !== scene) scene.add(_bendMarker);
+  _bendMarkerAt_ = local.clone();
+  _bendMarker.position.copy(_decorObject.localToWorld(local.clone()));
+  _bendMarker.quaternion.copy(camera.quaternion);
+  const s = new THREE.Vector3();
+  _decorObject.getWorldScale(s);
+  _bendMarker.scale.setScalar(_bendRadius * s.x);
+  _bendMarker.visible = true;
+}
+
+function _hideBendMarker() {
+  if (_bendMarker) _bendMarker.visible = false;
+}
+
+/** Точка на гирлянде под курсором (мир), либо null */
+function _decorHit(e) {
+  if (!_decorObject || !_decorObject.parent) return null;
+  _raycaster.setFromCamera(_ndcFromEvent(e), camera);
+  const hits = _raycaster.intersectObject(_decorObject, true)
+    .filter(h => _isDecorMesh(h.object));
+  return hits[0] || null;
+}
+
+const _round4 = (v) => Math.round(v * 1e4) / 1e4;
+
+/** Бросить протяжку: вершины - как до неё, орбита - обратно. Зовут все, кто
+ *  уводит из режима «гнуть» посреди протяжки (смена инструмента, выход,
+ *  новая гирлянда, потерянный указатель) */
+function _cancelBendDrag() {
+  if (!_bendDrag) return;
+  const drag = _bendDrag;
+  _bendDrag = null;
+  controls.enabled = !_fitOp;
+  try { renderer.domElement.releasePointerCapture(drag.pointerId); } catch (_) { /* нет */ }
+  if (drag.parts.length && drag.parts[0].mesh.parent) _writeParts(drag.parts, false);
+}
+
+// Схватили гирлянду: тянем в плоскости экрана через точку захвата. Слушатели
+// с захватом - раньше орбиты, иначе кадр крутился бы вместе с проводом
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (!_bendOn || e.button !== 0 || _fitOp) return;
+  const hit = _decorHit(e);
+  if (!hit) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const normal = camera.getWorldDirection(new THREE.Vector3());
+  _bendDrag = {
+    start: _decorObject.worldToLocal(hit.point.clone()),
+    plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, hit.point.clone()),
+    parts: _bendParts('shaped'),
+    bend: null,
+    pointerId: e.pointerId,
+  };
+  controls.enabled = false;
+  // Отпустили кнопку за кадром - pointerup всё равно придёт сюда
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch (_) { /* нет */ }
+}, true);
+renderer.domElement.addEventListener('pointercancel', _cancelBendDrag);
+renderer.domElement.addEventListener('lostpointercapture', () => {
+  if (_bendDrag) window.dispatchEvent(new PointerEvent('pointerup'));
+});
+
+window.addEventListener('pointermove', e => {
+  if (!_bendOn) return;
+  if (!_bendDrag) {
+    const hit = _decorHit(e);
+    if (hit) _bendMarkerAt(_decorObject.worldToLocal(hit.point.clone()));
+    else _hideBendMarker();
+    return;
+  }
+  _raycaster.setFromCamera(_ndcFromEvent(e), camera);
+  const world = new THREE.Vector3();
+  if (!_raycaster.ray.intersectPlane(_bendDrag.plane, world)) return;
+  const d = _decorObject.worldToLocal(world).sub(_bendDrag.start);
+  _bendDrag.bend = { c: _bendToSmd(_bendDrag.start.toArray()).map(_round4),
+                     r: _round4(_bendRadius),
+                     d: _bendToSmd(d.toArray()).map(_round4) };
+  const parts = _bendDrag.parts.map(p => ({ ...p, positions: Float32Array.from(p.positions) }));
+  _applyBends(parts, [_bendDrag.bend]);
+  _writeParts(parts, false);
+  _bendMarkerAt(_bendDrag.start.clone().add(d));
+});
+
+window.addEventListener('pointerup', () => {
+  if (!_bendDrag) return;
+  if (!_bendOn) { _cancelBendDrag(); return; }
+  const drag = _bendDrag;
+  _bendDrag = null;
+  controls.enabled = !_fitOp;
+  try { renderer.domElement.releasePointerCapture(drag.pointerId); } catch (_) { /* нет */ }
+  const bend = drag.bend;
+  if (!bend || Math.hypot(...bend.d) < 1e-3) { _writeParts(drag.parts, false); return; }
+  _decorBends.push(bend);
+  _decorBendsKey = JSON.stringify(_decorBends);
+  const parts = drag.parts.map(p => ({ ...p, positions: Float32Array.from(p.positions) }));
+  _applyBends(parts, [bend]);
+  _writeParts(parts, true);
+  if (typeof window.onDecorBends === 'function') {
+    window.onDecorBends(_decorBends.map(b => ({ ...b })));
+  }
+});
+
+// Колесо в режиме «гнуть» - радиус захвата, а не приближение (оно выключено)
+renderer.domElement.addEventListener('wheel', e => {
+  if (!_bendOn) return;
+  e.preventDefault();
+  window.setBendRadius(_bendRadius * (e.deltaY > 0 ? 1 / 1.15 : 1.15));
+  if (typeof window.onBendRadius === 'function') window.onBendRadius(_bendRadius);
+}, { capture: true, passive: false });
+
+/** Для автопроверки: что гирлянда сейчас делает */
+window.decorDebug = () => {
+  const meshes = [];
+  scene.traverse(o => { if (_isDecorMesh(o)) meshes.push({
+    name: o.material.name, textured: !!o.material.map,
+    inModel: !!currentModel && currentModel.getObjectById(o.id) === o,
+    inFit: !!_fitGroup && _fitGroup.getObjectById(o.id) === o,
+    own: !!_decorOverrides[o.material.name],
+  }); });
+  const d = _decorObject;
+  // Точка провода на экране - чтобы автопроверка могла за него схватиться
+  let probe = null;
+  if (d && d.parent) {
+    d.traverse(c => {
+      if (probe || !c.isMesh || !c.userData.bendGroups) return;
+      const i = c.userData.bendGroups.indexOf(-1);
+      if (i < 0) return;
+      const a = c.geometry.attributes.position;
+      c.updateMatrixWorld(true);
+      const w = new THREE.Vector3(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix4(c.matrixWorld);
+      probe = _screenOf(w);
+    });
+  }
+  return { team: _decorTeam, blinking: _decorTimer !== null, meshes, probe,
+           bends: _decorBends.length, bendOn: _bendOn, radius: _bendRadius,
+           fit: d ? { scale: +d.scale.x.toFixed(3),
+                      pos: d.position.toArray().map(v => +v.toFixed(2)) } : null };
+};
+
+// Свойства материалов из VMT
+//
+// {имя материала: {blend, opacity, alphaTest, twoSided}} - присылает Python
+// (vmt_render). Блика и отражений там нет намеренно: в Source они ограничены
+// маской из текстуры, а без неё покрывают модель белёсой плёнкой.
+// Сама сборка материала живёт в js/viewer_materials.js (её проверяет тест)
+let _matHints = {};
+
+function makeMeshMaterial(opts) {
+  // Гирлянда поверх оружия: у неё свои кадры, и любая раздача текстур
+  // предмета (глобальная, по материалам, анимация) проходит мимо неё
+  if (opts && _isDecorName(opts.name)) return _decorMaterial(opts.name);
+  // Призрак оригинала (подгонка импортированной модели): всегда прозрачный
+  // серый, текстуры на него не ложатся - он ориентир, а не часть предмета
+  if (opts && String(opts.name || '').startsWith('ghost:')) {
+    const m = new THREE.MeshLambertMaterial({
+      color: 0x8fb3ff, transparent: true, opacity: 0.28, depthWrite: false,
+      side: THREE.DoubleSide });
+    m.name = opts.name;
+    return m;
+  }
+  return _withNormal(_makeMeshMaterial(THREE, opts, _matHints));
+}
+
+// Карта нормалей (превью галки «Normal Map»)
+//
+// Строит её Python (normal_map.py) - та же картинка, что уйдёт в мод. Здесь
+// только наложение. Материалы пересоздаются на каждую смену текстуры, поэтому
+// нормаль цепляется в makeMeshMaterial, а не один раз
+let _normal = null;   // {tex, material}: material '' - все меши предмета
+let _normalWanted = null;   // последний запрошенный url: старые ответы не нужны
+
+function _normalFits(mat) {
+  if (!_normal || !mat || Array.isArray(mat)) return false;
+  const name = String(mat.name || '');
+  if (_isDecorName(name) || name.startsWith('ghost:')) return false;
+  return !_normal.material || name === _normal.material;
+}
+
+function _withNormal(mat) {
+  if (!mat || Array.isArray(mat) || !mat.isMeshLambertMaterial) return mat;
+  const fits = _normalFits(mat);
+  mat.normalMap = fits ? _normal.tex : null;
+  // Нормаль Source - «DirectX» (Y вниз), three.js ждёт «OpenGL»: зеленый
+  // канал переворачивается здесь, а не в картинке - она уходит в мод как есть
+  mat.normalScale.set(1, -1);
+  mat.needsUpdate = true;
+  return mat;
+}
+
+function _applyNormals() {
+  if (!currentModel) return;
+  currentModel.traverse(child => {
+    if (child.isMesh) _withNormal(child.material);
+  });
+}
+
+/** Для автопроверки: на каких мешах сейчас лежит нормаль */
+window.normalDebug = () => {
+  const out = [];
+  if (currentModel) currentModel.traverse(c => {
+    if (c.isMesh && c.material && !Array.isArray(c.material)) {
+      out.push({ name: c.material.name, normal: !!c.material.normalMap });
+    }
+  });
+  return out;
+};
+
+/** url PNG нормали и материал ('' - все меши предмета); null - убрать */
+window.setNormalMap = function(url, material) {
+  _normalWanted = url || null;
+  if (!url) {
+    if (_normal) _normal.tex.dispose();
+    _normal = null;
+    _applyNormals();
+    return;
+  }
+  _loadTextureThen(url, tex => {
+    if (_normalWanted !== url) { tex.dispose(); return; }  // уже другая или убрана
+    tex.colorSpace = THREE.NoColorSpace;   // векторы, а не цвет
+    if (_normal) _normal.tex.dispose();
+    _normal = { tex, material: material || '' };
+    _applyNormals();
+  });
+};
+
+// Подгонка своей модели
+// Масштаб, поворот (вокруг X -> Y -> Z) и сдвиг в осях SMD оружия - те же
+// числа, что Python запекает в вершины. Меши модели (без призрака) живут в
+// группе `fit` внутри currentModel: нормировка кадра остаётся снаружи. В
+// режиме подгонки к группе прицеплен TransformControls - крутить, тянуть и
+// растягивать мышью, как в Blender (G/R/S переключают инструмент), призрак
+// оригинала показывается только в этом режиме
+let _fitGroup = null;
+let _fitState = null;   // последняя подгонка - повторяется после перезагрузки OBJ
+let _fitMode = false;
+// Что подгоняем: 'model' - свою модель (группа `fit`), 'decor' - гирлянду
+// поверх оружия. Гизмо, G/R/S и числа у обеих одни и те же
+let _fitTarget = 'model';
+let _fitControls = null;
+// Оси SMD -> оси сцены: (x, y, z) -> (x, z, −y), как в SmdToObjService
+const _FIT_C = new THREE.Matrix4().set(1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1);
+const _FIT_CT = _FIT_C.clone().transpose();
+
+function _isGhost(obj) {
+  return obj.isMesh && obj.material && !Array.isArray(obj.material)
+    && String(obj.material.name).startsWith('ghost:');
+}
+
+/** Узел, который сейчас подгоняют: группа своей модели или гирлянда */
+function _fitNode() {
+  if (_fitTarget === 'decor') {
+    return (_decorObject && _decorObject.parent) ? _decorObject : null;
+  }
+  return _ensureFitGroup();
+}
+
+/** Числа подгонки в осях SMD -> положение узла в осях сцены */
+function _fitPose(scale, rotate, offset) {
+  const d = Math.PI / 180;
+  const R = new THREE.Matrix4().makeRotationZ(rotate[2] * d)
+    .multiply(new THREE.Matrix4().makeRotationY(rotate[1] * d))
+    .multiply(new THREE.Matrix4().makeRotationX(rotate[0] * d));
+  const M = _FIT_C.clone().multiply(R).multiply(_FIT_CT);
+  return { quat: new THREE.Quaternion().setFromRotationMatrix(M),
+           scale, pos: new THREE.Vector3(offset[0], offset[2], -offset[1]) };
+}
+
+/** Гирлянда встаёт по своей подгонке (единица - где её вешает игра) */
+function _placeDecorFit() {
+  if (!_decorObject) return;
+  const f = _decorFitState || [1, [0, 0, 0], [0, 0, 0]];
+  _placeFit(_decorObject, _fitPose(f[0], f[1], f[2]));
+}
+
+/** Группа подгонки текущей модели (создаётся при первом обращении) */
+function _ensureFitGroup() {
+  if (!currentModel) return null;
+  if (_fitGroup && _fitGroup.parent === currentModel) return _fitGroup;
+  _fitGroup = new THREE.Group();
+  _fitGroup.name = 'fit';
+  // Гирлянда за своей моделью не едет: игра вешает её на кости стоковой, и
+  // подгонка должна показывать, совпадёт ли с ней модель, а не тащить её
+  currentModel.children.filter(c => !_isGhost(c) && c !== _decorObject)
+    .forEach(c => _fitGroup.add(c));   // add() переносит из currentModel
+  currentModel.add(_fitGroup);
+  // attach() у TransformControls сам включает visible: вне режима гизмо
+  // висело бы над моделью, у которой просто выставили числа подгонки
+  if (_fitControls && _fitMode && _fitTarget === 'model') _fitControls.attach(_fitGroup);
+  return _fitGroup;
+}
+
+// `animate` - доехать за FIT_TWEEN_MS, а не встать сразу: так возвращается
+// «Сбросить». Ввод чисел и первая постановка ставят сразу - там движение
+// либо не нужно, либо крутится по клавише
+const FIT_TWEEN_MS = 220;
+let _fitTween = null;      // {group, from:{quat,scale,pos}, to:{...}, t0}
+
+window.setFitTransform = function(scale, rotate, offset, animate = false, target = 'model') {
+  const identity = scale === 1 && rotate.every(v => !v) && offset.every(v => !v);
+  const state = identity ? null : [scale, rotate.slice(), offset.slice()];
+  let group;
+  if (target === 'decor') {
+    _decorFitState = state;
+    group = _decorObject;           // встанет и неповешенной - до прихода модели
+  } else {
+    _fitState = state;
+    group = _ensureFitGroup();
+  }
+  if (!group) return;
+  const to = _fitPose(scale, rotate, offset);
+  if (!animate || _noMotion()) { _fitTween = null; _placeFit(group, to); return; }
+  _fitTween = {
+    group, to, t0: performance.now(),
+    from: { quat: group.quaternion.clone(), scale: group.scale.x, pos: group.position.clone() },
+  };
+};
+
+function _placeFit(group, f) {
+  group.quaternion.copy(f.quat);
+  group.scale.setScalar(f.scale);
+  group.position.copy(f.pos);
+}
+
+function _stepFitTween() {
+  if (!_fitTween) return;
+  const { group, from, to } = _fitTween;
+  if (group !== _fitGroup && group !== _decorObject) { _fitTween = null; return; }   // модель сменилась
+  const k = Math.min(1, (performance.now() - _fitTween.t0) / FIT_TWEEN_MS);
+  const e = 1 - Math.pow(1 - k, 3);
+  _placeFit(group, {
+    quat: from.quat.clone().slerp(to.quat, e),
+    scale: from.scale + (to.scale - from.scale) * e,
+    pos: from.pos.clone().lerp(to.pos, e),
+  });
+  if (k >= 1) _fitTween = null;
+}
+
+/** Обратно: трансформ группы -> числа подгонки в осях SMD */
+function _fitFromGroup(group) {
+  // Масштаб только равномерный: сборке нужен один множитель
+  const s = (group.scale.x + group.scale.y + group.scale.z) / 3;
+  group.scale.setScalar(s);
+  const M = _FIT_CT.clone().multiply(new THREE.Matrix4().makeRotationFromQuaternion(group.quaternion)).multiply(_FIT_C);
+  // Fit.matrix() у Python - Rz·Ry·Rx, у THREE это порядок 'ZYX'
+  const e = new THREE.Euler().setFromRotationMatrix(M, 'ZYX');
+  const deg = (v) => Math.round(v * 180 / Math.PI * 10) / 10;
+  const p = group.position;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  return { scale: Math.round(s * 1000) / 1000,
+           rotate: [deg(e.x), deg(e.y), deg(e.z)],
+           offset: [r1(p.x), r1(-p.z), r1(p.y)] };
+}
+
+window.setFitMode = function(on, target = 'model') {
+  _fitMode = Boolean(on);
+  if (_fitMode) _fitTarget = target === 'decor' ? 'decor' : 'model';
+  // Призрак оригинала - ориентир своей модели, гирлянду подгоняют к самой
+  // модели в кадре, и серый двойник только мешал бы
+  const ghosts = _fitMode && _fitTarget === 'model';
+  if (currentModel) currentModel.traverse(c => { if (_isGhost(c)) c.visible = ghosts; });
+  if (_fitMode) {
+    if (!_fitControls) {
+      _fitControls = new TransformControls(camera, renderer.domElement);
+      _fitControls.setSpace('local');
+      _fitControls.addEventListener('dragging-changed', e => { controls.enabled = !e.value; });
+      _fitControls.addEventListener('objectChange', () => _fitOpEmit());
+      scene.add(_fitControls);
+    }
+    const group = _fitNode();
+    if (group) _fitControls.attach(group); else _fitControls.detach();
+    _fitControls.enabled = true;
+  } else if (_fitControls) {
+    // Enter или «Готово» посреди G/R/S: трансформ уже отдан - подтверждаем,
+    // иначе орбита осталась бы выключенной, а курсор - крестом
+    if (_fitOp) _fitOpEnd();
+    _fitControls.detach();
+    _fitControls.enabled = false;
+  }
+  if (!_fitMode) {
+    _cancelBendDrag();
+    _fitTarget = 'model';
+    _bendOn = false;
+    controls.enableZoom = true;
+    _hideBendMarker();
+  }
+};
+
+/** Инструмент: гизмо 'translate' | 'rotate' | 'scale' либо 'bend' - гнуть
+ *  гирлянду мышью (только у гирлянды: у своей модели гнуть нечего) */
+window.setFitTool = function(mode) {
+  _bendOn = mode === 'bend' && _fitMode && _fitTarget === 'decor';
+  if (!_bendOn) _cancelBendDrag();
+  controls.enableZoom = !_bendOn;
+  if (!_bendOn) _hideBendMarker();
+  if (!_fitControls) return;
+  if (_bendOn) { _fitControls.detach(); return; }
+  _fitControls.setMode(mode);
+  const node = _fitMode ? _fitNode() : null;
+  if (node && _fitControls.object !== node) _fitControls.attach(node);
+};
+
+// Модальные операции, как в Blender
+// G/R/S начинают операцию: дальше модель следует за мышью без зажатой кнопки,
+// X/Y/Z ограничивают ось (повторно - снимают), левая кнопка подтверждает,
+// Esc или правая - отменяет. Масштаб и поворот считаются относительно точки
+// опоры - центра группы на экране, как у Blender вокруг курсора-пивота.
+// Клавиши - по коду, а не по букве: на русской раскладке те же кнопки
+const FIT_KEYS = { KeyG: 'translate', KeyR: 'rotate', KeyS: 'scale' };
+const FIT_AXES = { KeyX: 'x', KeyY: 'y', KeyZ: 'z' };
+// Оси SMD в осях сцены: X -> X, Y (вверх) -> Y сцены? нет: (x, y, z) -> (x, z, −y),
+// значит Y_smd = −Z сцены, Z_smd = Y сцены
+const FIT_AXIS_DIR = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 0, -1),
+                       z: new THREE.Vector3(0, 1, 0) };
+let _fitOp = null;         // {tool, axis, start:{pos,quat,scale}, mouse0, pivot}
+const _mouse = { x: 0, y: 0 };
+
+function _screenOf(worldPos) {
+  const v = worldPos.clone().project(camera);
+  const r = renderer.domElement.getBoundingClientRect();
+  return { x: (v.x + 1) / 2 * r.width, y: (1 - v.y) / 2 * r.height };
+}
+
+function _fitOpEmit() {
+  const node = _fitNode();
+  if (!node) return;
+  const fit = _fitFromGroup(node);
+  const state = [fit.scale, fit.rotate, fit.offset];
+  if (_fitTarget === 'decor') _decorFitState = state; else _fitState = state;
+  if (typeof window.onFitChanged === 'function') window.onFitChanged(fit, _fitTarget);
+}
+
+window.startFitOp = function(tool) {
+  if (!_fitMode) return;
+  const group = _fitNode();
+  if (!group) return;
+  if (_fitOp) _fitOpCancel();
+  _fitTween = null;                 // рукой - значит с того места, где модель сейчас
+  group.updateMatrixWorld(true);
+  const pivotWorld = new THREE.Vector3().setFromMatrixPosition(group.matrixWorld);
+  _fitOp = {
+    tool, axis: null,
+    start: { pos: group.position.clone(), quat: group.quaternion.clone(), scale: group.scale.x },
+    mouse0: { x: _mouse.x, y: _mouse.y },
+    pivot: _screenOf(pivotWorld), pivotWorld,
+  };
+  controls.enabled = false;
+  if (_fitControls) _fitControls.enabled = false;
+  window.setFitTool(tool);
+  if (typeof window.onFitTool === 'function') window.onFitTool(tool);
+  document.getElementById('canvas-container').style.cursor = 'crosshair';
+  // Захват курсора, как у Blender (continuous grab): без него курсор упирался
+  // в край кадра, и масштаб дальше не рос. Под захватом курсора не видно, а
+  // положение считаем сами из movementX/Y - оно может уходить далеко за кадр.
+  // Не дали захват (старый браузер, политика) - работаем без него
+  try {
+    const p = renderer.domElement.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  } catch (_) { /* без захвата */ }
+};
+
+function _fitOpEnd() {
+  _fitOp = null;
+  controls.enabled = true;
+  if (_fitControls) _fitControls.enabled = _fitMode;
+  document.getElementById('canvas-container').style.cursor = '';
+  if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+}
+// Esc под захватом браузер съедает сам и снимает захват - для нас это отмена,
+// как и в Blender
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === renderer.domElement;
+  if (_fitOp && !locked) _fitOpCancel();
+  // Захват пришёл, когда операцию уже подтвердили щелчком - отпускаем
+  if (!_fitOp && locked) document.exitPointerLock();
+});
+
+/**
+ * Снимает модель со сцены. Единственное место: подгонка держит ссылки на её
+ * группу (гизмо, G/R/S, твин), и без сброса гизмо оставалось висеть в кадре
+ * над уже удалённой моделью - и на следующей, если операция шла в момент
+ * смены оружия.
+ */
+function _dropModel() {
+  if (_fitOp) _fitOpEnd();          // модели больше нет - отменять нечего
+  if (_fitControls) _fitControls.detach();
+  _fitGroup = null;
+  _fitTween = null;
+  if (currentModel) { scene.remove(currentModel); currentModel = null; }
+  if (_critSprite)  { scene.remove(_critSprite);  _critSprite  = null; }
+  _texByName = {};
+  // Выделение ножниц - номера треугольников УШЕДШЕЙ модели
+  if (window.clearCutSelection) window.clearCutSelection();
+}
+
+/** Отмена операции; false - операции не было (Esc тогда достаётся странице) */
+function _fitOpCancel() {
+  const node = _fitOp ? _fitNode() : null;
+  if (!node) return false;
+  const { pos, quat, scale } = _fitOp.start;
+  node.position.copy(pos);
+  node.quaternion.copy(quat);
+  node.scale.setScalar(scale);
+  _fitOpEmit();
+  _fitOpEnd();
+  return true;
+}
+window.cancelFitOp = _fitOpCancel;
+
+window.setFitAxis = function(axis) {
+  if (!_fitOp) return;
+  _fitOp.axis = _fitOp.axis === axis ? null : axis;
+  _fitOpApply();
+};
+
+/** Пересчитывает трансформ группы по положению мыши относительно старта */
+function _fitOpApply() {
+  const op = _fitOp, group = op ? _fitNode() : null;
+  if (!op || !group) return;
+  const { start, pivot, mouse0 } = op;
+  const dx = _mouse.x - mouse0.x, dy = _mouse.y - mouse0.y;
+  if (op.tool === 'scale') {
+    const d0 = Math.hypot(mouse0.x - pivot.x, mouse0.y - pivot.y) || 1;
+    const d1 = Math.hypot(_mouse.x - pivot.x, _mouse.y - pivot.y);
+    group.scale.setScalar(Math.max(0.001, start.scale * d1 / d0));
+  } else if (op.tool === 'rotate') {
+    const a0 = Math.atan2(mouse0.y - pivot.y, mouse0.x - pivot.x);
+    const a1 = Math.atan2(_mouse.y - pivot.y, _mouse.x - pivot.x);
+    let angle = a1 - a0;
+    // Ось: заданная клавишей (в мировых осях сцены) или взгляд камеры
+    let axis;
+    if (op.axis) {
+      axis = FIT_AXIS_DIR[op.axis].clone();
+      // Знак - чтобы вращение шло за мышью, куда бы ось ни смотрела
+      const toCam = camera.position.clone().sub(op.pivotWorld).normalize();
+      if (axis.dot(toCam) < 0) angle = -angle;
+    } else {
+      axis = camera.position.clone().sub(op.pivotWorld).normalize();
+    }
+    // Экранный угол по часовой (y вниз) - в мировом это против оси на камеру
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, -angle);
+    group.quaternion.copy(q.multiply(start.quat));
+  } else {
+    // Сдвиг в плоскости камеры на глубине опоры: пиксели -> мировые единицы
+    const r = renderer.domElement.getBoundingClientRect();
+    const dist = camera.position.distanceTo(op.pivotWorld);
+    const unitsPerPx = 2 * dist * Math.tan(camera.fov * Math.PI / 360) / r.height;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    let delta = right.multiplyScalar(dx * unitsPerPx).add(up.multiplyScalar(-dy * unitsPerPx));
+    if (op.axis) {
+      const dir = FIT_AXIS_DIR[op.axis];
+      delta = dir.clone().multiplyScalar(delta.dot(dir));
+    }
+    // Мировой сдвиг -> локальный в currentModel (та нормирована равномерно)
+    const local = delta.divideScalar(currentModel.scale.x || 1);
+    group.position.copy(start.pos).add(local);
+  }
+  _fitOpEmit();
+}
+
+// На окне, а не на холсте: без захвата курсор, вышедший за холст, иначе
+// переставал двигать модель - операция при этом ещё шла
+window.addEventListener('mousemove', e => {
+  if (document.pointerLockElement === renderer.domElement) {
+    // Под захватом clientX/Y заморожены - ведём виртуальный курсор
+    _mouse.x += e.movementX;
+    _mouse.y += e.movementY;
+  } else {
+    const r = renderer.domElement.getBoundingClientRect();
+    _mouse.x = e.clientX - r.left;
+    _mouse.y = e.clientY - r.top;
+  }
+  if (_fitOp) _fitOpApply();
+});
+renderer.domElement.addEventListener('mousedown', e => {
+  if (!_fitOp) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.button === 0) _fitOpEnd();      // подтвердить: трансформ уже отдан
+  else _fitOpCancel();
+}, true);
+renderer.domElement.addEventListener('contextmenu', e => {
+  if (_fitOp || _fitMode) e.preventDefault();
+});
+
+window.addEventListener('keydown', e => {
+  if (!_fitMode || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === 'Escape' && _fitOp) { e.preventDefault(); _fitOpCancel(); return; }
+  if (_fitOp && FIT_AXES[e.code]) { e.preventDefault(); window.setFitAxis(FIT_AXES[e.code]); return; }
+  const tool = FIT_KEYS[e.code];
+  if (!tool) return;
+  e.preventDefault();
+  window.startFitOp(tool);
+});
+
+/** Габариты модели и призрака в единицах сцены - для автопроверки подгонки */
+window.fitDebug = function() {
+  if (!currentModel) return null;
+  currentModel.updateMatrixWorld(true);
+  const dump = (b) => b.isEmpty() ? null
+    : [b.min.toArray(), b.max.toArray()].map(a => a.map(v => +v.toFixed(3)));
+  const ghost = currentModel.children.filter(_isGhost);
+  const own = _fitGroup && _fitGroup.parent === currentModel ? [_fitGroup]
+    : currentModel.children.filter(c => !ghost.includes(c) && c !== _decorObject);
+  const union = (list) => list.reduce((b, o) => b.expandByObject(o), new THREE.Box3());
+  return { model: dump(union(own)), ghost: dump(union(ghost)), fit: _fitState, mode: _fitMode };
+};
+
+// Пересобирает материалы уже загруженной модели под новые подсказки:
+// подсказки обычно приходят раньше текстур, но порядок не гарантирован
+function _refreshMaterials(object) {
+  if (!object) return;
+  object.traverse(child => {
+    if (!child.isMesh || !child.material || Array.isArray(child.material)) return;
+    const old = child.material;
+    if (!old.name) return;
+    child.material = makeMeshMaterial({ map: old.map, name: old.name });
+  });
+}
+
+let _rawHints = {};   // как пришли из Python, без унаследованных частями
+
+window.setMaterialHints = function(hints) {
+  _rawHints = hints || {};
+  _matHints = _withPartHints(_rawHints);
+  _refreshMaterials(currentModel);
+};
+
+// Применяет текстуру к одному мешу, всегда создавая новый материал.
+// In-place (map=tex) ненадёжен для материалов, созданных без map -
+// Three.js не перекомпилирует шейдер даже при needsUpdate=true
+function _updateMeshTex(child, tex) {
+  const prevName = (child.material && !Array.isArray(child.material))
+    ? (child.material.name || '') : '';
+  child.material = makeMeshMaterial({ map: tex, name: prevName });
+}
+
+// Обходит модель и применяет текстуру только к мешам из filter (Set имён).
+// Если filter = null - применяет ко всем
+function _applyTexFiltered(object, tex, filter) {
+  object.traverse(child => {
+    if (!child.isMesh) return;
+    if (filter) {
+      const mn = child.material && !Array.isArray(child.material) ? child.material.name : '';
+      if (!filter.has(child.name) && !filter.has(mn)) return;
+    }
+    _updateMeshTex(child, tex);
+  });
+}
+
+// meshFilter: Set имён мешей/материалов для анимации; null = использовать _editableMeshNames или все
+function startAnimation(textures, framerate, meshFilter) {
+  stopAnimation();
+  if (!textures || textures.length <= 1) return;
+  _animFrames    = textures;
+  _animMeshNames = meshFilter || null;
+  let frame      = 0;
+  const ms       = Math.max(16, Math.round(1000 / Math.max(0.1, framerate)));
+  _animTimer     = setInterval(() => {
+    if (!currentModel) { frame++; return; }
+    const tex    = _animFrames[frame % _animFrames.length];
+    // Приоритет: per-mesh фильтр -> _editableMeshNames -> все меши
+    const filter = _animMeshNames || _editableMeshNames;
+    _applyTexFiltered(currentModel, tex, filter);
+    requestRender();
+    frame++;
+  }, ms);
+}
+
+// Перелёт камеры
+// При входе в вид от первого лица и выходе из него камера долетает за
+// CAM_FLY_MS, кадр за кадром в animate(), а не переставляется рывком. Первая постановка (камеры ещё
+// нигде не было) - сразу. Позиция, цель, FOV и «верх» интерполируются
+// линейно с плавным ходом, для перелётов такой длины этого достаточно
+const CAM_FLY_MS = 300;
+let _camFly = null;        // {from:{pos,target,fov,up}, to:{...}, t0}
+let _camPlaced = false;
+//: Анимации выключены - настройкой страницы (setMotion) или системой
+let _motionOff = false;
+const _noMotion = () => _motionOff
+  || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+window.setMotion = function(on) {
+  _motionOff = !on;
+  document.body.classList.toggle('no-motion', _motionOff);
+};
+
+function _flyCamera(pos, target, fov, up) {
+  const to = { pos: new THREE.Vector3(...pos), target: new THREE.Vector3(...target),
+               fov, up: new THREE.Vector3(...up) };
+  if (!_camPlaced || _noMotion()) {
+    _camFly = null;
+    _placeCamera(to);
+    _camPlaced = true;
+    return;
+  }
+  _camFly = {
+    from: { pos: camera.position.clone(), target: controls.target.clone(),
+            fov: camera.fov, up: camera.up.clone() },
+    to, t0: performance.now(),
+  };
+}
+
+function _placeCamera(c) {
+  camera.up.copy(c.up);
+  camera.position.copy(c.pos);
+  if (camera.fov !== c.fov) { camera.fov = c.fov; camera.updateProjectionMatrix(); }
+  camera.lookAt(c.target);
+  controls.target.copy(c.target);
+  controls.update();
+}
+
+function _stepCameraFly() {
+  if (!_camFly) return;
+  const k = Math.min(1, (performance.now() - _camFly.t0) / CAM_FLY_MS);
+  const e = 1 - Math.pow(1 - k, 3);            // ease-out cubic
+  const { from, to } = _camFly;
+  _placeCamera({
+    pos: from.pos.clone().lerp(to.pos, e),
+    target: from.target.clone().lerp(to.target, e),
+    fov: from.fov + (to.fov - from.fov) * e,
+    up: from.up.clone().lerp(to.up, e).normalize(),
+  });
+  if (k >= 1) _camFly = null;
+}
+
+/** Проявляет холст заново: зовётся, когда в сцену встала новая модель.
+ *  Смена текстур или анимации сцену не трогает и сюда не заходит */
+function _revealCanvas() {
+  const el = renderer.domElement;
+  el.classList.add('is-hidden');
+  void el.offsetWidth;              // зафиксировать «спрятан» до перехода
+  el.classList.remove('is-hidden');
+}
+
+/** Где камера сейчас - для автопроверки перелёта */
+window.cameraDebug = () => ({
+  pos: camera.position.toArray().map(v => +v.toFixed(3)),
+  target: controls.target.toArray().map(v => +v.toFixed(3)),
+  fov: +camera.fov.toFixed(2), flying: !!_camFly,
+});
+
+// Geometry helpers
+function applyTransform(object, cx, cy, cz, scale) {
+  if (_viewRig) { _applyFirstPersonRig(object); return; }
+  object.position.set(-cx * scale, -cy * scale, -cz * scale);
+  object.scale.setScalar(scale);
+  const fovRad   = (DEFAULT_FOV * Math.PI) / 180;
+  const distance = 1.0 / Math.tan(fovRad / 2) * 1.8;
+  _flyCamera([0, 0.2, distance], [0, 0, 0], DEFAULT_FOV, [0, 1, 0]);
+}
+
+// Вид от первого лица: сцена уже стоит там, где надо относительно глаза,
+// поэтому модель не центрируется и не масштабируется - двигается камера
+function _applyFirstPersonRig(object) {
+  const rig = _firstPersonCamera(_viewRig);
+  object.position.set(0, 0, 0);
+  object.scale.setScalar(1);
+  _flyCamera(rig.position, rig.target, rig.fov, rig.up);
+}
+
+// Как ставить камеру: null - орбита вокруг модели (обычное превью),
+// объект - вид от первого лица (см. js/viewer_camera.js).
+// Задаётся ДО загрузки модели: applyTransform читает его при показе
+window.setViewRig = function(rig) {
+  _viewRig = rig || null;
+  // Орбита в кадре от первого лица бессмысленна: там важно именно то, что
+  // видит игрок, а не свободный осмотр
+  controls.enabled = !_viewRig;
+  // «Верх» и FOV орбиты вернёт перелёт камеры при показе обычной модели.
+  // Переставляем камеру сразу только при входе в режим: выход из него всегда
+  // сопровождается загрузкой другой модели, а её габариты здесь неизвестны
+  if (_viewRig && currentModel) _applyFirstPersonRig(currentModel);
+};
+
+function applyTexture(object, tex) {
+  object.traverse(child => {
+    if (!child.isMesh) return;
+    // Preserve the material name so applyMaterialMap can still match by name
+    const prevMatName = child.material && !Array.isArray(child.material)
+      ? child.material.name : '';
+    child.material = makeMeshMaterial({ map: tex, name: prevMatName });
+    child.material.needsUpdate = true;
+  });
+}
+
+// Texture loader helper
+
+// Загружает текстуру из dataUrl и вызывает onLoaded(texture).
+// При ошибке логирует в консоль и НЕ вызывает onLoaded (модель остаётся
+// с текущим материалом - лучше серая, чем белый экран)
+function _loadTextureThen(dataUrl, onLoaded) {
+  const tl = new THREE.TextureLoader();
+  tl.load(
+    dataUrl,
+    tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      onLoaded(tex);
+      requestRender();
+    },
+    undefined,       // onProgress - не нужен
+    err => {
+      // Ошибка тихая в THREE.js - делаем её видимой для отладки
+      const preview = dataUrl ? dataUrl.slice(0, 80) + '…' : '(empty)';
+      console.warn('[3D viewer] Texture load failed:', err, 'dataUrl prefix:', preview);
+    }
+  );
+}
+
+// Анимирует CritHIT billboard массивом уже загруженных Three.js текстур
+function _animateCritSprite(textures, fps) {
+  if (_critAnimTimer !== null) { clearInterval(_critAnimTimer); _critAnimTimer = null; }
+  if (!textures || textures.length <= 1) return;
+  let frame = 1;   // кадр 0 уже применён снаружи
+  const ms  = Math.max(16, Math.round(1000 / Math.max(0.1, fps)));
+  _critAnimTimer = setInterval(() => {
+    if (!_critSprite) { clearInterval(_critAnimTimer); _critAnimTimer = null; return; }
+    _critSprite.material.map = textures[frame % textures.length];
+    _critSprite.material.needsUpdate = true;
+    requestRender();
+    frame++;
+  }, ms);
+}
+
+// Public API
+
+window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale, loadSeq) {
+  const gen = ++_sceneGeneration;   // все предыдущие async-колбэки теперь устарели
+  _isCritHitMode    = false;
+  _editableMeshNames = null;   // сбрасываем при каждой новой модели
+  setStatus(_t.loading, false, true);
+  stopAnimation();
+  _exitSkyboxView();
+  _disposeSkinned();           // уходим с анимированной сцены - гасим микшер
+  _dropModel();
+
+  const blob   = new Blob([objContent], { type: 'text/plain' });
+  const objUrl = URL.createObjectURL(blob);
+
+  new OBJLoader().load(
+    objUrl,
+    object => {
+      URL.revokeObjectURL(objUrl);
+      if (_sceneGeneration !== gen) return;   // запрос устарел - более новый уже в очереди
+      scene.add(object);
+      currentModel = object;
+      _revealCanvas();
+
+      // Сначала показываем модель без текстуры (нейтральный цвет)
+      applyTexture(object, null);
+      applyTransform(object, cx, cy, cz, scale);
+      // До раздачи текстур: куски своих материалов получают их по имени
+      _splitParts();
+      hideStatus();
+
+      // Диагностика: логируем все меши и имена материалов
+      let _meshLog = '[OBJ meshes] total children=' + object.children.length + ' | ';
+      object.traverse(child => {
+        if (child.isMesh) {
+          const mn = child.material ? (Array.isArray(child.material)
+            ? child.material.map(m => m.name).join(',')
+            : child.material.name) : 'null';
+          _meshLog += 'mesh="' + child.name + '" mat="' + mn + '" | ';
+        }
+      });
+      console.log(_meshLog);
+
+      // Грузим текстуру ПОСЛЕ того как OBJ уже в сцене - исключает race condition
+      if (texDataUrl && texDataUrl.length > 0) {
+        _loadTextureThen(texDataUrl, tex => {
+          // Применяем только если модель не сменилась за время загрузки
+          if (currentModel === object) applyTexture(object, tex);
+        });
+      }
+
+      if (_pendingAnim) {
+        const { frameDataUrls, framerate, matName } = _pendingAnim;
+        _pendingAnim = null;
+        window.loadAnimatedTexture(frameDataUrls, framerate, matName);
+      }
+
+      if (_pendingMaterialMap) {
+        const map = _pendingMaterialMap;
+        _pendingMaterialMap = null;
+        window.applyMaterialMap(map);
+      }
+
+      // Подгонка пережила перезагрузку OBJ (возврат из вида от первого
+      // лица): группа старой модели ушла вместе с ней. Призрак оригинала
+      // виден только в режиме подгонки. Под ригом - сцена рук: подгонка в
+      // неё уже запечена Python, а крутить руки вместе с оружием гизмо не
+      // должно
+      object.traverse(c => { if (_isGhost(c)) c.visible = _fitMode; });
+      if (!_viewRig) {
+        if (_fitState) window.setFitTransform(..._fitState);
+        if (_fitMode) window.setFitMode(true, _fitTarget);
+      }
+      // Гирлянда пережила смену модели так же, как подгонка: своя модель,
+      // возврат из вида от первого лица, смена состояния - предмет тот же
+      _mountDecor();
+      _paintDecor();
+
+      if (_pendingTexUrl) {
+        // Одиночная текстура, запрошенная во время загрузки OBJ. Применяем
+        // ПОСЛЕ texDataUrl самой загрузки: запрос пришёл позже -> он новее
+        const url = _pendingTexUrl;
+        _pendingTexUrl = null;
+        window.updateTextureFromDataUrl(url);
+      }
+
+    },
+    undefined,
+    err => {
+      URL.revokeObjectURL(objUrl);
+      console.error('OBJ load error:', err);
+      setStatus(_t.error_model, true);
+    }
+  );
+};
+
+// Запасные габариты: у сцены их считает Python (viewmodel_animation._bounds),
+// как и у OBJ. Здесь - если сцена пришла без них
+function _sceneBounds(object) {
+  // Матрицы группы (поворот корня из осей Source) считаются рендером на
+  // следующем кадре - до него габариты вышли бы от неповёрнутой сцены
+  object.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return [0, 0, 0, 1];
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const longest = Math.max(size.x, size.y, size.z, 1e-6);
+  // Наибольшая сторона в две единицы - то же правило, что у OBJ
+  // (domain/preview/obj_bounds.TARGET_EXTENT), иначе сцена вдвое мельче
+  return [center.x, center.y, center.z, 2 / longest];
+}
+
+// Анимированная вьюмодель: меш приходит один раз в bind-позе, движение - в
+// дорожках костей (см. js/viewer_skinned.js). Дальше сцена ведёт себя как
+// обычная модель: меши названы по материалам, текстуры кладутся тем же
+// applyMaterialMap, дроп и фильтр редактируемых работают без изменений
+window.loadViewmodelAnimated = function(data, loadSeq) {
+  const gen = ++_sceneGeneration;
+  _isCritHitMode = false;
+  _editableMeshNames = null;
+  setStatus(_t.loading, false, true);
+  stopAnimation();
+  _exitSkyboxView();
+  _disposeSkinned();
+  _dropModel();
+
+  try {
+    _skinned = _buildSkinnedScene(THREE, data || {}, name =>
+      makeMeshMaterial({ map: null, name }));
+  } catch (err) {
+    console.error('viewmodel build error:', err);
+    setStatus(_t.error_model, true);
+    return;
+  }
+  if (_sceneGeneration !== gen) { _disposeSkinned(); return; }
+
+  scene.add(_skinned.group);
+  currentModel = _skinned.group;
+  // Гирлянда у рук своя, в самой сцене: слой обычной модели здесь не нужен,
+  // а мышь её мешей видеть не должна
+  _mountDecor();
+  _paintDecor();
+  _revealCanvas();
+  // Вид от первого лица ставит камеру ригом, и габариты ему не нужны. Сцену
+  // же, которую смотрят со стороны (насмешка), надо вписать в кадр самим:
+  // персонаж TF2 - это шесть десятков единиц, и камера по умолчанию
+  // оказывалась у него внутри
+  const b = (data && data.bounds) || null;
+  const fit = _viewRig ? [0, 0, 0, 1]
+            : (b ? [b.cx, b.cy, b.cz, b.scale] : _sceneBounds(currentModel));
+  applyTransform(currentModel, fit[0], fit[1], fit[2], fit[3]);
+  hideStatus();
+
+  if (_pendingMaterialMap) {
+    const map = _pendingMaterialMap;
+    _pendingMaterialMap = null;
+    window.applyMaterialMap(map);
+  }
+  if (_pendingTexUrl) {
+    const url = _pendingTexUrl;
+    _pendingTexUrl = null;
+    window.updateTextureFromDataUrl(url);
+  }
+};
+
+// Смена анимации на уже показанной сцене: меш, скелет и текстуры остаются,
+// меняются только дорожки. Так переключение стоит миллисекунды, а не секунду
+// на распаковку тех же самых текстур
+window.setViewmodelClip = function(clip) {
+  if (!_skinned) return false;
+  return Boolean(_applyViewmodelClip(THREE, _skinned, clip));
+};
+
+// Пауза/продолжение проигрывания. Кадр при этом остаётся тот, что был
+window.setViewmodelPlaying = function(on) {
+  if (_skinned && _skinned.action) _skinned.action.paused = !on;
+};
+
+// Сколько анимации проиграно, 0..1 (null - анимации нет): страница рисует
+// по этой доле полосу на метке выбранной анимации
+window.viewmodelProgress = function() {
+  const action = _skinned && _skinned.action;
+  const total = action && action.getClip().duration;
+  return total ? (action.time % total) / total : null;
+};
+
+function _disposeSkinned() {
+  if (!_skinned) return;
+  if (_skinned.mixer) _skinned.mixer.stopAllAction();
+  if (_skinned.group && _skinned.group.parent) {
+    _skinned.group.parent.remove(_skinned.group);
+  }
+  _skinned.meshes.forEach(({ mesh }) => {
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.material && mesh.material.dispose) mesh.material.dispose();
+  });
+  _skinned = null;
+}
+
+// Задаёт список имён мешей, которые получают текстуру при обновлении.
+// names: массив строк (совпадают с 'g'-именами в OBJ) или null - обновлять все
+window.setEditableMeshNames = function(names) {
+  _editableMeshNames = names ? new Set(names) : null;
+};
+
+window.updateTextureFromDataUrl = function(texDataUrl) {
+  stopAnimation();
+  if (!currentModel) {
+    // Модель ещё грузится (напр. back-to-back смена оружия) - очередируем,
+    // как applyMaterialMap: success-колбэк загрузки применит. Иначе текстура
+    // пропала бы до следующего действия пользователя
+    _pendingTexUrl = texDataUrl;
+    return;
+  }
+  const target  = currentModel;
+  const animGen = _animGeneration;   // зафиксировали поколение после stopAnimation
+  _loadTextureThen(texDataUrl, tex => {
+    if (_animGeneration !== animGen) return;   // за время загрузки запустили анимацию - отменяем
+    if (currentModel !== target)     return;
+    if (_editableMeshNames) {
+      // Режим рук: обновляем только редактируемые меши, остальные не трогаем
+      target.traverse(child => {
+        if (!child.isMesh || !_editableMeshNames.has(child.name)) return;
+        const prevName = child.material && !Array.isArray(child.material)
+          ? child.material.name : '';
+        child.material = makeMeshMaterial({ map: tex, name: prevName });
+        child.material.needsUpdate = true;
+      });
+    } else {
+      applyTexture(target, tex);
+    }
+  });
+};
+
+// Применяет отдельные текстуры к каждому материалу по имени.
+// texMapJson: {mat_name: dataUrl, ...}
+// Имена должны совпадать с usemtl в OBJ (child.material.name)
+window.applyMaterialMap = function(texMapJson) {
+  if (!currentModel) {
+    // Модель ещё не загрузилась - сохраняем до момента готовности
+    _pendingMaterialMap = texMapJson;
+    return;
+  }
+
+  // Если идёт анимация и хотя бы один из целевых материалов анимирован - останавливаем.
+  // Это предотвращает перезапись статичной текстуры pending-коллбэками старой анимации
+  if (_animTimer !== null) {
+    const matNames = Object.keys(texMapJson);
+    const affectsAnimated = !_animMeshNames   // глобальная анимация - затрагивает все меши
+      || matNames.some(m => _animMeshNames.has(m));
+    if (affectsAnimated) stopAnimation();
+  }
+
+  const target = currentModel;
+  const gen    = _animGeneration;   // фиксируем поколение после возможного stopAnimation
+
+  Object.entries(texMapJson).forEach(([matName, dataUrl]) => {
+    if (!dataUrl) return;
+    _loadTextureThen(dataUrl, tex => {
+      if (currentModel !== target)  return;
+      if (_animGeneration !== gen)  return;   // анимация перезапустилась - не перезаписываем
+      // Кусок своего материала пересоздаётся при каждом выходе из режима
+      // частей - свою картинку он берёт отсюда (см. _splitMesh)
+      _texByName[matName] = tex;
+      let matched = false;
+      target.traverse(child => {
+        if (!child.isMesh) return;
+        // Match by mesh name (from OBJ 'g' group) or by material name
+        const matNameMatch = child.material && !Array.isArray(child.material)
+          ? child.material.name === matName : false;
+        if (child.name === matName || matNameMatch) {
+          child.material = makeMeshMaterial({ map: tex, name: matName });
+          matched = true;
+        }
+      });
+      if (!matched) {
+        console.warn('[3D viewer] applyMaterialMap: меш не найден для материала:', matName);
+      }
+    });
+  });
+};
+
+// matName (опционально): имя меша/материала, к которому применяется анимация.
+// Если не задан - используется _editableMeshNames (или все меши)
+window.loadAnimatedTexture = function(frameDataUrls, framerate, matName) {
+  stopAnimation();
+  if (!frameDataUrls || frameDataUrls.length === 0) return;
+
+  // Захватываем поколение ДО любых async операций.
+  // Если за время загрузки вызовут stopAnimation() - _animGeneration изменится
+  // и устаревшие коллбэки сами себя отменят
+  const animGen    = _animGeneration;
+
+  // Строим фильтр из matName (если задан)
+  const meshFilter = matName ? new Set([matName]) : null;
+
+  if (frameDataUrls.length === 1) {
+    // Одиночный кадр - применяем как статичную текстуру
+    const filter = meshFilter || _editableMeshNames;
+    if (filter && currentModel) {
+      const snapModel = currentModel;
+      _loadTextureThen(frameDataUrls[0], tex => {
+        if (_animGeneration !== animGen) return;   // устарело
+        if (currentModel !== snapModel)  return;
+        _applyTexFiltered(snapModel, tex, filter);
+      });
+    } else {
+      window.updateTextureFromDataUrl(frameDataUrls[0]);
+    }
+    return;
+  }
+  if (!currentModel) {
+    _pendingAnim = { frameDataUrls, framerate, matName };
+    return;
+  }
+  const target   = currentModel;
+  let   loaded   = 0;
+  const textures = new Array(frameDataUrls.length).fill(null);
+
+  frameDataUrls.forEach((url, i) => {
+    _loadTextureThen(url, tex => {
+      // Отменяем коллбэк если пришёл новый stopAnimation() после нашего старта
+      if (_animGeneration !== animGen) return;
+      if (currentModel !== target)     return;
+      textures[i] = tex;
+      loaded++;
+      // Первый загруженный кадр - сразу показываем (с фильтром)
+      if (loaded === 1) {
+        const filter = meshFilter || _editableMeshNames;
+        if (filter) _applyTexFiltered(target, tex, filter);
+        else        applyTexture(target, tex);
+      }
+      // Все кадры готовы - запускаем анимацию
+      if (loaded === frameDataUrls.length) {
+        startAnimation(textures, framerate, meshFilter);
+      }
+    });
+  });
+};
+
+window.showLoading = function(text) {
+  setStatus(text || _t.loading, false, true);
+};
+
+window.showPrompt = function(text) {
+  setStatus(text || _t.select_weapon, false, false);
+};
+
+window.showError = function(text) {
+  setStatus(text, true);
+};
+
+// Загрузка не удалась: крутилка иначе вертелась бы до следующего выбора.
+// Только из состояния загрузки - модель или ошибку в кадре не трогаем
+window.stopLoading = function() {
+  // hideStatus класс не снимает: смотрим, что надпись ещё на экране
+  if (status.classList.contains('loading') && status.style.display !== 'none') {
+    setStatus(_t.select_weapon);
+  }
+};
+
+// В кадре что-то показано: модель или сцена, а не надпись. Каркас сборки
+// страница рисует только поверх показанного, у загрузки модели свой кубик
+window.showsContent = function() {
+  return status.style.display === 'none';
+};
+
+window.resetViewer = function() {
+  ++_sceneGeneration;
+  _isCritHitMode    = false;
+  _editableMeshNames = null;
+  // Новый предмет: подгонка прошлого к нему не относится. Иначе его модель,
+  // успев загрузиться раньше ответа страницы, вставала повёрнутой и в гизмо
+  _fitState = null;
+  _fitMode = false;
+  _endIsolation();              // показ одной части - про прошлую модель
+  window.clearDecor();          // и гирлянда: она висела на прошлом предмете
+  window.setViewRig(null);      // сброс режима - обратно к орбите
+  stopAnimation();
+  _exitSkyboxView();
+  _disposeSkinned();
+  _dropModel();
+  setStatus(_t.select_weapon);
+};
+
+// Skybox
+
+let _skyboxTexture = null;
+let _isSkyboxMode  = false;   // колесо мыши меняет FOV вместо долли-зума
+
+function _disposeSkybox() {
+  if (_skyboxTexture) { _skyboxTexture.dispose(); _skyboxTexture = null; }
+  scene.background = null;
+}
+
+// Полный выход из режима скайбокса: снять фон + вернуть камеру/контролы.
+// Смена неба ВНУТРИ режима зовёт _disposeSkybox напрямую - FOV сохраняется
+function _exitSkyboxView() {
+  _disposeSkybox();
+  if (_isSkyboxMode) {
+    _isSkyboxMode = false;
+    controls.enableZoom = true;
+    camera.fov = DEFAULT_FOV;
+    camera.updateProjectionMatrix();
+  }
+}
+
+// Режим резки: щелчок по куску отделяет ещё один шов развёртки
+// Резать надо ТАМ, где смотрят: человек видит на модели руку и хочет пальцы, а
+// не ищет её номер в полосе частей
+//
+// Режим, а не модификатор вроде Alt+колесо: такой жест невидим, ему надо
+// учить, а первое, что делает человек, - щёлкает по модели
+let _cutMode = false;
+
+window.setCutMode = function(on) {
+  _cutMode = !!on;
+  document.getElementById('canvas-container').classList.toggle('cutting', _cutMode);
+  // Наведение на часть снимаем ВМЕСТЕ с сообщением странице: иначе на кадре
+  // текстуры оставалась разметка части, наведённой до ножниц
+  _setPartHover(null);
+  _clearCutHover();
+  if (!_cutMode) window.clearCutSelection();
+};
+
+// Ножницы: ВЫДЕЛЕНИЕ того, что станет отдельной частью
+//
+// Острова развёртки редко совпадают с деталями (у обреза приклад с корпусом -
+// один остров), поэтому человек набирает выделение (деталь до острых рёбер,
+// кисть или остров),
+// видит его на модели и отделяет кнопкой на странице. Сами обходы - в
+// js/viewer_select.js; здесь только луч, подсветка и события
+let _cutTool   = 'detail';   // 'detail' | 'brush' | 'island'
+let _cutAngle  = 30;         // порог острого ребра, градусы
+let _cutRadius = 0.05;       // кисть: доля размера модели
+let _cutErase  = false;      // кисть стирает выделение, а не добавляет
+let _cutSel    = null;       // {mesh, material, tris: Set, overlay}
+let _cutHover  = null;       // overlay того, что возьмёт щелчок
+let _cutPaint  = false;      // кисть ведут прямо сейчас
+const _cutTopos = new WeakMap();   // mesh -> {topo, labels, angle}
+
+window.setCutOptions = function(opts) {
+  const o = opts || {};
+  if (o.tool) _cutTool = o.tool;
+  if (o.angle != null) _cutAngle = Number(o.angle);
+  if (o.radius != null) _cutRadius = Number(o.radius);
+  if (o.erase != null) _cutErase = !!o.erase;
+  _clearCutHover();
+};
+
+window.cutSelection = function() {
+  if (!_cutSel || !_cutSel.tris.size) return { material: '', triangles: [] };
+  return { material: _cutSel.material,
+           triangles: [..._cutSel.tris].sort((x, y) => x - y) };
+};
+
+window.clearCutSelection = function() {
+  if (_cutSel && _cutSel.overlay) _dropOverlay(_cutSel.overlay);
+  const had = !!(_cutSel && _cutSel.tris.size);
+  _cutSel = null;
+  if (had) _tellCutSelection();
+};
+
+// Щелчок по чипу части на странице: вся часть - в выделение или из него
+window.toggleCutTris = function(material, tris) {
+  const mesh = _meshWithParts(material);
+  if (mesh && tris && tris.length) _cutApply(mesh, tris, null);
+};
+
+function _tellCutSelection() {
+  if (typeof window.onCutSelection === 'function') {
+    window.onCutSelection(_cutSel ? _cutSel.tris.size : 0,
+                          _cutSel ? _cutSel.material : '');
+  }
+}
+
+// Связи треугольников меша - один раз на меш, метки деталей - на порог
+function _cutTopo(mesh) {
+  let got = _cutTopos.get(mesh);
+  // Изгиб гирлянды двигает вершины на месте: по старым связям кисть мерила бы
+  // до прежних положений, а «деталь» брала бы прежние нормали
+  if (got && got.version !== mesh.geometry.attributes.position.version) got = null;
+  if (!got) {
+    const geo = mesh.geometry;
+    const pos = geo.attributes.position;
+    const uv = geo.attributes.uv;
+    const count = geo.index ? geo.index.count / 3 : pos.count / 3;
+    const positions = new Float32Array(count * 9);
+    const uvs = uv ? new Float32Array(count * 6) : null;
+    for (let t = 0; t < count; t++) {
+      for (let c = 0; c < 3; c++) {
+        const v = geo.index ? geo.index.getX(t * 3 + c) : t * 3 + c;
+        positions.set([pos.getX(v), pos.getY(v), pos.getZ(v)], t * 9 + c * 3);
+        if (uvs) uvs.set([uv.getX(v), uv.getY(v)], t * 6 + c * 2);
+      }
+    }
+    got = { topo: _select.topology(positions, uvs), labels: null, angle: null,
+            version: pos.version };
+    _cutTopos.set(mesh, got);
+  }
+  if (got.angle !== _cutAngle) {
+    got.labels = _select.detailLabels(got.topo, _cutAngle);
+    got.angle = _cutAngle;
+  }
+  return got;
+}
+
+// Что возьмёт инструмент в этой точке экрана: {mesh, material, tris} или null
+function _cutTarget(ndc) {
+  const hit = _hitsAt(ndc)[0];
+  if (!hit || hit.faceIndex == null) return null;
+  // Кусок своего материала: режут исходный меш - в его номерах и его связях
+  const split = hit.object.userData.partSplit;
+  const mesh = split ? split.from : hit.object;
+  const face = split ? split.faces[hit.faceIndex] : hit.faceIndex;
+  if (!_partListFor(mesh)) return null;
+  const { topo, labels } = _cutTopo(mesh);
+  let tris;
+  if (_cutTool === 'island') {
+    tris = topo.islands[face] === -1
+      ? [face] : _select.withLabel(topo.islands, face);
+  } else if (_cutTool === 'brush') {
+    const local = mesh.worldToLocal(hit.point.clone());
+    const scale = mesh.matrixWorld.getMaxScaleOnAxis() || 1;
+    tris = _select.brushTriangles(topo, face, [local.x, local.y, local.z],
+                                  (_cutRadius * _modelSpan()) / scale);
+  } else {
+    tris = _select.withLabel(labels, face);
+  }
+  return { mesh, tris, material: (mesh.material || {}).name || '' };
+}
+
+// Размер модели в мире - мерило радиуса кисти: «5% модели» одинаково и на
+// пистолете, и на пулемёте
+let _spanOf = null;
+function _modelSpan() {
+  if (!_spanOf || _spanOf.model !== currentModel) {
+    const size = new THREE.Box3().setFromObject(currentModel).getSize(new THREE.Vector3());
+    _spanOf = { model: currentModel, span: Math.max(size.x, size.y, size.z) || 1 };
+  }
+  return _spanOf.span;
+}
+
+// add = true/false - добавить/убрать; null - переключить: всё уже выделено -
+// убрать, иначе добавить. Так щелчок по выделенной детали снимает её
+function _cutApply(mesh, tris, add) {
+  if (!_cutSel || _cutSel.mesh !== mesh) {
+    // Выделение - из одного материала: у другого своя развёртка и свои номера
+    window.clearCutSelection();
+    _cutSel = { mesh, material: (mesh.material || {}).name || '', tris: new Set(), overlay: null };
+  }
+  const sel = _cutSel.tris;
+  const put = add === null ? !tris.every(t => sel.has(t)) : add;
+  for (const t of tris) { if (put) sel.add(t); else sel.delete(t); }
+  if (_cutSel.overlay) _dropOverlay(_cutSel.overlay);
+  _cutSel.overlay = _trisOverlay(mesh, sel, 0x3ec7ff, 0.6);
+  _tellCutSelection();
+}
+
+function _hoverCut(ndc) {
+  if (_cutPaint) return;
+  const found = _cutTarget(ndc);
+  _clearCutHover();
+  if (found) _cutHover = _trisOverlay(found.mesh, found.tris, 0xffb347, 0.45);
+}
+
+function _clearCutHover() {
+  if (_cutHover) _dropOverlay(_cutHover);
+  _cutHover = null;
+}
+
+function _cutClick(e) {
+  const found = _cutTarget(_ndcFromEvent(e));
+  if (found) _cutApply(found.mesh, found.tris, null);
+  return !!found;
+}
+
+// Кисть ведут протяжкой. Перехватываем только нажатие НА модели: мимо неё
+// протяжка по-прежнему крутит камеру
+(function bindCutBrush() {
+  const box = document.getElementById('canvas-container');
+  box.addEventListener('pointerdown', e => {
+    if (!_partsMode || !_cutMode || _cutTool !== 'brush' || e.button !== 0) return;
+    const found = _cutTarget(_ndcFromEvent(e));
+    if (!found) return;
+    e.stopPropagation();
+    e.preventDefault();
+    _cutPaint = true;
+    box.setPointerCapture(e.pointerId);
+    _clearCutHover();
+    _cutApply(found.mesh, found.tris, !_cutErase);
+  }, true);
+  box.addEventListener('pointermove', e => {
+    if (!_cutPaint) return;
+    e.stopPropagation();
+    const found = _cutTarget(_ndcFromEvent(e));
+    if (found && _cutSel && found.mesh === _cutSel.mesh) {
+      _cutApply(found.mesh, found.tris, !_cutErase);
+    }
+  }, true);
+  const finish = e => {
+    if (!_cutPaint) return;
+    e.stopPropagation();
+    _cutPaint = false;
+    if (box.hasPointerCapture(e.pointerId)) box.releasePointerCapture(e.pointerId);
+  };
+  box.addEventListener('pointerup', finish, true);
+  box.addEventListener('pointercancel', finish, true);
+})();
+
+// FOV-зум колесом (только скайбокс)
+// Фон-кубмапа бесконечно далёкая: долли-зум OrbitControls для неё ничего не
+// меняет, поэтому в режиме скайбокса колесо крутит угол обзора камеры
+// (скролл вверх = приблизить). Вне режима - обычный зум OrbitControls
+const SKY_FOV_MIN = 20;
+const SKY_FOV_MAX = 110;
+renderer.domElement.addEventListener('wheel', (e) => {
+  if (!_isSkyboxMode) return;
+  e.preventDefault();
+  camera.fov = Math.min(SKY_FOV_MAX,
+                Math.max(SKY_FOV_MIN, camera.fov + e.deltaY * 0.05));
+  camera.updateProjectionMatrix();
+}, { passive: false });
+
+// Публичная функция: показывает скайбокс как фон сцены (режим «Скайбокс»).
+// faces = {up|dn|lf|rt|ft|bk: dataURL}. Грани может НЕ ХВАТАТЬ: у sky_halloween
+// и sky_harvest_01 в игре нет нижней текстуры вовсе (VMT есть, а VTF нет - на
+// этих картах низ неба не виден). Такую грань закрываем ровным цветом, пустой
+// src поднял бы onerror, и вместо неба показалась бы красная надпись
+window.loadSkybox = function(faces) {
+  const gen = ++_sceneGeneration;   // отменяет параллельные загрузки моделей
+  _isCritHitMode     = false;
+  _editableMeshNames = null;
+  _isSkyboxMode      = true;
+  controls.enableZoom = false;   // колесо теперь крутит FOV (см. wheel-listener)
+  stopAnimation();
+  _dropModel();
+  setStatus(_t.loading, false, true);
+
+  const imgs = new Array(SRC_FACE_MAP.length);
+  // Ждём только те грани, которые вообще есть: считать до шести значило бы
+  // ждать вечно, а пустой src - получить onerror на ровном месте
+  const want = SRC_FACE_MAP.map(m => faces[m.src] || '');
+  const need = want.filter(Boolean).length;
+  if (!need) { setStatus(_t.error_sky, true); return; }
+  let loaded = 0;
+  let failed = false;
+  SRC_FACE_MAP.forEach((m, slot) => {
+    if (!want[slot]) return;
+    const img = new Image();
+    img.onload = () => {
+      if (_sceneGeneration !== gen || failed) return;
+      imgs[slot] = img;
+      loaded += 1;
+      if (loaded < need) return;
+      const cube = buildSkyCube(imgs);
+      _disposeSkybox();
+      scene.background = cube;
+      _skyboxTexture   = cube;
+      hideStatus();
+      requestRender();
+    };
+    img.onerror = () => {
+      if (_sceneGeneration !== gen || failed) return;
+      failed = true;
+      _disposeSkybox();   // не оставляем прежнее небо под текстом ошибки
+      setStatus(_t.error_sky, true);
+    };
+    img.src = want[slot];
+  });
+};
+
+// Публичная функция: убирает фон-скайбокс (выход из режима «Скайбокс»)
+window.clearSkybox = function() {
+  ++_sceneGeneration;   // гасим летящие onload параллельного loadSkybox
+  _exitSkyboxView();
+};
+
+// CritHIT scene
+
+// Создаёт/пересоздаёт спрайт текстуры крита над головой
+function _placeCritSprite(dataUrl, headTopWorldY) {
+  if (_critSprite) { scene.remove(_critSprite); _critSprite = null; }
+  if (!dataUrl) return;
+
+  // Создаём спрайт сразу (без текстуры), чтобы позиция была заранее задана
+  const mat    = new THREE.SpriteMaterial({ transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.55, 0.55, 1);
+  sprite.position.set(0, headTopWorldY + 0.38, 0);
+  scene.add(sprite);
+  _critSprite = sprite;
+
+  // Загружаем текстуру через хелпер с error callback
+  // Масштаб всегда 1:1 - crit.vtf в игре 256×256 (квадратная)
+  _loadTextureThen(dataUrl, tex => {
+    if (_critSprite !== sprite) return;   // спрайт уже заменён
+    mat.map = tex;
+    mat.needsUpdate = true;
+  });
+}
+
+// Применяет текстуру ко всем мешам группы (солдат или OBJ).
+// Загружает через _loadTextureThen - безопасный error callback и правильный colorSpace
+function _applyModelTexture(group, modelTexDataUrl) {
+  if (!modelTexDataUrl) return;
+  _loadTextureThen(modelTexDataUrl, tex => {
+    group.traverse(child => {
+      if (!child.isMesh) return;
+      child.material = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+      child.material.needsUpdate = true;
+    });
+  });
+}
+
+// Публичная функция: загружает сцену CritHIT (солдат + billboard текстуры).
+// modelTexDataUrl - data URL текстуры самого персонажа (необязательно)
+window.loadCritHitScene = function(critTexDataUrl, modelTexDataUrl) {
+  ++_sceneGeneration;   // отменяет любой параллельный loadCritHitSceneWithModel
+  _isCritHitMode = true;
+  _lastCritTexUrl = critTexDataUrl || '';
+  setStatus(_t.loading, false, true);
+  stopAnimation();
+  _exitSkyboxView();
+
+  // Очищаем предыдущую сцену
+  _dropModel();
+
+  // Строим солдата
+  const soldier  = buildSoldierGroup();
+  // Солдат: y=0..88 -> центр cy=44, высота=88
+  const solHeight = 88;
+  const cy        = solHeight / 2;
+  const scale     = 2.0 / solHeight;
+
+  soldier.position.set(0, -cy * scale, 0);
+  soldier.scale.setScalar(scale);
+  scene.add(soldier);
+  currentModel = soldier;
+
+  // Накладываем текстуру персонажа (если есть)
+  if (modelTexDataUrl) {
+    _applyModelTexture(soldier, modelTexDataUrl);
+  }
+
+  // Камера: немного выше центра, достаточно далеко чтобы видеть и фигуру, и эффект
+  const fovRad   = (camera.fov * Math.PI) / 180;
+  const distance = 1.0 / Math.tan(fovRad / 2) * 2.5;
+  camera.position.set(0, 0.4, distance);
+  camera.lookAt(0, 0.35, 0);
+  controls.target.set(0, 0.35, 0);
+  controls.update();
+
+  // Billboard над головой: макушка в мировых координатах = (solHeight - cy)*scale = 1.0
+  const headTopWorld = (solHeight - cy) * scale; // ≈ 1.0
+  _placeCritSprite(_lastCritTexUrl, headTopWorld);
+
+  hideStatus();
+};
+
+// Публичная функция: CritHIT сцена с пользовательской OBJ-моделью.
+// Принимает содержимое OBJ-файла + параметры центрирования (вычисленные в Python).
+// modelTexDataUrl - data URL текстуры самого персонажа (необязательно)
+window.loadCritHitSceneWithModel = function(objContent, critTexDataUrl, cx, cy, cz, scale, modelTexDataUrl) {
+  const gen = ++_sceneGeneration;   // все предыдущие async-колбэки теперь устарели
+  _isCritHitMode = true;
+  _lastCritTexUrl = critTexDataUrl || '';
+  setStatus(_t.loading, false, true);
+  stopAnimation();
+  _exitSkyboxView();
+
+  _dropModel();
+
+  const blob   = new Blob([objContent], { type: 'text/plain' });
+  const objUrl = URL.createObjectURL(blob);
+
+  new OBJLoader().load(
+    objUrl,
+    object => {
+      URL.revokeObjectURL(objUrl);
+
+      // Запрос устарел (пользователь переключился на другой режим)
+      if (_sceneGeneration !== gen) return;
+
+      // Накладываем текстуру персонажа если есть, иначе нейтральный силуэт
+      if (modelTexDataUrl) {
+        _applyModelTexture(object, modelTexDataUrl);
+      } else {
+        object.traverse(child => {
+          if (!child.isMesh) return;
+          child.material = new THREE.MeshLambertMaterial({ color: 0x575750, side: THREE.DoubleSide });
+          child.material.needsUpdate = true;
+        });
+      }
+
+      scene.add(object);
+      currentModel = object;
+      _revealCanvas();
+
+      // Позиционируем и масштабируем так же как обычную модель
+      object.position.set(-cx * scale, -cy * scale, -cz * scale);
+      object.scale.setScalar(scale);
+
+      // Камера (аналогично процедурному солдату)
+      const fovRad   = (camera.fov * Math.PI) / 180;
+      const distance = 1.0 / Math.tan(fovRad / 2) * 2.5;
+      camera.position.set(0, 0.4, distance);
+      camera.lookAt(0, 0.35, 0);
+      controls.target.set(0, 0.35, 0);
+      controls.update();
+
+      // Billboard: последняя ЗАПРОШЕННАЯ текстура (могла смениться за время
+      // парсинга OBJ через updateCritHitTexture), а не захваченная при старте
+      _placeCritSprite(_lastCritTexUrl, 1.0);
+
+      hideStatus();
+        },
+    undefined,
+    err => {
+      URL.revokeObjectURL(objUrl);
+      console.error('Custom model OBJ load error:', err);
+      // Fallback: строим процедурного солдата (только если запрос ещё актуален)
+      if (_sceneGeneration === gen) {
+        window.loadCritHitScene(_lastCritTexUrl, modelTexDataUrl);
+      }
+    }
+  );
+};
+
+
+// Публичная функция: обновляет только текстуру CritHIT billboard.
+// Билборд крита над УЖЕ показанной анимированной сценой
+//
+// Сцену смерти строит общий loadViewmodelAnimated (персонаж, скелет, дорожки),
+// и спрайт к ней добавляется отдельно: он есть только у крита. Флаг режима
+// поднимаем здесь же - по нему работает updateCritHitTexture, когда человек
+// меняет картинку
+window.setCritSprite = function(critTexDataUrl) {
+  _isCritHitMode  = true;
+  _lastCritTexUrl = critTexDataUrl || '';
+  // Сцена вписана в две единицы вокруг нуля (TARGET_EXTENT), значит её верх -
+  // ровно единица. Тело лежит, поэтому «над головой» здесь - над сценой
+  _placeCritSprite(_lastCritTexUrl, 1.0);
+};
+
+window.updateCritHitTexture = function(critTexDataUrl) {
+  if (!_isCritHitMode) return;
+  _lastCritTexUrl = critTexDataUrl || '';
+  const solHeight    = 88;
+  const headTopWorld = (solHeight - solHeight / 2) * (2.0 / solHeight); // 1.0
+  _placeCritSprite(_lastCritTexUrl, headTopWorld);
+};
+
+// Drag & Drop (текстура прямо в 3D)
+const IMAGE_EXTS = /\.(png|jpg|jpeg|bmp|gif|webp|tga)$/i;
+let   _dragDepth = 0;
+
+// Per-mesh raycasting
+const _raycaster    = new THREE.Raycaster();
+const _dropNDC      = new THREE.Vector2();   // NDC-координаты в момент drop
+let   _dragHoverMesh    = null;              // меш, подсвеченный при наведении
+let   _dragHoverOrigMat = null;              // его оригинальный материал
+
+function _ndcFromEvent(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+    -((e.clientY - rect.top)  / rect.height) * 2 + 1
+  );
+}
+
+function _hitMeshAt(ndc) {
+  const hits = _hitsAt(ndc);
+  return hits.length > 0 ? hits[0].object : null;
+}
+
+// Ближайший меш, который пользователю РАЗРЕШЕНО перекрашивать
+//
+// Нередактируемые пропускаются насквозь: в сцене вида от первого лица рядом с
+// оружием стоят чужие руки, и дроп на них красил именно их - как и подсветка,
+// которая это обещала. Инспектору материалов, наоборот, нужен любой меш,
+// поэтому фильтр живёт здесь, а не в _hitMeshAt
+function _hitEditableMeshAt(ndc) {
+  return _firstEditableHit(_hitsAt(ndc), _editableMeshNames);
+}
+
+function _hitsAt(ndc) {
+  if (!currentModel || _isCritHitMode) return [];
+  _raycaster.setFromCamera(ndc, camera);
+  // Луч three.js не пропускает спрятанное: призрак оригинала своей модели
+  // висит в сцене и вне подгонки, и щелчок по нему отдавал номера ЕГО
+  // треугольников как номера модели - ножницы резали не то
+  return _raycaster.intersectObject(currentModel, true).filter(h => _shown(h.object));
+}
+
+function _shown(obj) {
+  for (let o = obj; o; o = o.parent) if (!o.visible) return false;
+  return true;
+}
+
+// Подсвечивает меш при перетаскивании над ним
+function _setDragHover(mesh) {
+  if (_dragHoverMesh === mesh) return;
+  _clearDragHover();
+  if (!mesh || Array.isArray(mesh.material)) return;
+  _dragHoverMesh    = mesh;
+  _dragHoverOrigMat = mesh.material;
+  const hl = mesh.material.clone();
+  hl.emissive          = new THREE.Color(0.35, 0.25, 0.0);
+  hl.emissiveIntensity = 1;
+  mesh.material        = hl;
+  mesh.material.needsUpdate = true;
+}
+
+// Снимает подсветку
+function _clearDragHover() {
+  if (_dragHoverMesh && _dragHoverOrigMat) {
+    _dragHoverMesh.material = _dragHoverOrigMat;
+    _dragHoverMesh.material.needsUpdate = true;
+  }
+  _dragHoverMesh    = null;
+  _dragHoverOrigMat = null;
+}
+
+document.addEventListener('dragenter', e => {
+  const items = e.dataTransfer?.items;
+  if (!items) return;
+  const hasImage = Array.from(items).some(
+    item => item.kind === 'file' && (item.type.startsWith('image/') || IMAGE_EXTS.test(item.name || ''))
+  );
+  if (!hasImage) return;
+  e.preventDefault();
+  _dragDepth++;
+  if (_dragDepth === 1) dropOverlay.classList.add('visible');
+  // Разбор модели на части считает Python. Просим его при первом же
+  // перетаскивании: до него это никому не нужно, а ждать кнопки - значит
+  // потерять единственный момент, когда подсветка что-то объясняет
+  if (!_partsMap && typeof window.onPartsNeeded === 'function') {
+    window.onPartsNeeded();
+  }
+});
+
+document.addEventListener('dragleave', () => {
+  _dragDepth = Math.max(0, _dragDepth - 1);
+  if (_dragDepth === 0) window.endDrag();
+});
+
+// Перетаскивание ушло из кадра. Сам кадр узнаёт об этом по dragleave, но
+// когда курсор быстро уходит из iframe на страницу, Chromium его не всегда
+// присылает - а бросок достаётся уже странице (карточке текстуры), и до
+// вьювера не доходит. Подсказка «Отпустите…» тогда висела над моделью до
+// следующего перетаскивания. Поэтому страница зовёт это сама, как только
+// перетаскивание идёт над ней
+window.endDrag = function () {
+  if (_dragDepth === 0 && !dropOverlay.classList.contains('visible')) return;
+  _dragDepth = 0;
+  dropOverlay.classList.remove('visible');
+  _clearDragHover();
+  if (!_partsMode) _clearPartHover();
+};
+
+// Подсвечиваем КУСОК под курсором, если части уже разобраны: обещать подсветкой
+// целый меш там, где картинка ляжет на одну часть, - врать про результат
+function _hoverDrag(ndc) {
+  if (_dragDepth <= 0) return;
+  const overPart = _partsMap ? _partAt(ndc) : null;
+  if (overPart) { _clearDragHover(); _setPartHover(overPart); }
+  else if (!_partsMode) _setDragHover(_hitEditableMeshAt(ndc));
+}
+
+document.addEventListener('dragover', e => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  if (_dragDepth <= 0) return;
+  _queueHover(e, _hoverDrag);
+});
+
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dropOverlay.classList.remove('visible');
+
+  // Фиксируем целевую часть/меш ДО асинхронного чтения файла и ДО сброса
+  // счётчика перетаскивания: по нему части работают без включённого режима
+  const hitPart = _partAt(_ndcFromEvent(e));
+  const hitMesh = _hitEditableMeshAt(_ndcFromEvent(e));
+  _dragDepth = 0;
+  _clearPartHover();
+  _clearDragHover();
+
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  const isImage = file.type.startsWith('image/') || IMAGE_EXTS.test(file.name);
+  if (!isImage) return;
+
+  // Режим частей: картинку в текстуру вклеивает Python - вьювер только
+  // говорит, на какой кусок её принесли. Сам он этого сделать не может: у
+  // всей модели один материал и одна текстура
+  if (hitPart && typeof window.onPartDropped === 'function') {
+    _endIsolation();            // картинка ляжет на живую модель
+    window.onPartDropped(hitPart.material, hitPart.part, file);
+    return;
+  }
+
+  // Остальное - текстура материала. Кладёт её страница: она решает, на какую
+  // карточку (команда, стиль), и присылает картинку обратно в кадр. Положи
+  // вьювер её сам, модель показала бы то, чего нет в сборке
+  if (typeof window.onTextureDropped === 'function') {
+    const name = hitMesh
+      ? (Array.isArray(hitMesh.material) ? hitMesh.name : (hitMesh.material.name || hitMesh.name))
+      : '';
+    window.onTextureDropped(name, file);
+  }
+});
+
+// Части модели: подсветка куска под курсором
+//
+// Материал у оружия почти всегда один, поэтому «покрасить только ствол» - это
+// не второй материал, а кусок геометрии. Хозяин разбиения - Python (он же
+// потом вклеивает картинку в развёртку), сюда приезжает готовая карта «номер
+// треугольника -> номер части», и по ней подсвечивается то, во что попала мышь
+let _partsMap  = null;   // {материал: [номер части для каждого треугольника]}
+let _partsMode = false;
+let _partHover = null;   // {mesh, material, part, overlay}
+
+window.setModelParts = function(map) {
+  _partsMap = (map && Object.keys(map).length) ? map : null;
+  _clearPartHover();
+  _endIsolation();              // номера частей у новой карты другие
+  // Новая модель - номера треугольников чужие, выделение с них снять
+  if (!_partsMap) window.clearCutSelection();
+};
+
+window.setPartsMode = function(on) {
+  _partsMode = !!on;
+  // Класс `inspecting` (знак вопроса) здесь не ставится: он принадлежит
+  // инспектору материалов и обещает справку. Чем работают, показывает курсор
+  // инструмента - см. setPartsTool
+  if (!_partsMode) { _clearPartHover(); _endIsolation(); window.setPartsTool(''); }
+};
+
+// Свои материалы частей
+//
+// Часть, отданная в свой материал, в игре - отдельный материал модели. Здесь
+// меш делится так же: остаток под прежним именем и по куску на материал под
+// его именем. Дальше раздача текстур, подсказки и выбор мешем работают по
+// имени, как с любым другим материалом. Номера треугольников у кусков свои:
+// всё, что работает по номерам (части, ножницы), переводит попадание по
+// куску на исходный меш (`split.from`, `split.faces`) - он спрятан, но цел
+let _partMats = {};   // {материал: {total, parts: [{name, runs: [[начало, сколько]…]}]}}
+let _texByName = {};  // последняя текстура, положенная по имени материала (applyMaterialMap)
+
+window.setPartMaterials = function(map) {
+  const next = map || {};
+  if (JSON.stringify(next) === JSON.stringify(_partMats)) return;
+  _partMats = next;
+  _matHints = _withPartHints(_rawHints);
+  _splitParts();
+};
+
+// Материал части рисуется как исходный: подсказки приходят по именам игровых
+// материалов, а у части имени в игре нет, VMT же она наследует
+function _withPartHints(hints) {
+  const out = { ...hints };
+  for (const [base, spec] of Object.entries(_partMats)) {
+    for (const p of spec.parts) if (!out[p.name] && out[base]) out[p.name] = out[base];
+  }
+  return out;
+}
+
+/** Для автопроверки: меши предмета - имя, материал, виден ли, откуда
+ *  текстура (адрес картинки), треугольников */
+window.partMaterialsDebug = () => {
+  const out = [];
+  if (currentModel) currentModel.traverse(c => {
+    const map = (c.material || {}).map;
+    if (c.isMesh) out.push({ name: c.name, material: (c.material || {}).name || '',
+                             visible: c.visible, map: map ? ((map.image || {}).src || '?') : '',
+                             tris: c.geometry.attributes.position.count / 3 });
+  });
+  return out;
+};
+
+function _unsplitParts() {
+  if (!currentModel) return;
+  const pieces = [];
+  currentModel.traverse(c => {
+    if (c.userData.partSplit) pieces.push(c);
+    else if (c.userData.splitHidden) { c.visible = true; delete c.userData.splitHidden; }
+  });
+  pieces.forEach(c => { c.removeFromParent(); c.geometry.dispose(); });
+}
+
+function _splitParts() {
+  _unsplitParts();
+  if (!currentModel || !Object.keys(_partMats).length) return;
+  const meshes = [];
+  currentModel.traverse(c => {
+    if (!c.isMesh || c.isSkinnedMesh || !c.material || Array.isArray(c.material)) return;
+    if (_partMats[c.material.name || c.name]) meshes.push(c);
+  });
+  meshes.forEach(_splitMesh);
+}
+
+function _splitMesh(mesh) {
+  const name = mesh.material.name || mesh.name;
+  const spec = _partMats[name];
+  const geo = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const attrs = Object.entries(geo.attributes);
+  const total = geo.attributes.position.count / 3;
+  // Другая сцена (руки, персонаж на шапке) - номера не про этот меш
+  if (total !== spec.total || attrs.some(([, a]) => a.isInterleavedBufferAttribute)) return;
+  const owner = new Int32Array(total);   // 0 - остаток, k - k-й материал
+  spec.parts.forEach((p, k) => p.runs.forEach(([a, n]) => owner.fill(k + 1, a, a + n)));
+  [name, ...spec.parts.map(p => p.name)].forEach((pieceName, slot) => {
+    const faces = [];
+    for (let t = 0; t < total; t++) if (owner[t] === slot) faces.push(t);
+    if (!faces.length) return;
+    const g = new THREE.BufferGeometry();
+    for (const [key, a] of attrs) {
+      const step = 3 * a.itemSize;
+      const out = new a.array.constructor(faces.length * step);
+      faces.forEach((t, i) => out.set(a.array.subarray(t * step, (t + 1) * step), i * step));
+      g.setAttribute(key, new THREE.BufferAttribute(out, a.itemSize, a.normalized));
+    }
+    // Кусок пересоздаётся при каждой смене материалов: своя текстура у него
+    // - последняя, положенная на его имя
+    const map = (slot && _texByName[pieceName]) || mesh.material.map;
+    const piece = new THREE.Mesh(g, makeMeshMaterial({ map, name: pieceName }));
+    piece.name = slot ? pieceName : mesh.name;
+    piece.position.copy(mesh.position);
+    piece.quaternion.copy(mesh.quaternion);
+    piece.scale.copy(mesh.scale);
+    piece.renderOrder = mesh.renderOrder;
+    piece.userData.partSplit = { from: mesh, faces: Int32Array.from(faces) };
+    mesh.parent.add(piece);
+  });
+  if (geo !== mesh.geometry) geo.dispose();
+  mesh.visible = false;
+  mesh.userData.splitHidden = true;
+}
+
+// Инструмент частей: курсор и пипетка
+//
+// Вьювер про инструменты ничего не решает - он получает готовое значение CSS
+// (рисунки значков живут на странице, второй их копии здесь быть не должно) и
+// одно имя, потому что от имени зависит ответ на щелчок
+let _partsTool = '';
+
+window.setPartsTool = function(name, cursor) {
+  _partsTool = name || '';
+  document.getElementById('canvas-container').style.cursor = cursor || '';
+  // Подсветка куска закрашивает ровно то, с чего пипетка берёт цвет: под
+  // оранжевой плёнкой не видно, во что целятся, и взятый цвет оказывался
+  // неожиданным. Поэтому при пипетке её нет вовсе - ни в 3D, ни разметкой на
+  // кадре (её рисует страница по onPartHover, а его теперь не будет)
+  if (_partsTool === 'pick') _clearPartHover();
+};
+
+/**
+ * Цвет ТЕКСТУРЫ под курсором - «#rrggbb» или пустая строка
+ *
+ * Из текстуры, а не с экрана: на экране цвет уже перемешан со светом и тенью,
+ * и взятая с него краска на модели выходит темнее выбранной. Заодно ответ
+ * совпадает с пипеткой по кадру на странице - она берёт из той же картинки.
+ */
+function _texelAt(ndc) {
+  const hit = _hitsAt(ndc)[0];
+  if (!hit || !hit.uv) return '';
+  const mat = hit.object.material;
+  const img = (mat && !Array.isArray(mat) && mat.map) ? mat.map.image : null;
+  const w = img && (img.naturalWidth || img.width);
+  const h = img && (img.naturalHeight || img.height);
+  if (!w || !h) return '';
+  // Развёртка выходит за 0..1 (wrapS/wrapT = Repeat) - берём ту же клетку,
+  // которую показывает игра
+  const frac = (v) => v - Math.floor(v);
+  // flipY у текстур three.js включён по умолчанию: v = 0 - это НИЗ картинки
+  const x = Math.min(w - 1, Math.floor(frac(hit.uv.x) * w));
+  const y = Math.min(h - 1, Math.floor((1 - frac(hit.uv.y)) * h));
+  try {
+    const cell = document.createElement('canvas');
+    cell.width = 1;
+    cell.height = 1;
+    const ctx = cell.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, x, y, 1, 1, 0, 0, 1, 1);
+    const px = ctx.getImageData(0, 0, 1, 1).data;
+    return '#' + [px[0], px[1], px[2]]
+      .map(v => v.toString(16).padStart(2, '0')).join('');
+  } catch (err) {
+    // Картинка с чужого адреса закрывает канвас на чтение: у нас все свои, но
+    // молча отдать чёрный цвет хуже, чем не отдать ничего
+    console.warn('[3D viewer] пипетка: не прочитать текстуру:', err);
+    return '';
+  }
+}
+
+// Номера частей для меша. Имя материала - единственная связь с разбором из
+// Python; у одноматериальной модели связывать нечего, берём единственный набор
+function _listFrom(map, mesh) {
+  if (!map || !mesh) return null;
+  const name = (mesh.material && !Array.isArray(mesh.material) && mesh.material.name)
+    || mesh.name || '';
+  if (map[name]) return map[name];
+  // Призрак оригинала - не часть предмета: своих частей у него нет, а чужая
+  // карта дала бы его треугольникам номера модели
+  if (String(name).startsWith('ghost:')) return null;
+  // Единственная карта предмета годится любому его мешу (у одноматериальной
+  // модели она лежит под служебным ключом). Гирлянда в счёт не идёт: у неё
+  // свои карты под именами мешей, и чужую ей подставлять нельзя.
+  // Меш гирлянды - только своя карта: у её материалов разборы разные
+  if (_isDecorName(name)) return null;
+  const own = Object.keys(map).filter(k => !_isDecorName(k));
+  return own.length === 1 ? map[own[0]] : null;
+}
+
+function _partListFor(mesh) { return _listFrom(_partsMap, mesh); }
+
+function _partAt(ndc) {
+  // Во время перетаскивания части работают и без включённого режима: человек
+  // тащит картинку на ствол, а не «сначала жмёт кнопку»
+  if (!_partsMode && _dragDepth <= 0) return null;
+  const hit = _hitsAt(ndc)[0];
+  if (!hit || hit.faceIndex == null) return null;
+  // Кусок своего материала: номера частей - от исходного меша (см. _splitMesh)
+  const split = hit.object.userData.partSplit;
+  const mesh = split ? split.from : hit.object;
+  const face = split ? split.faces[hit.faceIndex] : hit.faceIndex;
+  const list = _listFrom(_partsMap, mesh);
+  if (!list) return null;
+  const part = list[face];
+  if (part == null) return null;
+  const parts = _partListFor(mesh);
+  return { mesh, part, list,
+           owner: parts ? parts[face] : null,
+           material: (mesh.material || {}).name || '' };
+}
+
+// Подсветка - отдельный полупрозрачный меш из треугольников части, а не
+// подмена материала: материал у всей модели общий, и подменять его значило бы
+// подсветить модель целиком
+function _partOverlay(mesh, list, part) {
+  const tris = [];
+  for (let tri = 0; tri < list.length; tri++) if (list[tri] === part) tris.push(tri);
+  return _trisOverlay(mesh, tris, 0xffb347, 0.55);
+}
+
+// Подсветка набора треугольников: наведение на часть, что возьмут ножницы,
+// выделение ножниц. Цвет - по смыслу: оранжевый «сюда», голубой «выделено»
+function _trisOverlay(mesh, tris, color, opacity) {
+  const src = mesh.geometry.attributes.position;
+  const index = mesh.geometry.index;
+  const keep = [];
+  for (const tri of tris) {
+    for (let corner = 0; corner < 3; corner++) {
+      const v = index ? index.getX(tri * 3 + corner) : tri * 3 + corner;
+      keep.push(src.getX(v), src.getY(v), src.getZ(v));
+    }
+  }
+  if (!keep.length) return null;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position',
+    new THREE.BufferAttribute(new Float32Array(keep), 3));
+  // Подсветка лежит РОВНО на треугольниках части, то есть копланарна модели.
+  // Со сдвигом только по фактору (-2, units 0) она выигрывала глубину не
+  // везде: у шпиона от подсветки тела оставались пятна на кистях и полоски
+  // по бокам ног - остальное съедал z-fighting. Сдвиг по обоим слагаемым
+  // убирает это, а перекрытие остаётся честным: часть с обратной стороны
+  // модели сквозь неё не светит
+  const overlay = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity,
+    // С ОБЕИХ сторон: у одежды часть треугольников намотана «изнанкой»
+    // наружу, сама модель их показывает (её материал двусторонний), а
+    // односторонняя подсветка их отбрасывала - у шпиона от подсветки тела
+    // оставались кисти и полоски по ногам, а пиджак не подсвечивался вовсе
+    side: THREE.DoubleSide,
+    depthWrite: false, polygonOffset: true,
+    polygonOffsetFactor: -4, polygonOffsetUnits: -8,
+  }));
+  overlay.renderOrder = 999;
+  // Луч сквозь подсветку проходит насквозь. Она лежит РОВНО на треугольниках
+  // части, и без этого попадала бы в пересечения наравне с самой моделью: её
+  // faceIndex - номер в её собственной геометрии, и часть по нему выходила бы
+  // чужая. Заодно это снимает половину работы луча в режиме частей
+  overlay.raycast = () => {};
+  if (mesh.userData.splitHidden) {
+    // Меш спрятан за кусками своих материалов: в нём подсветку не видно
+    overlay.position.copy(mesh.position);
+    overlay.quaternion.copy(mesh.quaternion);
+    overlay.scale.copy(mesh.scale);
+    mesh.parent.add(overlay);
+  } else {
+    mesh.add(overlay);          // геометрия в локальных координатах меша
+  }
+  return overlay;
+}
+
+// Меш, для которого у нас есть разбор на части. Ищем обходом сцены: имя
+// материала - единственная связь с разбором, а мешей в кадре бывает несколько
+//
+// Имя материала обязательно, когда их несколько: у шпиона голова и тело - это
+// РАЗНЫЕ материалы со своими развёртками, и «первый попавшийся меш с картой»
+// подсвечивал голову там, где страница просила часть тела
+function _meshWithParts(material) {
+  let named = null;
+  let any = null;
+  if (currentModel) {
+    currentModel.traverse(obj => {
+      // Куски своих материалов - не по номерам частей: подсветка строится по
+      // исходному мешу (он спрятан, но цел)
+      if (!obj.isMesh || obj.userData.partSplit || !_partListFor(obj)) return;
+      const name = (obj.material || {}).name || '';
+      // «Любой» - только меш предмета: карта одноматериальной модели лежит
+      // под служебным ключом и гирлянде не подходит
+      if (!any && !_isDecorName(name)) any = obj;
+      if (!named && material && name === material) named = obj;
+    });
+  }
+  // Без совпадения по имени - первый меш с картой: у одноматериальной модели
+  // карта лежит под служебным ключом, и материал ей не назвать
+  return named || any;
+}
+
+// Подсветка части по номеру - для наведения на список частей на странице
+window.highlightPart = function(part, material) {
+  const mesh = (part === null || part === undefined)
+    ? null : _meshWithParts(material);
+  if (!mesh) { _clearPartHover(); return; }
+  _setPartHover({ mesh, part,
+                  material: (mesh.material || {}).name || '' });
+};
+
+// Одна часть на виду (Ctrl+щелчок)
+//
+// Чтобы понять, за что отвечает часть: она остаётся как есть, остальная модель
+// становится полупрозрачной. Меш с частью не рисуется (материал visible=false,
+// луч его по-прежнему ловит - Ctrl+щелчок по соседней части работает), вместо
+// него две копии его треугольников: часть - с клоном его материала (шейдеры
+// здесь не патчатся, клон выглядит так же), остаток - с полупрозрачным. Прочие
+// меши гаснут на время, флаги всех материалов возвращаются как были. Только
+// просмотр: копии статичны, поэтому покраска и новая карта частей режим снимают
+let _isolated = null;   // {mesh, part, copies, faded: [[материал, флаги]], mats}
+const _FADE = 0.3;
+
+window.isolatePart = function(part, material) {
+  const mesh = (part === null || part === undefined) ? null : _meshWithParts(material);
+  const same = _isolated && mesh && _isolated.mesh === mesh && _isolated.part === part;
+  _clearIsolation();
+  if (!mesh || same) { _tellIsolated(null, ''); return; }
+  const list = _partListFor(mesh);
+  const own = [], rest = [];
+  for (let tri = 0; tri < list.length; tri++) (list[tri] === part ? own : rest).push(tri);
+  if (!own.length) { _tellIsolated(null, ''); return; }
+  // ponytail: у меша с группами материалов часть берёт материал первой группы
+  const base = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  const solid = base.clone();
+  const ghost = base.clone();
+  Object.assign(ghost, _ghostLook(_FADE));
+  const copies = [_trisCopy(mesh, own, solid), _trisCopy(mesh, rest, ghost)].filter(Boolean);
+  const faded = [];
+  const keep = (m, change) => {
+    if (faded.some(([x]) => x === m)) return;
+    faded.push([m, { transparent: m.transparent, opacity: m.opacity,
+                     depthWrite: m.depthWrite, visible: m.visible,
+                     onBeforeCompile: m.onBeforeCompile }]);
+    Object.assign(m, change);
+    m.needsUpdate = true;
+  };
+  for (const m of [].concat(mesh.material || [])) keep(m, { visible: false });
+  currentModel.traverse(obj => {
+    if (!obj.isMesh || obj === mesh || copies.includes(obj) || !_shown(obj)) return;
+    for (const m of [].concat(obj.material || [])) keep(m, _ghostLook(m.opacity * _FADE));
+  });
+  _isolated = { mesh, part, copies, faded, mats: [solid, ghost] };
+  _tellIsolated(part, (base || {}).name || '');
+};
+
+function _clearIsolation() {
+  if (!_isolated) return;
+  const { copies, faded, mats } = _isolated;
+  _isolated = null;
+  for (const copy of copies) { copy.removeFromParent(); copy.geometry.dispose(); }
+  for (const m of mats) m.dispose();
+  for (const [m, flags] of faded) { Object.assign(m, flags); m.needsUpdate = true; }
+}
+
+// Полупрозрачность без альфы текстуры: у VTF альфа - маска бликов ($phong),
+// и прозрачность по ней гасила металл почти целиком. Альфа = только opacity
+function _ghostAlpha(shader) {
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <map_fragment>', '#include <map_fragment>\n\tdiffuseColor.a = opacity;');
+}
+
+function _ghostLook(opacity) {
+  return { transparent: true, opacity, depthWrite: false, onBeforeCompile: _ghostAlpha };
+}
+
+/** Снять показ одной части и сказать странице - если он был */
+function _endIsolation() {
+  if (!_isolated) return;
+  _clearIsolation();
+  _tellIsolated(null, '');
+}
+
+function _tellIsolated(part, material) {
+  if (typeof window.onPartIsolated === 'function') window.onPartIsolated(part, material);
+}
+
+// Копия треугольников меша со всеми атрибутами (позиция, нормаль, UV…) под
+// заданным материалом - рядом с мешем и в его координатах
+function _trisCopy(mesh, tris, material) {
+  if (!tris.length) return null;
+  const src = mesh.geometry, index = src.index;
+  const geometry = new THREE.BufferGeometry();
+  const getters = ['getX', 'getY', 'getZ', 'getW'];
+  for (const [name, attr] of Object.entries(src.attributes)) {
+    if (name === 'skinIndex' || name === 'skinWeight') continue;
+    const size = attr.itemSize;
+    const out = new Float32Array(tris.length * 3 * size);
+    let k = 0;
+    for (const tri of tris) {
+      for (let corner = 0; corner < 3; corner++) {
+        const v = index ? index.getX(tri * 3 + corner) : tri * 3 + corner;
+        for (let i = 0; i < size; i++) out[k++] = attr[getters[i]](v);
+      }
+    }
+    geometry.setAttribute(name, new THREE.BufferAttribute(out, size, attr.normalized));
+  }
+  const copy = new THREE.Mesh(geometry, material);
+  copy.raycast = () => {};
+  copy.position.copy(mesh.position);
+  copy.quaternion.copy(mesh.quaternion);
+  copy.scale.copy(mesh.scale);
+  copy.renderOrder = material.transparent ? 1 : 0;
+  mesh.parent.add(copy);
+  return copy;
+}
+
+function _setPartHover(found) {
+  if (_partHover && found && _partHover.mesh === found.mesh
+      && _partHover.part === found.part) return;
+  _clearPartHover();
+  // О наведении сообщаем наружу вместе с ИМЕНЕМ МАТЕРИАЛА: у модели их
+  // бывает несколько (у шпиона голова и тело), развёртка у каждого своя, и без
+  // имени страница рисовала разметку на первой попавшейся текстуре
+  if (typeof window.onPartHover === 'function') {
+    window.onPartHover(found ? found.part : null,
+                       found ? found.material : '');
+  }
+  if (!found) return;
+  const list = found.list || _partListFor(found.mesh);
+  const overlay = list ? _partOverlay(found.mesh, list, found.part) : null;
+  if (overlay) _partHover = { ...found, overlay };
+}
+
+function _clearPartHover() {
+  if (_partHover && _partHover.overlay) _dropOverlay(_partHover.overlay);
+  _partHover = null;
+}
+
+function _dropOverlay(overlay) {
+  if (!overlay) return;
+  overlay.removeFromParent();
+  overlay.geometry.dispose();
+  overlay.material.dispose();
+}
+
+// Наведение считаем не чаще раза в кадр. mousemove и dragover приходят сотнями
+// в секунду, а каждый ответ - это луч через всю геометрию плюс
+// getBoundingClientRect, то есть принудительный пересчёт раскладки. Подсветке
+// кадра достаточно: чаще её всё равно не видно
+let _hoverPos = null;   // положение курсора из последнего события
+let _hoverAct = null;   // что сделать с ним в начале кадра
+function _queueHover(e, act) {
+  _hoverPos = { clientX: e.clientX, clientY: e.clientY };
+  const queued = _hoverAct !== null;
+  _hoverAct = act;
+  if (queued) return;
+  requestAnimationFrame(() => {
+    const run = _hoverAct;
+    _hoverAct = null;
+    run(_ndcFromEvent(_hoverPos));
+    requestRender();
+  });
+}
+
+function _hoverParts(ndc) {
+  // Пока берут цвет, подсветки нет: она закрашивает ровно тот пиксель, на
+  // который целятся. Это и выбранная пипетка, и Alt при кисти - там подсветка
+  // успела бы мигнуть на время протяжки
+  if (_partsMode && _cutMode) { _hoverCut(ndc); return; }
+  if (_partsMode && _partsTool !== 'pick' && !_pickDrag) {
+    _setPartHover(_partAt(ndc));
+  }
+}
+
+renderer.domElement.addEventListener('mousemove', e => {
+  if (_partsMode) _queueHover(e, _hoverParts);
+});
+
+// Клик по части. Вращение камеры - тоже зажатая кнопка, поэтому выбором
+// считаем только клик без протяжки
+let _partDownAt = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  _partDownAt = _partsMode ? { x: e.clientX, y: e.clientY } : null;
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  const down = _partDownAt;
+  _partDownAt = null;
+  if (!_partsMode || !down) return;
+  if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) return;
+  // В режиме резки щелчок режет, а не красит: два ответа на один щелчок -
+  // это и есть та неоднозначность, из-за которой человек вместо разреза
+  // получал окно выбора текстуры
+  if (_cutMode) { if (_cutTool !== 'brush') _cutClick(e); return; }
+  const found = _partAt(_ndcFromEvent(e));
+  // Ctrl+щелчок - посмотреть часть отдельно, а не красить
+  if (e.ctrlKey || e.metaKey) {
+    if (found) window.isolatePart(found.part, found.material);
+    return;
+  }
+  _endIsolation();              // красят живую модель, а не копию части
+  if (found && typeof window.onPartPicked === 'function') {
+    window.onPartPicked(found.material, found.part);
+  }
+});
+
+/**
+ * Пипетка: цвет видно, пока кнопку держат, и он берётся там, где отпустили
+ *
+ * Так это работает в редакторах изображений, и иначе не получается вовсе:
+ * попасть в нужный пиксель модели с первого щелчка нельзя - её крутят и
+ * приближают, и один пиксель текстуры бывает меньше точки экрана
+ *
+ * Слушаем на КОНТЕЙНЕРЕ и в фазе перехвата, а событие дальше не пускаем: под
+ * ним и OrbitControls (иначе протяжка пипеткой крутила бы камеру), и выбор
+ * части (иначе тот же щелчок ещё и красил бы). Гасить `controls.enabled` для
+ * этого нельзя: выключённый OrbitControls не убирает у себя отпущенный
+ * указатель, и следующая протяжка после пипетки считалась бы вторым пальцем
+ *
+ * Alt при кисти делает то же самое «на минуту» - как в редакторах
+ * изображений. Смотрим на сам щелчок, а не на нажатие клавиши: Alt приходит в
+ * тот документ, у которого фокус, а курсор ходит между страницей и вьювером
+ * независимо от него.
+ */
+let _pickDrag = false;
+
+//: Берут ли этим щелчком цвет. Решает НАЧАЛО протяжки: Alt, отпущенный по
+//: дороге, её не обрывает - рука уже ведёт пипетку
+function _sampling(e) {
+  return _partsMode
+    && (_partsTool === 'pick' || (e.altKey && _partsTool === 'brush'));
+}
+
+function _tellSample(hex, e) {
+  if (typeof window.onColorSample === 'function') {
+    window.onColorSample(hex, e ? e.clientX : 0, e ? e.clientY : 0);
+  }
+}
+
+(function bindPickDrag() {
+  const box = document.getElementById('canvas-container');
+
+  box.addEventListener('pointerdown', e => {
+    if (!_sampling(e)) return;
+    e.stopPropagation();
+    e.preventDefault();
+    _pickDrag = true;
+    box.setPointerCapture(e.pointerId);
+    _clearPartHover();     // подсветка от кисти закрыла бы то, с чего берут цвет
+    _tellSample(_texelAt(_ndcFromEvent(e)), e);
+  }, true);
+
+  box.addEventListener('pointermove', e => {
+    if (!_pickDrag) return;
+    e.stopPropagation();
+    _tellSample(_texelAt(_ndcFromEvent(e)), e);
+  }, true);
+
+  const finish = (e, take) => {
+    if (!_pickDrag) return;
+    e.stopPropagation();
+    _pickDrag = false;
+    if (box.hasPointerCapture(e.pointerId)) box.releasePointerCapture(e.pointerId);
+    const hex = take ? _texelAt(_ndcFromEvent(e)) : '';
+    _tellSample('', null);
+    if (hex && typeof window.onColorPicked === 'function') window.onColorPicked(hex);
+  };
+
+  box.addEventListener('pointerup', e => finish(e, true), true);
+  box.addEventListener('pointercancel', e => finish(e, false), true);
+})();
+
+// Клавиши отмены принадлежат СТРАНИЦЕ, а фокус после щелчка по модели
+// достаётся iframe - и Ctrl+Z, обещанный подсказкой режима частей, молча не
+// работал, пока не щёлкнешь мимо кадра. Своей обработки не заводим: история
+// покраски живёт на странице, здесь только передача нажатия
+window.addEventListener('keydown', e => {
+  // Ножницы: Enter отделяет выделенное, Esc сбрасывает - решает страница,
+  // у неё кнопки и ответ Python
+  if (_cutMode && (e.key === 'Enter' || e.key === 'Escape')
+      && typeof window.onCutKey === 'function') {
+    window.onCutKey(e.key);
+    return;
+  }
+  if (e.key === 'Escape' && _isolated) { _endIsolation(); return; }
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (typeof window.onPartsKey === 'function') window.onPartsKey(e);
+});
+
+// Инспекция материала/текстуры (кнопка «?»)
+const _inspectBtn    = document.getElementById('inspect-btn');
+const _inspectTip    = document.getElementById('inspect-tip');
+const _inspectTipImg = document.getElementById('inspect-tip-img');
+const _inspectTipMat = document.getElementById('inspect-tip-mat');
+let   _inspectMode   = false;
+_inspectBtn.title = _t.inspect;
+
+function _setInspectMode(on) {
+  _inspectMode = on;
+  _inspectBtn.classList.toggle('active', on);
+  document.getElementById('canvas-container').classList.toggle('inspecting', on);
+  if (!on) _inspectTip.style.display = 'none';
+}
+
+_inspectBtn.addEventListener('click', () => _setInspectMode(!_inspectMode));
+
+// Непрозрачная миниатюра: у VTF альфа - маска бликов ($phong), а не прозрачность.
+// На модели текстура и так рисуется непрозрачной, поэтому в превью форсим alpha=255.
+// Кэш по исходному src + уменьшение до 128px, чтобы не тормозить на больших текстурах
+const _opaqueThumbCache = new Map();
+function _opaqueThumb(img) {
+  const key = img.src || img.currentSrc || '';
+  if (!key) return '';
+  if (_opaqueThumbCache.has(key)) return _opaqueThumbCache.get(key);
+  try {
+    const sw = img.naturalWidth || img.width, sh = img.naturalHeight || img.height;
+    if (!sw || !sh) {
+      console.warn('[inspect] opaqueThumb: zero size, tag=' + (img.tagName || typeof img));
+      return key;
+    }
+    const sc = Math.min(1, 128 / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * sc)), h = Math.max(1, Math.round(sh * sc));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h);
+    const px = d.data;
+    for (let i = 3; i < px.length; i += 4) px[i] = 255;  // alpha -> непрозрачно
+    ctx.putImageData(d, 0, 0);
+    const out = cv.toDataURL('image/png');
+    _opaqueThumbCache.set(key, out);
+    return out;
+  } catch (err) {
+    console.warn('[inspect] opaqueThumb FAIL: ' + (err && err.message ? err.message : err));
+    return key;  // например, таинт-канвас - отдаём как есть
+  }
+}
+
+// Имя материала + (непрозрачный) src текстуры под курсором
+function _matInfoFromMesh(mesh) {
+  if (!mesh || Array.isArray(mesh.material)) return null;
+  const mat  = mesh.material;
+  const name = (mat && mat.name) || mesh.name || '-';
+  let src = '';
+  const img = mat && mat.map && mat.map.image;
+  if (img) src = _opaqueThumb(img) || img.src || img.currentSrc || '';
+  return { name, src };
+}
+
+renderer.domElement.addEventListener('mousemove', e => {
+  if (!_inspectMode) return;
+  const info = _matInfoFromMesh(_hitMeshAt(_ndcFromEvent(e)));
+  if (!info) { _inspectTip.style.display = 'none'; return; }
+
+  _inspectTipMat.textContent = info.name;
+  if (info.src) {
+    _inspectTipImg.src = info.src;
+    _inspectTipImg.classList.remove('empty');
+  } else {
+    _inspectTipImg.removeAttribute('src');
+    _inspectTipImg.classList.add('empty');
+  }
+
+  // Позиционируем тултип у курсора, удерживая в пределах окна
+  const pad = 14;
+  _inspectTip.style.display = 'block';
+  const tw = _inspectTip.offsetWidth, th = _inspectTip.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + tw > window.innerWidth)  x = e.clientX - tw - pad;
+  if (y + th > window.innerHeight) y = e.clientY - th - pad;
+  _inspectTip.style.left = x + 'px';
+  _inspectTip.style.top  = y + 'px';
+});
+
+renderer.domElement.addEventListener('mouseleave', () => {
+  _inspectTip.style.display = 'none';
+});
+
+// Render loop
+function animate() {
+  requestAnimationFrame(animate);
+  // Дельту снимаем КАЖДЫЙ кадр, даже без анимации: иначе после паузы
+  // накопленное время прыгнет в микшер одним куском
+  const delta = _animClock.getDelta();
+  if (_skinned && _skinned.mixer) _skinned.mixer.update(delta);
+  _updateSkinnedHidden(_skinned);
+  // Флаги берём до шага: последний шаг перелёта их снимает, а кадр нужен
+  const moving = !!(_camFly || _fitTween);
+  const playing = !!(_skinned && _skinned.action && !_skinned.action.paused);
+  _stepCameraFly();
+  _stepFitTween();
+  controls.update();
+  // Кнопка инспекции доступна только когда есть обычная модель (не CritHIT)
+  const _inspectAvail = !!currentModel && !_isCritHitMode;
+  const _want = _inspectAvail ? 'flex' : 'none';
+  if (_inspectBtn.style.display !== _want) _inspectBtn.style.display = _want;
+  if (!_inspectAvail && _inspectMode) _setInspectMode(false);
+  if (!(_renderQueued || moving || playing)) return;
+  _renderQueued = false;
+  renderer.render(scene, camera);
+}
+animate();
+
+// Мышь и клавиши меняют сцену прямо в обработчиках (подсветка, резак,
+// гизмо, изгиб), поэтому любой ввод просит кадр
+for (const type of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown',
+                    'keyup', 'dragover', 'dragleave', 'drop']) {
+  window.addEventListener(type, requestRender, { capture: true, passive: true });
+}
+// После сброса драйвера (бывает рядом с игрой) холст пуст до следующего кадра
+renderer.domElement.addEventListener('webglcontextrestored', requestRender);
+
+// Хост меняет сцену только через window.*: любой его вызов просит кадр.
+// Опрос доли анимации идёт каждым кадром хоста и сцену не трогает
+for (const name of Object.keys(window)) {
+  const fn = window[name];
+  if (_globalsBefore.has(name) || typeof fn !== 'function'
+      || name === 'viewmodelProgress' || name.endsWith('Debug')) continue;
+  window[name] = function(...args) { requestRender(); return fn.apply(this, args); };
+}
+
+// Resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  requestRender();
+});
+
+// CDN error fallback
+window.addEventListener('error', e => {
+  if (e.filename && e.filename.includes('cdn.jsdelivr.net')) {
+    setStatus(_t.no_internet, true);
+  }
+});
+</script>
+</body>
+</html>

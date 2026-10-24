@@ -1,0 +1,111 @@
+"""
+Единый кэш открытых VPK-объектов с уже разобранным индексом
+
+vpk.open() читает только заголовок, а разбор каталога (131 тысяча записей в
+tf2_textures + tf2_misc) стоит около полусекунды и происходит лениво - при
+первом же обращении к файлу. Здесь ОДИН общий кэш для всех потребителей
+(TF2VPKExtractService и GameVpkReader): игровой VPK разбирается один раз за
+запуск, а не по разу в каждой подсистеме
+
+Кэш ОБЩИЙ, а не потоко-локальный: каждый воркер (превью, сборка, детект
+скинов) живёт в своём потоке, и потоко-локальный кэш не переживал бы ни одной
+операции - 0.47 с на первое обращение в каждом потоке и по 40 МБ индекса на
+поток
+
+Небезопасен у vpk-объекта ровно один момент - построение каталога
+(`read_index` чистит и заполняет общий словарь). Всё остальное только читает:
+поиск идёт по готовому словарю, а на каждый извлекаемый файл vpk открывает
+свой дескриптор. Поэтому каталог строится здесь, под замком, ДО публикации
+объекта в кэш - дальше он неизменяем и его можно читать из любого потока
+
+Актуальность проверяется по mtime архива: Steam может обновить игру, пока
+приложение открыто, и тогда кэшированный каталог указывал бы в никуда
+"""
+
+import os
+import threading
+
+from src.shared.logging_config import get_logger
+
+try:
+    import vpk as _vpk
+    _VPK_AVAILABLE = True
+except ImportError:
+    _VPK_AVAILABLE = False
+    _vpk = None
+
+logger = get_logger(__name__)
+
+_LOCK = threading.Lock()
+#: путь -> (mtime архива на момент разбора, открытый vpk-объект с каталогом)
+_CACHE: dict = {}
+
+
+def _mtime(path: str):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def open_vpk_cached(dir_vpk_path: str):
+    """Открывает VPK с разобранным каталогом и переиспользует его
+
+    Возвращает открытый vpk-объект или None, если библиотека vpk недоступна.
+    Кэшированный хэндл закрывать НЕЛЬЗЯ - им владеет кэш
+    """
+    if not _VPK_AVAILABLE:
+        return None
+
+    stamp = _mtime(dir_vpk_path)
+    cached = _CACHE.get(dir_vpk_path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+
+    with _LOCK:
+        # Пока ждали замок, каталог мог разобрать другой поток
+        cached = _CACHE.get(dir_vpk_path)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        pak = _vpk.open(dir_vpk_path)
+        _fix_archive_names(pak)
+        # Каталог строим ЗДЕСЬ: после публикации объект только читают, и
+        # ленивый разбор из чужого потока стал бы гонкой за общий словарь.
+        # `tree` пуст ровно до первого разбора - не строим его дважды
+        if getattr(pak, "tree", None) is None:
+            pak.read_index()
+        _CACHE[dir_vpk_path] = (stamp, pak)
+        return pak
+
+
+def _fix_archive_names(pak) -> None:
+    """Чинит имена пронумерованных архивов у библиотеки vpk
+
+    В `_make_vpkfile_path` она делает `path.replace('english', '')` - хак под
+    чужие сборки Source. У TF2 озвучка так и называется,
+    `tf2_sound_vo_english_dir.vpk`, и после замены библиотека ищет
+    несуществующий `tf2_sound_vo__001.vpk`: реплики молчали, а в лог падал
+    FileNotFoundError. Правило простое и без исключений: `_dir.vpk` меняется на
+    номер архива
+    """
+    def path_for(metadata, _pak=pak):
+        path = _pak.vpk_path
+        index = metadata['archive_index']
+        if index != 0x7fff:
+            path = path[:-len('dir.vpk')] + '%03d.vpk' % index
+        return path
+
+    try:
+        pak._make_vpkfile_path = path_for
+    except (AttributeError, TypeError) as exc:      # чужая версия библиотеки
+        logger.debug(f"[vpk] имена архивов оставлены как есть: {exc}")
+
+
+def clear_vpk_cache() -> None:
+    """Сбрасывает кэш VPK
+
+    Нужен в первую очередь тестам (изоляция): без сброса замоканный/устаревший
+    vpk-объект мог бы протечь между тестами
+    """
+    with _LOCK:
+        _CACHE.clear()

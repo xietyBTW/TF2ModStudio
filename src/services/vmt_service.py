@@ -1,0 +1,878 @@
+import os
+import re
+from typing import Tuple
+
+from src.data.weapons import SPECIAL_MODES
+
+
+def _read_vmt(path: str) -> Tuple[str, str]:
+    """Текст VMT и его кодировка. Моды бывают в cp1251 (русские комментарии):
+    latin-1 читает любой байт и пишет его обратно тем же, файл не портится"""
+    with open(path, 'rb') as f:
+        raw = f.read()
+    try:
+        return raw.decode('utf-8'), 'utf-8'
+    except UnicodeDecodeError:
+        return raw.decode('latin-1'), 'latin-1'
+
+
+def _write_vmt(path: str, text: str, encoding: str) -> None:
+    with open(path, 'w', encoding=encoding, newline='') as f:
+        f.write(text)
+
+
+def _live_param(name: str) -> "re.Pattern":
+    """Строка параметра ``name`` (группа 1 - всё до значения) в VMT
+
+    С начала строки - закомментированная (`//	"$bumpmap" …`) не параметр.
+    Значение в кавычках или без них; ``$basetexture2`` и прочие соседи не
+    совпадают
+    """
+    return re.compile(r'^([ \t]*"?' + re.escape(name) + r'"?[ \t]+)(?:"[^"\n]*"|[^\s"{}]+)',
+                      re.IGNORECASE | re.MULTILINE)
+
+
+#: Ошибки синтаксиса VMT. Текст встраивается в чужие фразы (находка
+#: диагностики, «… (строка N)» редактора), поэтому переводится здесь, а не на
+#: странице: целиком такую фразу словарь страницы не узнал бы
+_SYNTAX_ERRORS = {
+    "ru": {
+        "quote": "Незакрытая кавычка",
+        "extra": "Лишняя закрывающая скобка }",
+        "open": "Незакрытая скобка {",
+        "empty": "Пустой VMT",
+        "block": "Нет блока { } - VMT должен содержать тело шейдера",
+        "shader": 'Не найдено имя шейдера (напр. "VertexLitGeneric")',
+    },
+    "en": {
+        "quote": "Unclosed quote",
+        "extra": "Extra closing brace }",
+        "open": "Unclosed brace {",
+        "empty": "Empty VMT",
+        "block": "No { } block: a VMT must contain a shader body",
+        "shader": 'Shader name not found (e.g. "VertexLitGeneric")',
+    },
+}
+
+
+class VMTService:
+    """Сервис для работы с VMT файлами (материалы Source Engine: пути и шаблоны)"""
+
+    # Спец-режимы: (относительный путь, имя файла без расширения).
+    # Режимы вне таблицы получают дефолт materials/effects/{mode}
+    _SPECIAL_MODE_RELPATHS: dict = {
+        "critHIT": (("materials", "effects"), "crit"),
+        "spray": (("materials", "vgui", "logos"), "spray"),
+        # Лёд рагдолла (Sky-cicle). Override игрового материала по пути:
+        "death_ice": (("materials", "models", "player", "shared"), "ice_player"),
+        # Золотая статуя (Golden Frying Pan / Saxxy)
+        "death_gold": (("materials", "models", "player", "shared"), "gold_player"),
+        # Огонь горящего игрока (слоистый огонь)
+        "death_fire": (("materials", "effects", "tiledfire"), "fireLayeredSlowTiled512"),
+    }
+
+    # Валидация синтаксиса
+
+    @staticmethod
+    def validate_vmt_syntax(content: str, lang: str = "ru") -> Tuple[bool, str, int]:
+        """
+        Проверяет базовый KeyValues-синтаксис VMT
+
+        Ловит самые частые причины «невидимого материала» в игре:
+          - незакрытые/лишние фигурные скобки { };
+          - нечётные (незакрытые) кавычки в строке;
+          - отсутствие корневого блока шейдера
+
+        Комментарии (// ...) и содержимое строк в кавычках игнорируются,
+        чтобы скобка/кавычка внутри значения не считалась структурной
+
+        Returns:
+            (is_valid, error_message, error_line)
+            error_line - номер строки (1-based) или 0, если не привязано к строке
+        """
+        msg = _SYNTAX_ERRORS.get(lang, _SYNTAX_ERRORS["en"])
+        depth = 0
+        saw_shader = False
+        saw_any_brace = False
+
+        for line_no, raw in enumerate(content.split('\n'), 1):
+            line = raw
+
+            # Обрезаем // комментарий, но только если он вне кавычек
+            q = 0
+            cut = None
+            i = 0
+            while i < len(line):
+                ch = line[i]
+                if ch == '"':
+                    q += 1
+                elif ch == '/' and i + 1 < len(line) and line[i + 1] == '/' and q % 2 == 0:
+                    cut = i
+                    break
+                i += 1
+            if cut is not None:
+                line = line[:cut]
+
+            # Нечётное число кавычек в строке -> незакрытая строка
+            if line.count('"') % 2 != 0:
+                return False, msg["quote"], line_no
+
+            # Убираем строковые значения, чтобы скобки внутри них не считались
+            structural = re.sub(r'"[^"]*"', '', line)
+
+            # Имя шейдера/секции - токен в кавычках в начале строки до открытия блока
+            if depth == 0 and re.search(r'"[^"]+"', line):
+                saw_shader = True
+
+            for ch in structural:
+                if ch == '{':
+                    depth += 1
+                    saw_any_brace = True
+                elif ch == '}':
+                    depth -= 1
+                    if depth < 0:
+                        return False, msg["extra"], line_no
+
+        if depth > 0:
+            return False, msg["open"], 0
+        if not content.strip():
+            return False, msg["empty"], 0
+        if not saw_any_brace:
+            return False, msg["block"], 0
+        if not saw_shader:
+            return False, msg["shader"], 0
+
+        return True, "", 0
+
+    # Внутренние хелперы
+
+    @staticmethod
+    def _find_block_end(content: str, brace_pos: int) -> int | None:
+        """
+        Находит позицию закрывающей фигурной скобки блока, начинающегося с brace_pos.
+        Учитывает вложенность. Возвращает индекс '}' или None если не найдено
+        """
+        depth = 0
+        for i in range(brace_pos, len(content)):
+            if content[i] == '{':
+                depth += 1
+            elif content[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return i
+        return None
+
+    @staticmethod
+    def _normalize_cdmaterials(path: str) -> str:
+        """
+        Нормализует путь из $cdmaterials: обратные слеши -> прямые, убирает пробелы,
+        trailing-слеш и префикс 'materials/' (если есть)
+        """
+        normalized = path.replace('\\', '/').strip().rstrip('/')
+        if normalized.startswith('materials/'):
+            normalized = normalized[len('materials/'):]
+        return normalized
+
+    @staticmethod
+    def get_weapon_relpaths(mode: str) -> Tuple[str, str, str]:
+        """
+        Возвращает относительные пути для конкретного оружия (без basepath)
+        
+        Для спец режимов (critHIT) - простая структура в effects/.
+        Для обычного оружия - используем VGUI структуру (костыль, но так работает в TF2)
+        
+        Args:
+            mode: Режим оружия
+            
+        Returns:
+            Tuple[rel_path, vmt_filename, vtf_filename]
+        """
+        if mode in SPECIAL_MODES:
+            path_parts, stem = VMTService._SPECIAL_MODE_RELPATHS.get(
+                mode, (("materials", "effects"), mode)
+            )
+            rel_path = os.path.join(*path_parts)
+            vmt_filename = f"{stem}.vmt"
+            vtf_filename = f"{stem}.vtf"
+        else:
+            # Для обычного оружия - всегда используем VGUI структуру (костыль, но так работает в TF2)
+            weapon_key = mode.split('_', 1)[1] if '_' in mode else mode
+            
+            # Определяем путь в зависимости от типа оружия (v_ или c_)
+            # v_ - viewmodel (оружие в руках), c_ - worldmodel (оружие на земле/в инвентаре)
+            if weapon_key.startswith('v_'):
+                # Для v_ оружия: materials/vgui/replay/thumbnails/models/workshop_partner/weapons/v_weaponname/
+                rel_path = os.path.join("materials", "vgui", "replay", "thumbnails", "models", "workshop_partner", "weapons", weapon_key)
+            else:
+                # Для c_ оружия: materials/vgui/replay/thumbnails/models/workshop_partner/weapons/c_models/
+                # (все c_ оружие лежит в одной папке c_models)
+                rel_path = os.path.join("materials", "vgui", "replay", "thumbnails", "models", "workshop_partner", "weapons", "c_models")
+            
+            vmt_filename = f"{weapon_key}.vmt"
+            vtf_filename = f"{weapon_key}.vtf"
+        
+        return rel_path, vmt_filename, vtf_filename
+    
+    @staticmethod
+    def create_vmt_template(output_path: str, mode: str, class_name: str = "", weapon_type: str = ""):
+        """Создает VMT файл по шаблону (базовый шаблон, если нет оригинального VMT из игры)"""
+        template = VMTService._create_template(mode, class_name, weapon_type)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template)
+    
+    @staticmethod
+    def _get_texture_path_from_cdmaterials(cdmaterials_path: str, weapon_key: str) -> str:
+        """
+        Формирует путь для $baseTexture на основе пути из $cdmaterials
+        
+        В VMT файле путь $baseTexture должен быть БЕЗ префикса materials/ и с прямыми слешами.
+        Это путь относительно корня материалов игры - Source Engine требует именно такой формат
+        
+        Args:
+            cdmaterials_path: Путь из $cdmaterials в QC файле
+            weapon_key: Ключ оружия (имя файла)
+            
+        Returns:
+            Путь для $baseTexture (например, "vgui/replay/thumbnails/models/workshop_partner/weapons/c_models/c_claymore")
+        """
+        normalized_path = VMTService._normalize_cdmaterials(cdmaterials_path)
+        
+        # Формируем путь для $baseTexture: путь из $cdmaterials + имя файла
+        # Если путь не заканчивается на слеш - добавляем его (чтобы правильно соединить с именем файла)
+        if normalized_path and not normalized_path.endswith('/'):
+            texture_path = f"{normalized_path}/{weapon_key}"
+        else:
+            texture_path = f"{normalized_path}{weapon_key}"
+        
+        return texture_path
+    
+    @staticmethod
+    def create_vmt_template_from_cdmaterials(output_path: str, cdmaterials_path: str, weapon_key: str):
+        """
+        Создает VMT файл на основе пути из $cdmaterials
+        
+        Путь $baseTexture в VMT будет точно таким, как в QC файле в $cdmaterials,
+        с добавлением имени файла (weapon_key).
+        Например, если в QC: $cdmaterials "vgui\\replay\\thumbnails\\models\\workshop_partner\\weapons\\c_models\\"
+        То в VMT будет: "$baseTexture" "vgui/replay/thumbnails/models/workshop_partner/weapons/c_models/c_claymore"
+        
+        Это базовый шаблон, если нет оригинального VMT из игры (ничего особенного, просто работает)
+        """
+        texture_path = VMTService._get_texture_path_from_cdmaterials(cdmaterials_path, weapon_key)
+        
+        template = f'''"VertexLitGeneric"
+{{
+\t"$basetexture" "{texture_path}"
+}}'''
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template)
+    
+    @staticmethod
+    def update_vmt_basetexture_path(vmt_path: str, cdmaterials_path: str, weapon_key: str):
+        """
+        Обновляет путь $baseTexture в существующем VMT файле на основе пути из $cdmaterials
+        
+        Нужно когда мы копируем VMT из игры, но путь к текстуре может быть другим (из-за патчинга QC)
+        
+        Args:
+            vmt_path: Путь к VMT файлу
+            cdmaterials_path: Путь из $cdmaterials в QC файле
+            weapon_key: Ключ оружия (имя файла)
+        """
+        if not os.path.exists(vmt_path):
+            return
+        
+        with open(vmt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Формируем новый путь для $baseTexture (на основе пути из QC)
+        new_texture_path = VMTService._get_texture_path_from_cdmaterials(cdmaterials_path, weapon_key)
+        
+        # Ищем и заменяем путь в $basetexture или $baseTexture (регистронезависимо)
+        # Паттерн ищет "$basetexture" или "$baseTexture" с любым путем в кавычках
+        # Учитываем разные форматы: "$basetexture" "path" или $basetexture "path" (VMT может быть в разном формате)
+        # Используем re.IGNORECASE потому что Valve пишет по-разному (иногда с большой буквы, иногда нет)
+        # С начала строки: закомментированная строка (//	"$basetexture" …) - не
+        # параметр, и правка её вместо живой молча оставляла игре старое
+        pattern = _live_param('$basetexture')
+
+        def replace_path(match):
+            # Сохраняем формат первой части (с кавычками или без, с пробелами/табами, чтобы не сломать форматирование)
+            first_part = match.group(1)
+            return f'{first_part}"{new_texture_path}"'
+
+        new_content, replaced = pattern.subn(replace_path, content)
+
+        # Если не нашли существующий $basetexture - добавляем его в начало (после первой строки с шейдером)
+        # (на случай если VMT файл не имеет $basetexture, хотя такое маловероятно)
+        if not replaced:
+            # Ищем первую строку с шейдером (например, "VertexLitGeneric" или "UnlitGeneric")
+            shader_pattern = r'^"([^"]+)"\s*$'
+            lines = content.split('\n')
+            
+            # Ищем строку с шейдером и добавляем $basetexture после открывающей скобки
+            for i, line in enumerate(lines):
+                if re.match(shader_pattern, line.strip()):
+                    # Ищем следующую строку с открывающей скобкой (обычно сразу после шейдера)
+                    for j in range(i + 1, min(i + 5, len(lines))):
+                        if '{' in lines[j]:
+                            # Вставляем $basetexture после открывающей скобки (с правильным отступом)
+                            indent = '\t' if lines[j].strip() == '{' else '\t'
+                            lines.insert(j + 1, f'{indent}"$basetexture" "{new_texture_path}"')
+                            new_content = '\n'.join(lines)
+                            break
+                    break
+        
+        # Записываем обратно
+        with open(vmt_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+    @staticmethod
+    def enable_animated_bumpmap(vmt_path: str, fps: int) -> None:
+        """Анимирует $bumpmap через $bumpframe - для гифки с включённым normal map
+
+        Вызывать ПОСЛЕ update_vmt_bumpmap_path: $bumpframe вставляется рядом с
+        уже существующим ключом $bumpmap. fps обязан совпадать с fps базовой
+        текстуры, иначе рельеф уедет по фазе от картинки
+        """
+        VMTService.enable_animated_basetexture(
+            vmt_path, fps, var="$bumpmap", framenumvar="$bumpframe")
+
+    @staticmethod
+    def enable_animated_basetexture(vmt_path: str, fps: int,
+                                    var: str = "$basetexture",
+                                    framenumvar: str = "$frame") -> None:
+        """Добавляет прокси AnimatedTexture для var в VMT-ФАЙЛ"""
+        if not os.path.exists(vmt_path):
+            return
+        content, encoding = _read_vmt(vmt_path)
+        content = VMTService.add_animated_texture_proxy(
+            content, fps, var=var, framenumvar=framenumvar)
+        _write_vmt(vmt_path, content, encoding)
+
+    @staticmethod
+    def add_animated_texture_proxy(content: str, fps: int,
+                                   var: str = "$basetexture",
+                                   framenumvar: str = "$frame") -> str:
+        """Добавляет (или обновляет fps у) прокси AnimatedTexture для var
+
+        Работает с ТЕКСТОМ VMT: редактор партиклов держит VMT в памяти
+        (custom_files), а сборка оружия - в файлах (enable_animated_basetexture)
+
+        var/framenumvar параметризованы, чтобы тем же кодом анимировать
+        $bumpmap/$bumpframe - см. enable_animated_bumpmap
+        """
+        var_re = re.escape(var)
+        framenum_re = re.escape(framenumvar)
+
+        try:
+            fps_int = int(fps)
+        except Exception:
+            fps_int = 30
+        if fps_int <= 0:
+            fps_int = 30
+
+        def update_framerate(text: str) -> str:
+            return re.sub(
+                r'(?im)^(\s*"?animatedtextureframerate"?\s+)"?\d+(\.\d+)?"?\s*$',
+                r'\g<1>"' + str(fps_int) + '"',
+                text,
+            )
+
+        if not re.search(r'(?i)"?' + framenum_re + r'"?\s+"?\d+"?', content):
+            m = re.search(r'("?' + var_re + r'"?\s+)"[^"]+"', content, flags=re.IGNORECASE)
+            if m:
+                insert_at = m.end()
+                content = content[:insert_at] + f'\n\t"{framenumvar}" "0"' + content[insert_at:]
+            else:
+                end_root = content.rfind('}')
+                if end_root != -1:
+                    content = content[:end_root] + f'\n\t"{framenumvar}" "0"\n' + content[end_root:]
+
+        # [ \t] вместо \s: \s захватывает переводы строк, из-за чего ^ уезжал на
+        # предыдущую (пустую) строку - тогда proxies_indent получался с '\n'
+        # внутри и каждая вставленная строка удваивала перевод, а .end() съедал
+        # '{' со следующей строки и прокси вставлялся ВНУТРЬ соседнего блока
+        proxies_key = re.search(r'(?im)^[ \t]*"?proxies"?[ \t]*(\{)?[ \t]*$', content)
+        if not proxies_key:
+            end_root = content.rfind('}')
+            if end_root != -1:
+                content = (
+                    content[:end_root]
+                    + '\n\t"Proxies"\n\t{\n\t}\n'
+                    + content[end_root:]
+                )
+            proxies_key = re.search(r'(?im)^[ \t]*"?proxies"?[ \t]*(\{)?[ \t]*$', content)
+
+        if proxies_key:
+            proxies_line_start = proxies_key.start()
+            proxies_indent = re.match(r'[ \t]*', content[proxies_line_start:]).group(0)
+            brace_pos = content.find('{', proxies_key.end() - 1)
+            if brace_pos == -1:
+                nl = content.find('\n', proxies_key.end())
+                if nl == -1:
+                    content = content + '\n' + proxies_indent + '{\n' + proxies_indent + '}\n'
+                    brace_pos = content.find('{', proxies_key.end())
+                else:
+                    content = content[:nl + 1] + proxies_indent + '{\n' + content[nl + 1:]
+                    brace_pos = content.find('{', proxies_key.end())
+
+            if brace_pos != -1:
+                end = VMTService._find_block_end(content, brace_pos)
+
+                if end is not None:
+                    block = content[brace_pos:end + 1]
+                    # Check if there's already an AnimatedTexture proxy specifically for var.
+                    # Some VMTs (e.g. Hypno-Eyes) have a default AnimatedTexture proxy for $detail -
+                    # that's a different variable and must not block us from adding our own.
+                    # По этой же причине прокси $basetexture не мешает добавить $bumpmap
+                    has_var_anim = bool(re.search(
+                        r'(?si)"?AnimatedTexture"?\s*\{[^}]*"?animatedtexturevar"?\s+"?' + var_re + r'"?',
+                        block,
+                    ))
+                    if has_var_anim:
+                        patched_block = update_framerate(block)
+                        content = content[:brace_pos] + patched_block + content[end + 1:]
+                    else:
+                        brace_line_end = content.find('\n', brace_pos)
+                        if brace_line_end == -1:
+                            brace_line_end = brace_pos + 1
+                            content = content + '\n'
+                        insert_at = brace_line_end + 1
+                        inside_indent = proxies_indent + '\t'
+                        insertion = (
+                            inside_indent + '"AnimatedTexture"\n'
+                            + inside_indent + '{\n'
+                            + inside_indent + f'\t"animatedtexturevar" "{var}"\n'
+                            + inside_indent + f'\t"animatedtextureframenumvar" "{framenumvar}"\n'
+                            + inside_indent + '\t"animatedtextureframerate" "' + str(fps_int) + '"\n'
+                            + inside_indent + '}\n'
+                        )
+                        content = content[:insert_at] + insertion + content[insert_at:]
+
+        return content
+
+    @staticmethod
+    def update_vmt_bumpmap_path(vmt_path: str, cdmaterials_path: str, weapon_key: str):
+        """
+        Обновляет или добавляет путь $bumpmap в VMT файле на основе пути из $cdmaterials
+        
+        Нужно для нормалмапов (бампмаппинг) - добавляем путь к нормалмап текстуре с суффиксом _normal
+        
+        Args:
+            vmt_path: Путь к VMT файлу
+            cdmaterials_path: Путь из $cdmaterials в QC файле
+            weapon_key: Ключ оружия с суффиксом _normal (например, c_scattergun_normal)
+        """
+        if not os.path.exists(vmt_path):
+            return
+        
+        # Мод бывает в cp1251 - строгое utf-8 падало и роняло все его карты
+        content, encoding = _read_vmt(vmt_path)
+
+        # Формируем путь для $bumpmap (тот же путь что и для $basetexture, но с _normal в имени файла)
+        normal_texture_path = VMTService._get_texture_path_from_cdmaterials(cdmaterials_path, weapon_key)
+        
+        # Ищем и заменяем путь в $bumpmap или $bumpMap (регистронезависимо, потому что Valve пишет по-разному)
+        # Только живая строка: у 240 материалов игры $bumpmap есть лишь
+        # закомментированный (у снайперской винтовки в том числе), и правка
+        # комментария оставляла модель без нормали
+        pattern = _live_param('$bumpmap')
+
+        def replace_path(match):
+            first_part = match.group(1)
+            return f'{first_part}"{normal_texture_path}"'
+
+        new_content, replaced = pattern.subn(replace_path, content)
+
+        # Если не нашли существующий $bumpmap - добавляем его после $basetexture (это стандартное место)
+        if not replaced:
+            # Ищем строку с $basetexture (обычно $bumpmap идет сразу после $basetexture)
+            match = re.search(_live_param('$basetexture').pattern + r'[ \t]*\r?\n',
+                              content, re.IGNORECASE | re.MULTILINE)
+            
+            if match:
+                # Добавляем $bumpmap сразу после $basetexture (с правильным отступом)
+                indent = '\t' if '\t' in match.group(1) else '\t'
+                new_content = content[:match.end()] + f'{indent}"$bumpmap" "{normal_texture_path}"\n' + content[match.end():]
+            else:
+                # Если не нашли $basetexture - добавляем в начале блока (после открывающей скобки, fallback)
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if '{' in line:
+                        indent = '\t' if '\t' in line else '\t'
+                        lines.insert(i + 1, f'{indent}"$bumpmap" "{normal_texture_path}"')
+                        new_content = '\n'.join(lines)
+                        break
+
+        # Записываем обратно
+        _write_vmt(vmt_path, new_content, encoding)
+    
+    @staticmethod
+    def has_live_param(content: str, param: str) -> bool:
+        """Задан ли параметр живой строкой (закомментированная не в счёт)"""
+        return bool(_live_param(param).search(content or ''))
+
+    @staticmethod
+    def _set_vmt_param(content: str, param: str, value: str) -> str:
+        """
+        Идемпотентно ставит параметр VMT в корневой блок шейдера
+
+        Если параметр уже есть - заменяет значение, иначе вставляет новую строку
+        перед закрывающей скобкой корневого блока. Регистронезависимо
+        (Valve пишет $EnvMap/$envmap как попало)
+        """
+        # Значение в кавычках или без: моды пишут и `$rimlight 1`. Не найдя
+        # такую, дописали бы вторую строку, а движок читает ПЕРВУЮ
+        new_content, n = _live_param(param).subn(
+            lambda m: f'{m.group(1)}"{value}"', content, count=1)
+        if n:
+            return new_content
+
+        open_brace = content.find('{')
+        if open_brace == -1:
+            return content
+        end = VMTService._find_block_end(content, open_brace)
+        if end is None:
+            return content
+        return content[:end] + f'\t"{param}" "{value}"\n' + content[end:]
+
+    @staticmethod
+    def add_material_map_params(vmt_path: str, cdmaterials_path: str, map_texture_key: str,
+                                path_param: str, extra_vmt: dict = None) -> bool:
+        """
+        Вписывает в VMT файловую карту материала (Фаза 2): путь к карте + скаляры
+
+        path_param   - параметр-путь ($detail / $selfillummask / $phongexponenttexture);
+        map_texture_key - имя VTF-карты без расширения (например c_scattergun_detail);
+        extra_vmt    - сопутствующие параметры ($detailscale, $selfillum, $phong …)
+
+        Путь карты строится так же, как $basetexture/$bumpmap - от $cdmaterials.
+        Работает только на VertexLitGeneric. Возвращает True, если VMT изменён.
+        Не пишет результат, если он не прошёл валидацию синтаксиса
+        """
+        if not os.path.exists(vmt_path):
+            return False
+
+        from src.services import vmt_parse
+
+        content, encoding = _read_vmt(vmt_path)
+        # Шейдер разбором: перед ним бывают комментарий и BOM
+        if vmt_parse.parse(content.lstrip('﻿')).shader.lower() != 'vertexlitgeneric':
+            return False
+
+        # path_param=None - карта без своей текстуры (только параметры, напр. rim light)
+        if path_param:
+            tex_path = VMTService._get_texture_path_from_cdmaterials(cdmaterials_path, map_texture_key)
+            content = VMTService._set_vmt_param(content, path_param, tex_path)
+        for param, value in (extra_vmt or {}).items():
+            content = VMTService._set_vmt_param(content, param, str(value))
+
+        is_valid, _err, _line = VMTService.validate_vmt_syntax(content)
+        if not is_valid:
+            return False
+
+        _write_vmt(vmt_path, content, encoding)
+        return True
+
+    @staticmethod
+    def remove_param(vmt_path: str, param: str) -> bool:
+        """Снимает живую строку параметра (комментарии не трогает). True - снята"""
+        if not os.path.exists(vmt_path):
+            return False
+        content, encoding = _read_vmt(vmt_path)
+        new = re.sub(_live_param(param).pattern + r'[^\n]*\n?', '', content,
+                     flags=re.IGNORECASE | re.MULTILINE)
+        if new == content:
+            return False
+        _write_vmt(vmt_path, new, encoding)
+        return True
+
+    @staticmethod
+    def remove_material_map(vmt_path: str, map_id: str) -> bool:
+        """
+        Снимает карту материала (MATERIAL_MAPS) с VMT: строку её пути, а у
+        карты без текстуры (rim light) - выключает флаг
+
+        Сопутствующие числа ($detailscale, $phongboost…) остаются: без пути
+        карты движок их не читает, а $phong и $envmap могли стоять в моде и до
+        неё. Только живые строки - закомментированные не трогаем
+        """
+        from src.data.material_maps import MATERIAL_MAPS
+
+        cfg = MATERIAL_MAPS.get(map_id)
+        if not cfg or not os.path.exists(vmt_path):
+            return False
+        if cfg.get('path_param'):
+            return VMTService.remove_param(vmt_path, cfg['path_param'])
+        if map_id == 'phongcolor':
+            # Цвет блика - это $phongtint или $phongalbedotint, не обводка
+            tint = VMTService.remove_param(vmt_path, '$phongtint')
+            return VMTService.remove_param(vmt_path, '$phongalbedotint') or tint
+        content, encoding = _read_vmt(vmt_path)
+        new = VMTService._set_vmt_param(content, '$rimlight', '0')
+        if new == content:
+            return False
+        _write_vmt(vmt_path, new, encoding)
+        return True
+
+    @staticmethod
+    def remove_paint_proxies(vmt_path: str) -> None:
+        """
+        Removes game paint (tint color) proxies from a hat VMT file so that
+        the user's texture displays without TF2 paint coloring
+
+        Removes:
+          - $blendtintbybasealpha, $blendtintcoloroverbase, $colortint_base,
+            $colortint_tmp parameter lines
+          - ItemTintColor proxy block
+          - SelectFirstIfNonZero proxy block
+          - Multiply proxy block that references $color2
+
+        Adds:
+          - Equals proxy: maps $yellow -> $color2
+        """
+        if not os.path.exists(vmt_path):
+            return
+
+        with open(vmt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Remove paint-related parameter lines
+        for param in (
+            r'\$blendtintbybasealpha',
+            r'\$blendtintcoloroverbase',
+            r'\$colortint_base',
+            r'\$colortint_tmp',
+        ):
+            content = re.sub(
+                r'[ \t]*"?' + param + r'"?\s+"[^"\n]*"[ \t]*\r?\n',
+                '',
+                content,
+                flags=re.IGNORECASE,
+            )
+
+        # Remove paint proxy blocks
+        content = VMTService._remove_named_vmt_block(content, 'ItemTintColor')
+        content = VMTService._remove_named_vmt_block(content, 'SelectFirstIfNonZero')
+        content = VMTService._remove_named_vmt_block(
+            content, 'Multiply',
+            condition=lambda body: bool(re.search(r'\$color2', body, re.IGNORECASE)),
+        )
+
+        # Add Equals proxy inside the Proxies block
+        content = VMTService._insert_equals_proxy(content)
+
+        # Collapse 3+ consecutive blank lines down to at most 2
+        content = re.sub(r'\n{3,}', '\n\n', content)
+
+        with open(vmt_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+    @staticmethod
+    def _remove_vmt_blocks(content: str, name: str, condition) -> str:
+        """Все блоки `name { … }`, чьё тело проходит `condition`, - долой.
+        В отличие от _remove_named_vmt_block смотрит ВСЕ одноимённые блоки:
+        AnimatedTexture в одном VMT бывает и у основы, и у $detail"""
+        # Имя, затем { - на той же строке или ниже, с комментарием между:
+        # `"BurnLevel" {` и `"BurnLevel" // огонь` тоже встречаются
+        header_re = re.compile(r'^[ \t]*"?' + re.escape(name) + r'"?(?=[\s{/])',
+                               re.IGNORECASE | re.MULTILINE)
+        gap_re = re.compile(r'(?:\s+|//[^\n]*)*')
+        pos = 0
+        while True:
+            m = header_re.search(content, pos)
+            if not m:
+                return content
+            gap = gap_re.match(content, m.end())
+            brace = gap.end() if content.startswith('{', gap.end()) else -1
+            end = VMTService._find_block_end(content, brace) if brace != -1 else None
+            if end is None or not condition(content[brace:end + 1]):
+                pos = m.end()
+                continue
+            stop = end + 1
+            if content.startswith('\r\n', stop):
+                stop += 2
+            elif content.startswith('\n', stop):
+                stop += 1
+            content = content[:m.start()] + content[stop:]
+            pos = m.start()
+
+    @staticmethod
+    def release_detail(vmt_path: str) -> bool:
+        """
+        Освобождает $detail от эффекта горения TF2
+
+        У косметики $detail занят огнём: прокси BurnLevel каждый кадр пишет
+        $detailblendfactor (0, пока предмет не горит), AnimatedTexture листает
+        кадры огня в $detail. Своя detail-карта с ними невидима, а при горении
+        вместо огня. Снимаем оба прокси - предмет перестаёт показывать огонь
+        на себе, это цена своей detail-карты. True - VMT изменён
+        """
+        if not os.path.exists(vmt_path):
+            return False
+        content, encoding = _read_vmt(vmt_path)
+        new = VMTService._remove_vmt_blocks(
+            content, 'BurnLevel',
+            lambda body: re.search(r'\$detailblendfactor\b', body, re.IGNORECASE))
+        new = VMTService._remove_vmt_blocks(
+            new, 'AnimatedTexture',
+            lambda body: re.search(r'animatedtexturevar"?\s+"?\$detail"?\s', body, re.IGNORECASE))
+        if new == content:
+            return False
+        _write_vmt(vmt_path, new, encoding)
+        return True
+
+    @staticmethod
+    def _remove_named_vmt_block(content: str, name: str, condition=None) -> str:
+        """
+        Remove the first matching named proxy block from VMT content.
+        Handles both 'Name\\n{' and 'Name {' styles.
+        If condition is provided, only removes the block when condition(block_body) is True
+        """
+        header_re = re.compile(
+            r'^[ \t]*"?' + re.escape(name) + r'"?[ \t]*\r?\n',
+            re.IGNORECASE | re.MULTILINE,
+        )
+
+        m = header_re.search(content)
+        if not m:
+            return content
+
+        # Find the next '{' after the header line; everything between must be whitespace
+        next_brace = content.find('{', m.end())
+        if next_brace == -1:
+            return content
+
+        between = content[m.end():next_brace]
+        if between.strip():
+            return content
+
+        # Count braces to find the matching '}'
+        end = VMTService._find_block_end(content, next_brace)
+
+        if end is None:
+            return content
+
+        block_body = content[next_brace:end + 1]
+
+        if condition is not None and not condition(block_body):
+            return content
+
+        remove_end = end + 1
+        if remove_end < len(content) and content[remove_end] in ('\n', '\r'):
+            remove_end += 1
+
+        return content[:m.start()] + content[remove_end:]
+
+    @staticmethod
+    def _insert_equals_proxy(content: str) -> str:
+        """
+        Insert an Equals proxy ($yellow -> $color2) before the closing brace
+        of the Proxies block.  Does nothing if Equals is already present or
+        if there is no Proxies block
+        """
+        if re.search(r'"?Equals"?\s*[\r\n]', content, re.IGNORECASE):
+            return content
+
+        proxies_re = re.compile(r'(?im)^[ \t]*"?Proxies"?[ \t]*\r?\n')
+        m = proxies_re.search(content)
+        if not m:
+            return content
+
+        next_brace = content.find('{', m.end())
+        if next_brace == -1:
+            return content
+
+        between = content[m.end():next_brace]
+        if between.strip():
+            return content
+
+        # Find matching closing brace
+        end = VMTService._find_block_end(content, next_brace)
+
+        if end is None:
+            return content
+
+        # Detect indentation from existing proxy names inside the block
+        block_interior = content[next_brace + 1:end]
+        indent_match = re.search(r'^([ \t]+)\S', block_interior, re.MULTILINE)
+        proxy_indent = indent_match.group(1) if indent_match else '\t\t'
+        inner_indent = proxy_indent + '\t'
+
+        equals_block = (
+            f'\n{proxy_indent}"Equals"\n'
+            f'{proxy_indent}{{\n'
+            f'{inner_indent}"srcVar1" "$yellow"\n'
+            f'{inner_indent}"resultVar" "$color2"\n'
+            f'{proxy_indent}}}'
+        )
+
+        return content[:end] + equals_block + '\n' + content[end:]
+
+    @staticmethod
+    def _create_template(mode: str, class_name: str = "", weapon_type: str = "") -> str:
+        """Создает шаблон VMT (базовый шаблон, если нет оригинального из игры)"""
+        if mode in SPECIAL_MODES:
+            return VMTService._create_special_template(mode)
+        else:
+            return VMTService._create_weapon_template(mode)
+    
+    @staticmethod
+    def _create_special_template(mode: str) -> str:
+        """Создает шаблон для специальных режимов (critHIT и т.д., используют UnlitGeneric шейдер)"""
+        if mode == "critHIT":
+            # Анимированная crit-текстура: AnimatedTexture-прокси листает кадры
+            # ($frame) со скоростью 33 к/с
+            return '''"UnlitGeneric"
+{
+\t"$baseTexture" "effects\\crit"
+\t"$translucent" 1
+\t"Proxies"
+\t{
+\t\t"AnimatedTexture"
+\t\t{
+\t\t\t"animatedTextureVar" "$basetexture"
+\t\t\t"animatedTextureFrameNumVar" "$frame"
+\t\t\t"animatedTextureFrameRate" "33"
+\t\t}
+\t}
+}'''
+        if mode == "spray":
+            return '''"UnlitGeneric"
+{
+\t"$basetexture" "vgui/logos/spray"
+\t"$translucent" "1"
+\t"$vertexcolor" "1"
+\t"$vertexalpha" "1"
+\t"$decal" "1"
+\t"$decalscale" "0.25"
+}'''
+        return f'''"UnlitGeneric"
+{{
+\t"$basetexture" "effects/{mode}"
+}}'''
+    
+    @staticmethod
+    def _create_weapon_template(weapon: str) -> str:
+        """Создает шаблон для обычного оружия (использует VertexLitGeneric шейдер, стандартный для оружия)"""
+        # Вытаскиваем имя оружия из режима (убираем префикс класса, например scout_scattergun -> scattergun)
+        weapon_key = weapon.split('_', 1)[1] if '_' in weapon else weapon
+        
+        # Определяем путь к текстуре в зависимости от типа оружия (v_ или c_)
+        # v_ - viewmodel (оружие в руках), c_ - worldmodel (оружие на земле/в инвентаре)
+        if weapon_key.startswith('v_'):
+            # Для v_ оружия: vgui/replay/thumbnails/models/workshop_partner/weapons/v_weaponname
+            # (каждое v_ оружие в своей папке)
+            texture_path = f"vgui/replay/thumbnails/models/workshop_partner/weapons/{weapon_key}"
+        else:
+            # Для c_ оружия: vgui/replay/thumbnails/models/workshop_partner/weapons/c_models/{weapon_key}
+            # (все c_ оружие в одной папке c_models)
+            texture_path = f"vgui/replay/thumbnails/models/workshop_partner/weapons/c_models/{weapon_key}"
+        
+        return f'''"VertexLitGeneric"
+{{
+\t"$basetexture" "{texture_path}"
+}}'''

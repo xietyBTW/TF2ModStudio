@@ -1,0 +1,307 @@
+/*
+ * Раскладка. Одна разметка, два размещения
+ *
+ * Каталог предметов и параметры сборки нарисованы по одному разу. Настройка
+ * `data-panels` решает единственное: прибиты они к краям экрана или
+ * вызываются поверх него
+ *
+ *   data-panels="pinned"  каталог слева, параметры справа, всегда видны
+ *   data-panels="float"   каталог на весь экран по клику на имя предмета,
+ *                         параметры выезжают над нижней полосой
+ *
+ * Всё остальное - заголовок, альбом текстур, вьюпорт, ряды действий, нижняя
+ * полоса - одинаково в обоих режимах и написано один раз
+ *
+ * Токены и мелкие элементы - в base.css. Здесь - раскладка, шапка и работа;
+ * остальные области - в style-*.css (порядок подключения в index.html).
+ */
+
+/* Шапка */
+.chrome {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--gap);
+  height: 46px;
+  padding: 0 var(--rhythm);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.chrome__mark {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+.chrome__nav { display: flex; gap: 26px; }
+.chrome__actions { display: flex; justify-content: flex-end; gap: 22px; }
+
+/* Шапка - она же полоса заголовка окна, когда системной нет (titlebar.js):
+   за пустые места шапки окно таскают, двойной щелчок его разворачивает.
+   app-region исполняет WebView2 окна приложения. Признак data-frame ставит
+   ранний скрипт index.html по адресу от app.py - ещё до модулей, так что окно
+   можно сдвинуть, даже если страница не поднялась */
+[data-frame="custom"] .chrome { app-region: drag; }
+[data-frame="custom"] .chrome :is(button, a, input, select) { app-region: no-drag; }
+/* Зону перетаскивания движок считает по прямоугольникам, не глядя на слои:
+   всё, что ложится поверх шапки (меню, палитры, диалоги, тур), иначе само
+   стало бы заголовком, и щелчок по полю тащил бы окно */
+[data-frame="custom"] :is(dialog, [popover], .catalog, .menu__list, .ctx,
+                          .dropdown, .picker, .tour__card) { app-region: no-drag; }
+/* Потомкам - сброс: app-region наследуется, а страница шлёт окну прямоугольник
+   каждого элемента с ним, заново на каждом кадре, где хоть один сдвинулся.
+   В каталоге это были 880 прямоугольников, 28 КБ на кадр прокрутки, и
+   процесс браузера был занят ими на 100%: иконки и щелчки ждали секундами.
+   Прямоугольник самого контейнера и так покрывает всё, что внутри. Именно
+   initial: значение none движок принимает, но оставляет унаследованное */
+[data-frame="custom"] :is(dialog, [popover], .catalog, .menu__list, .ctx,
+                          .dropdown, .picker, .tour__card) * { app-region: initial; }
+[data-frame="custom"] .chrome__actions { align-self: stretch; align-items: center; }
+/* Плавающий каталог встаёт под шапку, а не поверх неё: кнопки окна и
+   перетаскивание остаются под рукой */
+[data-frame="custom"][data-panels="float"] .catalog { top: 46px; }
+
+/* Кнопки окна: во всю высоту шапки и вплотную к правому краю, как системные,
+   чтобы «закрыть» ловился броском мыши в угол экрана */
+.winctl {
+  display: flex;
+  align-self: stretch;
+  margin-right: calc(-1 * var(--rhythm));
+}
+.winctl[hidden] { display: none; }
+/* Черта отделяет кнопки окна от кнопок приложения: без неё «Настройки» и три
+   значка читались одним рядом из четырёх одинаковых кнопок */
+.winctl::before {
+  content: "";
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin-right: 8px;
+  background: var(--hairline-strong);
+}
+.winctl__btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  transition: background-color var(--dur), color var(--dur);
+}
+.winctl__btn:hover  { background: var(--hairline); color: var(--ink); }
+.winctl__btn:active { background: var(--hairline-strong); }
+/* Красный «закрыть» - общий язык всех окон Windows, его узнают без подписи */
+.winctl__btn--close:hover  { background: #c42b1c; color: #fff; }
+.winctl__btn--close:active { background: #a8241a; color: #fff; }
+.winctl svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.winctl__btn--close svg { shape-rendering: geometricPrecision; }
+.winctl__restore,
+.winctl.is-max .winctl__max { display: none; }
+.winctl.is-max .winctl__restore { display: inline; }
+
+/* Заголовок-предмет
+   Имя набрано как название вещи и само служит входом в каталог, когда тот
+   не прибит. Отдельной кнопки «выбрать» нет - лишний элемент */
+.title {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 22px var(--rhythm) 16px;
+}
+
+/* Подсказка «Сменить предмет» - в строке имени, справа: поднятая над ним,
+   она залезала в шапку окна и читалась второй строкой логотипа. Место под
+   неё занято всегда (прозрачностью), и наведение ничего не сдвигает */
+.title__item {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title__name {
+  font-size: 30px;
+  font-weight: 300;
+  letter-spacing: -.01em;
+  color: var(--ink);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--dur);
+}
+.title__item:hover .title__name { border-bottom-color: var(--accent); }
+
+.title__meta { grid-column: 1 / -1; font-family: var(--mono); font-size: 10.5px; color: var(--ink-mute); }
+
+.title__hint {
+  grid-area: 1 / 2;
+  white-space: nowrap;
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur);
+  pointer-events: none;
+}
+.title__item:hover .title__hint { opacity: 1; }
+
+/* Когда каталог прибит, он и так на экране - имя перестаёт быть кнопкой */
+[data-panels="pinned"] .title__item { cursor: default; }
+[data-panels="pinned"] .title__item:hover .title__name { border-bottom-color: transparent; }
+[data-panels="pinned"] .title__hint { display: none; }
+
+.title__side { display: flex; align-items: center; gap: 26px; }
+.teams { display: flex; gap: 10px; }
+
+/* Меню инструментов
+   Извлечь модель, экспорт UV, извлечь текстуру, объединить VPK - операции
+   над предметом. К ним обращаются изредка, держать на виду незачем */
+.menu { position: relative; }
+
+.menu__list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  /* Выше панели параметров. У неё z-index 15, и она элемент грид-сетки -
+     а у таких z-index работает и без position, создавая свой слой. Меню с
+     десяткой уезжало ПОД панель и выглядело полупрозрачным */
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--overlay);
+}
+.menu__list[hidden] { display: none; }
+
+.menu__item {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur), background var(--dur);
+}
+.menu__item:last-child { border-bottom: 0; }
+.menu__item:hover { color: var(--ink); background: var(--bg); }
+
+/* Сцена
+   Здесь и живёт вся разница между режимами: меняются только колонки сетки
+   и способ показа двух боковых блоков */
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 30px;
+  padding: 0 var(--rhythm) var(--gap);
+}
+[data-panels="float"]  .stage { grid-template-columns: minmax(0, 1fr); }
+/* Ширины боковых колонок тянут за край (panel-resize.js), пока не тянули -
+   230 и 280. У частиц справа своя панель и своя ширина (`--pw`) */
+[data-panels="pinned"] .stage {
+  grid-template-columns: var(--lw, 230px) minmax(0, 1fr) var(--bw, 280px);
+}
+[data-section="particles"][data-panels="pinned"] .stage {
+  grid-template-columns: var(--lw, 230px) minmax(0, 1fr) var(--pw, 280px);
+}
+/* Край, за который сейчас можно взяться. !important - намеренно: рамку
+   панели красят с полдюжины правил по режимам и разделам, а подсветка на
+   время наведения должна перебить любое */
+.is-grip--left  { cursor: col-resize; border-left-color: var(--accent) !important; }
+.is-grip--right { cursor: col-resize; border-right-color: var(--accent) !important; }
+
+/* Работа: текстуры и модель */
+.work {
+  display: grid;
+  /* Долю левой половины задаёт человек, потянув за зазор (см. split.js).
+     Пока не тянул - поровну. В `fr`, а не в точках: пропорция должна
+     пережить изменение размера окна */
+  grid-template-columns: minmax(0, var(--split, 1fr)) minmax(0, 1fr);
+  gap: 30px;
+  min-width: 0;
+  min-height: 0;
+}
+/* Курсор над зазором - единственное приглашение потянуть: рисовать там
+   полоску незачем, граница половин и так видна */
+.work.is-split { cursor: col-resize; }
+.work[data-view="flat"],
+.work[data-view="model"] { grid-template-columns: minmax(0, 1fr); }
+.work[data-view="flat"]  .half--model { display: none; }
+.work[data-view="model"] .half--flat  { display: none; }
+
+.half {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.half__bar,
+.half__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 20px;
+}
+.half__bar--right { justify-content: flex-end; }
+/* Что показывать в кадре: сам предмет, руки или насмешка. Вкладками, как
+   материалы у половины с текстурой, - и в том же месте: вопрос там и тут
+   один и тот же, «что я смотрю» */
+.half__bar--scenes { justify-content: flex-start; gap: 16px; }
+/* Выбирать не из чего - ряда нет. Условие держится за те же data-cond, по
+   которым Python разрешает сцены: второй список режимов на странице разъехался
+   бы с `controls_for` */
+.half__bar--scenes:not(:has([data-cond]:not([hidden]))) { display: none; }
+.half__foot--wrap { flex-wrap: wrap; row-gap: 10px; }
+
+/* Режимы показа стоят рядом с командами, а не внутри половины сцены: внутри
+   они исчезали вместе с ней при переключении на «Текстуру» */
+.modes { display: flex; gap: 22px; }
+/* Ряды под кадром (анимации, стили, версии) переносятся: у демомана девять
+   кнопок анимаций, и при прибитых панелях ряд уезжал за край колонки */
+.styles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+
+/* Ряд действий: операции над тем, что рядом. Все текстовые, чтобы ни одна
+   не спорила по весу с «Собрать VPK» */
+.acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 18px;
+  row-gap: 8px;
+  min-width: 0;   /* иначе ряд не сжимается и уезжает за край вместо переноса */
+}
+/* Кнопка переносится целиком, а не по словам: «Вернуть правки» в две строки
+   при сжатой колонке читалось как две кнопки */
+.acts > * { white-space: nowrap; }
+
+/* Условные контролы приходят от режима сборки (см. frontend/CONTROLS.md).
+   Скрываем, а не гасим: недоступная кнопка - шум, который всё равно нельзя
+   нажать. Место под них не резервируется, ряд просто короче.
+   Видимостью управляет applyControls через атрибут hidden (см. base.css) */
+

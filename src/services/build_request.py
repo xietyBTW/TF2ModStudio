@@ -1,0 +1,100 @@
+"""
+Параметры одной сборки VPK, собранные в один объект
+
+Около 28 значений одним dataclass, а не аргументами через три слоя: добавить
+поле - поправить одно место, а не четыре сигнатуры
+
+Колбэки (progress/cancel/запрос текстуры/модели) сюда НЕ входят - это runtime-
+функции UI-потока, их передают отдельно
+"""
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+
+@dataclass
+class BuildRequest:
+    image_path: Optional[str] = None
+    mode: str = ""
+    filename: str = ""
+    size: Tuple[int, int] = (512, 512)
+    format_type: str = "DXT1"
+    flags: Optional[list] = None
+    vtf_options: Optional[Dict[str, Any]] = None
+    tf2_root_dir: str = ""
+    export_folder: str = "export"
+    keep_temp_on_error: bool = False
+    debug_mode: bool = False
+    replace_model_enabled: bool = False
+    replace_model_path: Optional[str] = None
+    model_ready_path: Optional[str] = None
+    draw_uv_layout: bool = False
+    language: str = "en"
+    custom_vtf_path: Optional[str] = None
+    blu_mode: str = "none"
+    blu_image_path: Optional[str] = None
+    custom_vpk_source_path: Optional[str] = None
+    hat_mdl_path: Optional[str] = None
+    hat_apply_game_paints: bool = True
+    # Снять покраску игры ($blendtintbybasealpha и её прокси) со всех VMT
+    # мода, чья текстура лежит в самом моде: человек выбрал это перед
+    # сборкой, увидев, что игра перекрасит его картинку целиком
+    strip_game_tint: bool = False
+    hat_class_models: Optional[Dict[str, str]] = None
+    # Доп. изменённые СТИЛИ-модели шапки: список словарей по каждому стилю
+    # (кроме активного - он собирается основным пайплайном). Каждый со своей
+    # моделью и своей текстурой -> все в один мод. Ключи элемента:
+    #   mdl_paths: List[str]      - MDL-пути стиля (по выбранным классам);
+    #   replace_smd: Optional[str]- кастомная геометрия стиля (или None);
+    #   keep_materials: bool      - «готовая» модель (свои материалы);
+    #   image_path: Optional[str] - текстура стиля (главная/RED);
+    #   vtf_path: Optional[str]   - готовый VTF стиля (приоритетнее image_path)
+    hat_style_builds: Optional[list] = None
+    # Гирлянды поверх оружия (праздничная версия, фестивайзер) с правками -
+    # каждая своей моделью и со своими материалами в тот же мод (см.
+    # decor_build). Элемент: {'kind', 'mdl', 'fit', 'textures': {материал:
+    # {'red': png, 'blu': png}}}
+    decor_builds: Optional[list] = None
+    # Части модели, ставшие своими материалами (src/services/part_materials.py):
+    # [{name, base, tris, sources}] - сборка переносит их треугольники в SMD
+    # под новым именем и пишет им VMT по образцу исходного материала
+    part_materials: Optional[list] = None
+    # Своя геометрия деталей модели (снаряд в оружии): {имя SMD детали
+    # без .smd: SMD человека}. Сборка подставляет её без вопроса, и
+    # без своей модели оружия тоже (VpkModelPipeline._apply_model_replacement)
+    part_models: Optional[Dict[str, str]] = None
+    panel_extra_textures: Optional[Dict[str, Any]] = None
+    # Материалы «Прочего» на странице: убер/зомби-варианты из $texturegroup, у
+    # которых нашлась игровая текстура. Что человек видел карточкой - про то
+    # сборка и спрашивает, сама она этот список не восстановит (какие из
+    # служебных материалов вообще имеют текстуру, знает только превью)
+    misc_materials: Optional[List[str]] = None
+    material_maps: Optional[Dict[str, Any]] = None
+    material_settings: Optional[Dict[str, Any]] = None
+    skin_build_data: Optional[Dict[str, Any]] = None
+    replace_keep_materials: bool = False
+    custom_qc_text: Optional[str] = None
+    # Режим рук: изолировать «плечи/тело» вьюмодели (переименовать общий с миром
+    # материал -> уникальный, чтобы правка не трогала мирового персонажа)
+    isolate_shoulders: bool = False
+    # {material: path} BLU-слотов из цветного переключателя - для рук: нейтральный
+    # материал с синей текстурой делается командным (red=база, blue=вариант)
+    panel_blu_textures: Optional[Dict[str, Any]] = None
+    # «Сделать командным»: у некомандного оружия синтезировать BLU-строку в
+    # $texturegroup (skin 0 = база/RED, skin 1 = {material}_blue), чтобы игра
+    # показывала BLU-команде отдельную текстуру. Только без нативной команды/австралия
+    force_team: bool = False
+    # Способ обхода sv_pure для казуала: 'console' (по умолчанию) или 'vgui'
+    # (перенаправление $cdmaterials в whitelisted-папку). См. bypass_prefix()
+    bypass_method: str = "console"
+    # Своей главной текстуры нет, собирают ради другой правки (VMT, карты,
+    # модель): главная берётся из игры БЕЗ вопроса. image_path при этом -
+    # EXTRA_TEX_USE_GAME_ORIGINAL
+    main_from_game: bool = False
+    # Режим «Скайбокс» (mode == SKYBOX_MODE)
+    # Имена стоковых небес, чьи материалы перекрываем (уже развёрнуто из
+    # «Все карты»). Панорама едет в image_path (может быть None, если пользователь
+    # задал все 6 граней вручную)
+    skybox_sky_names: Optional[list] = None
+    # {грань: путь} ручные грани - приоритетнее нарезки панорамы
+    skybox_face_overrides: Optional[Dict[str, str]] = None

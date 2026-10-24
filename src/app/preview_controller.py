@@ -1,0 +1,845 @@
+"""
+Фасад 3D-превью: запуск воркера игровой модели и его события
+
+Зачем слой: чтобы представление можно было заменить целиком, состояние должно
+меняться до того, как о событии узнает тот, кто рисует
+
+Контракт простой: контроллер владеет воркером, применяет к сессии всё, что
+следует из его сигналов, и только потом эмитит СВОЁ событие. Подписчик -
+страница в окне WebView2 - занимается исключительно отображением и про воркеры
+не знает
+
+Сигналы взяты из `src/services/base_worker` - того же механизма, на котором
+работают воркеры. Слот вызывается в потоке воркера, страница
+разбирает события своей очередью, поэтому диспетчер ей не нужен
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Optional, Tuple
+
+from src.domain.preview.session import PreviewSession
+from src.services.base_worker import Signal
+from src.shared.constants import Team
+from src.shared.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+def split_blu_multi_material(payload) -> Tuple[dict, dict]:
+    """
+    Разбирает payload сигнала blu_multi_material в (tex_map, name_map)
+
+    Воркер шлёт либо пару (текстуры, имена), либо - в старых ветках - только
+    словарь текстур. Разбор вынесен отдельно, потому что от него зависят и
+    подписи карточек, и видимость переключателя команд
+
+    Returns:
+        (tex_map, name_map), пустые словари, если payload пуст
+    """
+    if not payload:
+        return {}, {}
+    if isinstance(payload, tuple) and len(payload) == 2:
+        tex_map, name_map = payload
+        return dict(tex_map or {}), dict(name_map or {})
+    return dict(payload), {}
+
+
+class Preview3DController:
+    """Одна загрузка игровой модели в 3D: воркер, сессия, события"""
+
+    # События для представления
+    progress = Signal(str)                  # (текст статуса)
+    model_ready = Signal(str, str)          # (obj_path, texture_path)
+    animated = Signal(object, float)        # ([кадры RED], framerate)
+    materials = Signal(object)              # {материал: png} - многоматериальная
+    blu_ready = Signal(object, float)       # ([кадры BLU], framerate)
+    blu_materials = Signal(object, object)  # (tex_map, name_map) - уже разобранные
+    australium_ready = Signal(str, str)     # (png, имя материала)
+    render_hints = Signal(object)           # свойства рисования материалов
+    # ({материал: png} чужой геометрии, [материалы предмета]) - праздничная
+    # гирлянда висит на обычной пушке: она в кадре есть, но предмету не
+    # принадлежит, и карточек по ней не бывает
+    scene_extra = Signal(object, object)
+    cards_ready = Signal(str)               # (texture) - геометрия НЕ трогается
+    # Игровые текстуры косметических стилей: {индекс скина: {базовый мат.: png}}
+    skin_textures = Signal(object)
+    failed = Signal(str)                    # (текст ошибки)
+
+    def __init__(self, session: PreviewSession):
+        self._session = session
+        self._worker = None
+        #: Последняя подложка ОБЫЧНОЙ модели: (текстуры чужой геометрии,
+        #: материалы предмета). Поля сеанса под неё общие с видом от первого
+        #: лица, и выход оттуда их чистит - а у праздничного оружия подложка
+        #: нужна и обычной модели. Помнит её тот, кто её и произвёл
+        self._scene_extra: Tuple[dict, list] = ({}, [])
+        #: Есть ли в кадре сцена (руки, насмешка, «На модели»). Ставит сеанс:
+        #: сцены живут в других контроллерах
+        self.scene_up: Callable[[], bool] = lambda: False
+
+    # Управление
+
+    @property
+    def is_running(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def stop(self) -> None:
+        """Останавливает текущую загрузку, если она идёт. Не ждёт: см. cancel"""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+
+    def load_game_model(
+        self,
+        weapon_key: str,
+        mode: str,
+        misc_vpk: str,
+        textures_vpk: str,
+        lang: str = 'en',
+        geometry: bool = True,
+        bodygroups: Optional[dict] = None,
+    ) -> None:
+        """
+        Начинает загрузку обычной игровой модели
+
+        ``bodygroups`` - {имя группы: номер варианта}: переключатель состояния
+        модели в превью (разбитая бутылка), пусто - как в игре по умолчанию
+
+        Предыдущая загрузка останавливается: держать две одновременно нельзя -
+        их сигналы перемешались бы в одной сессии
+
+        Состояние сеанса к этому моменту должно быть уже подготовлено вызовом
+        ``PreviewSession.begin_game_model()``: контроллер отвечает за загрузку,
+        а не за правила перехода между моделями
+
+        geometry=False - «только карточки»: в превью уже стоит геометрия
+        пользователя, и заменять её оригинальной нельзя, а текстуры и материалы
+        из игрового QC нужны (режим «заменить только геометрию»)
+        """
+        self.stop()
+        # Подложка прошлой модели к новой не относится: у неё свой носитель
+        # или его нет вовсе
+        self._scene_extra = ({}, [])
+
+        from src.services.preview_3d_worker import Preview3DWorker
+        w = Preview3DWorker(
+            weapon_key=weapon_key,
+            mode=mode,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            lang=lang,
+            bodygroups=bodygroups,
+            # Своя модель снаряда - правка предмета: в кадре она при любом
+            # пути загрузки (выбор, состояние, отмена)
+            part_models=dict(getattr(self._session, 'part_models', None) or {}),
+        )
+        self._bind(w, mode, geometry)
+        self._worker = w
+        w.start()
+
+    def _bind(self, w, mode: str, geometry: bool = True) -> None:
+        """Подписывает контроллер на сигналы воркера"""
+        w.progress.connect(self.progress.emit)
+        w.ready.connect(lambda obj, tex: self._on_ready(obj, tex, mode, geometry))
+        w.animated.connect(self._on_animated)
+        w.multi_material.connect(self._on_multi_material)
+        w.blu_ready.connect(self._on_blu_ready)
+        w.blu_multi_material.connect(self._on_blu_multi_material)
+        w.blu_same_as_red.connect(self._on_blu_same_as_red)
+        w.australium_ready.connect(self._on_australium_ready)
+        w.render_hints.connect(lambda hints: self.render_hints.emit(hints or {}))
+        w.scene_extra.connect(self._on_scene_extra)
+        w.skin_textures.connect(self._on_skin_textures)
+        w.failed.connect(self.failed.emit)
+
+    # Обработка сигналов воркера: сначала сессия, потом событие
+
+    def _on_ready(self, obj_path: str, texture_path: str, mode: str,
+                  geometry: bool = True) -> None:
+        s = self._session
+        # Перетаскивание текстуры на конкретный меш относилось к прошлой модели
+        s.per_mesh_active = False
+        s.per_mesh_base_image = None
+        # Кнопки команд уже сброшены переходом - держим активную команду в тон
+        s.textures.active_team = Team.RED
+        if texture_path:
+            s.textures.red_frames = [texture_path]
+            # Одноматериальная модель: multi_material для неё не придёт вовсе,
+            # и без этой записи состояние не знало бы ни одного материала -
+            # показывать было бы нечего. Ключ служебный (SINGLE_TEX_KEY), в
+            # сборку он не попадает
+            if not s.textures.material_names:
+                from src.domain.preview.texture_state import SINGLE_TEX_KEY
+                s.textures.material_names = [SINGLE_TEX_KEY]
+                s.textures.vpk_red_tex_map = {SINGLE_TEX_KEY: texture_path}
+        if not geometry:
+            # Геометрия пользовательская - оригинальную не показываем и в
+            # current_object не пишем: там должно остаться то, что на экране
+            self.cards_ready.emit(texture_path)
+            return
+        s.current_object = (mode, obj_path, texture_path)
+        self.model_ready.emit(obj_path, texture_path)
+
+    def _on_animated(self, frame_paths: list, framerate: float) -> None:
+        """У RED-команды многокадровый VTF"""
+        if not frame_paths:
+            return
+        self._session.textures.red_frames = list(frame_paths)
+        self._session.team_framerate = framerate
+        self.animated.emit(frame_paths, framerate)
+
+    def _on_blu_ready(self, frame_paths: list, framerate: float) -> None:
+        """Нашлась BLU-текстура - у модели есть командный вариант"""
+        if not frame_paths:
+            return
+        self._session.textures.blu_frames = list(frame_paths)
+        # Нулевой framerate у BLU означает «кадр один», а не «сбрось скорость»:
+        # частота уже могла прийти с RED и относится к обеим командам
+        if framerate > 0:
+            self._session.team_framerate = framerate
+        self.blu_ready.emit(frame_paths, framerate)
+
+    def _on_australium_ready(self, png_path: str, mat_name: str) -> None:
+        """
+        Нашёлся вариантный кадр (Australium / Festive / Botkiller)
+
+        Кладём его в сессию, а не просто пересылаем дальше: наличие варианта
+        она берёт из australium_frame, и без этого кнопка варианта не
+        появлялась ни у одного оружия - сигнал приходил, а состояние о нём
+        не знало
+        """
+        if not png_path:
+            return
+        t = self._session.textures
+        t.australium_frame = png_path
+        t.australium_mat_name = mat_name or None
+        self.australium_ready.emit(png_path, mat_name)
+
+    def _on_blu_same_as_red(self, twins) -> None:
+        self._session.textures.blu_twins = {
+            str(blu).lower(): str(red) for blu, red in dict(twins or {}).items()}
+
+    def _on_scene_extra(self, payload) -> None:
+        """
+        Текстуры чужой геометрии кадра - подложкой, а не составом предмета
+
+        Праздничное оружие висит на обычной пушке: она в кадре нужна, иначе
+        гирлянда болтается в пустоте, - но предмету не принадлежит. Карточки
+        по ней не строятся и в сборку она не идёт, ложится ПОД текстуры
+        предмета, чтобы правка предмета их перебивала. Тот же приём, что у рук
+        класса в виде от первого лица (``_on_materials`` ниже)
+
+        Вторым в паре едут материалы САМОГО предмета. Без них одноматериальная
+        гирлянда осталась бы стоковой: её текстура хранится под служебным
+        ключом, меша с таким именем в сцене нет, а класть её глобально нельзя -
+        глобальная легла бы и на пушку
+        """
+        tex_map, own = payload if isinstance(payload, tuple) else (payload, [])
+        if not tex_map:
+            return
+        self._scene_extra = (dict(tex_map), list(own))
+        # Модель доехала, когда в кадре уже сцена (вид от первого лица): поля
+        # подложки сейчас её, и носитель затёр бы руки. Вернёт выход из сцены
+        if not self.scene_up():
+            self.apply_scene_extra()
+        self.scene_extra.emit(dict(tex_map), list(own))
+
+    def apply_scene_extra(self) -> None:
+        """Кладёт подложку обычной модели в сеанс
+
+        Зовётся не только по сигналу воркера, но и после выхода из вида от
+        первого лица: тот чистит те же поля за собой, и без возврата
+        праздничная гирлянда красилась ЦЕЛИКОМ на модель - вместе с пушкой,
+        на которой висит. Пусто - ничего не трогаем: у обычного оружия
+        подложки нет, и обнулять чужое не за что
+        """
+        tex_map, own = self._scene_extra
+        if not tex_map:
+            return
+        self._session.scene_extra_textures = dict(tex_map)
+        if own:
+            self._session.scene_item_materials = list(own)
+
+    def _on_skin_textures(self, skin_textures: dict) -> None:
+        """Игровые текстуры стилей -> переопределения стиля (как у мода из VPK)
+
+        Без этого вкладка стиля оставалась пустой, а его текстура показывалась
+        лишней карточкой в базовом альбоме
+        """
+        if not skin_textures:
+            return
+        self._session.adopt_style_textures(skin_textures)
+        self.skin_textures.emit(skin_textures)
+
+    def _on_multi_material(self, tex_map: dict) -> None:
+        if not tex_map:
+            return
+        from src.domain.preview.material_cards import (
+            editable_material_cards, misc_material_names,
+        )
+        from src.domain.preview.texture_state import SINGLE_TEX_KEY
+
+        s = self._session
+        # Имена материалов модели: по ним потом разрешаются текстуры при смене
+        # команды и стиля. Первый материал - главный, порядок сохраняем
+        #
+        # Карточки - только РЕДАКТИРУЕМЫЕ материалы: глаза, зубы и sheen-оверлеи
+        # отбрасывает тот же блэклист, что в приложении. Без фильтра страница
+        # предлагала заменить то, что мод всё равно пишет оригиналом.
+        # Остальное уходит в «Прочее» - на меши в 3D оно ложится всё равно
+        # (scene_textures), иначе служебная геометрия осталась бы серой
+        #
+        # Служебный ключ, поставленный в _on_ready «на случай одной текстуры»,
+        # ОБЯЗАН уступить настоящим именам: этот сигнал и означает, что модель
+        # многоматериальная. Иначе в превью остаётся одна текстура из трёх
+        if not s.textures.material_names or s.textures.material_names == [SINGLE_TEX_KEY]:
+            cards = [c.name for c in editable_material_cards(tex_map)]
+            s.textures.material_names = cards
+            s.textures.main_material = cards[0] if cards else None
+            s.misc_materials = misc_material_names(tex_map, cards)
+            s.misc_mode = False
+            s.textures.vpk_red_tex_map.pop(SINGLE_TEX_KEY, None)
+        # Игровые оригиналы RED запоминаем ОДИН раз и только на своей команде:
+        # на BLU сюда приходят синие текстуры, и они затёрли бы красные
+        if s.textures.active_team == Team.RED and not s.textures.vpk_red_tex_map:
+            s.textures.vpk_red_tex_map = dict(tex_map)
+        self.materials.emit(tex_map)
+
+    def _on_blu_multi_material(self, payload) -> None:
+        tex_map, name_map = split_blu_multi_material(payload)
+        if not tex_map and not name_map:
+            return
+        s = self._session
+        # Маппинг имён нужен подписям карточек даже когда синих VTF в VPK нет,
+        # поэтому обновляется независимо от текстур
+        if name_map:
+            s.textures.blu_name_map = dict(name_map)
+        if tex_map:
+            s.textures.vpk_blu_tex_map = dict(tex_map)
+        logger.debug(
+            f"BLU multi-material: {len(tex_map)} текстур, {len(name_map)} имён")
+        self.blu_materials.emit(tex_map, name_map)
+
+
+class VpkModController:
+    """
+    Показ ЧУЖОГО мода из VPK: его модель и его текстуры
+
+    Отличие от обычной загрузки - источник. Геометрия и материалы берутся из
+    файла пользователя, а карточки строятся по VTF мода, а не по материалам
+    игровой модели. Поэтому у сеанса поднимается custom_vpk_mode: обычная
+    фильтрация материалов эти карточки перетёрла бы
+    """
+
+    progress = Signal(str)
+    ready = Signal(str, str)           # (obj_path, texture_path)
+    animated = Signal(object, float)
+    cards = Signal(object)             # [{name, display_name, preview_png}]
+    materials = Signal(object)         # имена материалов модели (меши)
+    skins = Signal(object)             # стили модели (skinfamilies)
+    #: (ключ оружия, reference SMD мода) - что мод заменяет. По нему страница
+    #: открывает вид от первого лица: мод показывается в руках класса
+    weapon = Signal(str, str)
+    failed = Signal(str)
+
+    def __init__(self, session: PreviewSession):
+        self._session = session
+        self._worker = None
+
+    def stop(self) -> None:
+        """Не ждёт: у воркера своя временная папка, делить ему с новым нечего"""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+
+    def load(self, user_vpk: str, misc_vpk: str, textures_vpk: str,
+             lang: str = 'en') -> None:
+        """Начинает разбор мода. Состояние сеанса чистится ДО загрузки"""
+        self.stop()
+
+        s = self._session
+        s.reset_skins()
+        s.reset_team_frames()
+        s.reset_misc()
+        # Режим включается ПОСЛЕ сбросов: reset_team_frames его гасит
+        s.custom_vpk_mode = True
+        s.custom_model_materials = []
+        s.reset_custom_vpk()
+
+        from src.services.preview_vpk_mod_worker import PreviewVpkModWorker
+        w = PreviewVpkModWorker(
+            user_vpk_path=user_vpk,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            lang=lang,
+        )
+        w.progress.connect(self.progress.emit)
+        w.ready.connect(self._on_ready)
+        w.animated.connect(self._on_animated)
+        w.cards_ready.connect(self._on_cards)
+        w.materials_ready.connect(self._on_materials)
+        w.skins_ready.connect(self._on_skins)
+        w.weapon_found.connect(self._on_weapon)
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        w.start()
+
+    def _on_weapon(self, key: str, ref_smd: str, own_model: bool = True) -> None:
+        """Мод опознан: чьё это оружие, где его меш и свой ли он"""
+        self._session.custom_vpk_weapon = key or None
+        self._session.custom_vpk_smd = ref_smd or None
+        self._session.custom_vpk_own_model = bool(own_model)
+        self.weapon.emit(key or '', ref_smd or '')
+
+    # Сигналы воркера: сначала сессия, потом событие
+
+    def _on_ready(self, obj_path: str, texture_path: str) -> None:
+        s = self._session
+        s.textures.active_team = Team.RED
+        if texture_path:
+            s.textures.red_frames = [texture_path]
+        s.current_object = ('custom_vpk', obj_path, texture_path)
+        self.ready.emit(obj_path, texture_path)
+
+    def _on_animated(self, frames: list, framerate: float) -> None:
+        if not frames:
+            return
+        self._session.textures.red_frames = list(frames)
+        self._session.team_framerate = framerate
+        self.animated.emit(frames, framerate)
+
+    def _on_cards(self, cards: list) -> None:
+        """
+        Карточки мода. Превью его текстур кладём как ОРИГИНАЛЫ (vpk_red_tex_map)
+
+        Так нетронутая карточка остаётся текстурой мода и в сборку как
+        пользовательская не уходит, своё изображение перекроет её обычным
+        путём - через textures[RED]
+        """
+        import os
+
+        cards = list(cards or [])
+        if not cards:
+            return
+        s = self._session
+        names = [c['name'] for c in cards if c.get('name')]
+        s.textures.material_names = names
+        s.textures.main_material = names[0] if names else None
+        for card in cards:
+            png = card.get('preview_png')
+            if png and os.path.exists(png):
+                s.textures.vpk_red_tex_map[card['name']] = png
+        # Карты, что уже есть в VMT мода: диалог карт покажет их отмеченными
+        s.mod_maps = {c['name']: c['maps'] for c in cards if c.get('name') and c.get('maps')}
+        s.mod_vmts = {c['name']: c['vmt_path'] for c in cards
+                      if c.get('name') and c.get('vmt_path')}
+        self.cards.emit(cards)
+
+    def _on_materials(self, materials: list) -> None:
+        if not materials:
+            return
+        s = self._session
+        s.custom_model_materials = list(materials)
+        # Карточки шли по путям VTF в архиве, и первой бывала чужая текстура
+        # (огоньки гирлянды из того же мода). Главная - материал самой модели:
+        # на неё ложатся War Paint и части одноматериальной модели
+        own = {m.lower() for m in materials}
+        names = s.textures.material_names
+        first = [n for n in names if n.lower() in own]
+        if first:
+            s.textures.material_names = first + [n for n in names if n not in first]
+            s.textures.main_material = first[0]
+        self.materials.emit(materials)
+
+    def _on_skins(self, info: dict) -> None:
+        """
+        У мода нашлись стили (skinfamilies)
+
+        Мало запомнить их наличие: у мода СВОИ текстуры стилей, и без них
+        переключение стиля показывало бы пустые карточки вместо того, что
+        лежит в файле. Раскладываем их переопределениями - так же, как это
+        делает панель приложения (``_on_vpk_mod_skins_ready``)
+        """
+        s = self._session
+        s.textures.skin_info = info or None
+
+        s.adopt_style_textures((info or {}).get('skin_textures') or {})
+        self.skins.emit(info)
+
+
+class SkinDetectController:
+    """
+    Стили модели (skinfamilies) - «Базовый», «Bloody», командные, австралий
+
+    Запускается ПОСЛЕ загрузки превью: QC к этому моменту уже лежит в кэше
+    декомпиляции, и определение стилей обходится чтением файла. Своей модели у
+    стилей нет - они лишь говорят, сколько вариантов у одной и той же
+
+    Отсутствие стилей - обычное дело (у большинства оружия их нет), поэтому
+    провал детекта не ошибка: событие просто не приходит
+    """
+
+    detected = Signal(object)      # skin_info: {num_skins, roles, is_team, ...}
+
+    def __init__(self, session: PreviewSession):
+        self._session = session
+        self._worker = None
+        #: С какой строки скина начать (Критокола - строка 2 модели Бонка);
+        #: ставится, когда стили определятся, если такой стиль есть
+        self._start_skin = 0
+
+    def stop(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+
+    def detect(self, weapon_key: str, mode: str, misc_vpk: str,
+               lang: str = 'en', start_skin: int = 0) -> None:
+        self.stop()
+        self._start_skin = int(start_skin or 0)
+        from src.services.skin_detect_worker import SkinDetectWorker
+
+        w = SkinDetectWorker(weapon_key=weapon_key, mode=mode,
+                             misc_vpk_path=misc_vpk, lang=lang)
+        w.detected.connect(self._on_detected)
+        # failed не пробрасываем: «стилей нет» - норма, а не поломка
+        w.failed.connect(lambda why: logger.debug(f"стили не найдены: {why}"))
+        self._worker = w
+        w.start()
+
+    def _on_detected(self, info: dict) -> None:
+        s = self._session
+        s.textures.skin_info = info
+        styles = {int(index) for _label, index in (info or {}).get('styles') or ()}
+        s.textures.active_skin = self._start_skin if self._start_skin in styles else 0
+        # skin_overrides здесь НЕ чистим: оба вызова detect() идут сразу после
+        # reset_skins(), а игровые текстуры стилей приезжают параллельно от
+        # 3D-воркера - очистка съедала бы их в зависимости от того, кто успел
+        self.detected.emit(info)
+
+
+class ViewmodelController:
+    """
+    Вид от первого лица: руки класса с оружием
+
+    Отдельный воркер и отдельная сцена - меш собирается слиянием рук и оружия,
+    поэтому обычная модель тут не годится. Сцена приезжает по частям (меш,
+    материалы, редактируемые имена), собирать её целиком - дело подписчика
+    """
+
+    progress = Signal(str)
+    ready = Signal(str)             # obj_path статичной сцены
+    animated = Signal(object)       # сцена с дорожками костей
+    materials = Signal(object)      # {материал: png}
+    editable = Signal(object)       # какие меши разрешено перекрашивать
+    actions = Signal(object)        # какие анимации есть у этого оружия
+    classes = Signal(object)        # кто умеет эту насмешку (для сцены тонта)
+    slots = Signal(object)          # слоты оружия в сцене «На модели»
+    clip = Signal(object)           # только дорожки: сцена на экране остаётся
+    render_hints = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, session: PreviewSession):
+        self._session = session
+        self._worker = None
+        #: Что сейчас в кадре: (предмет, режим, команда). По нему решается,
+        #: можно ли сменить анимацию одними дорожками
+        self._shown: Optional[tuple] = None
+
+    def stop(self) -> None:
+        self._stop_worker()
+        self._shown = None
+
+    def _stop_worker(self) -> None:
+        """Гасит воркер, НЕ забывая сцену: смена анимации её не убирает
+
+        Не ждёт: сцена пишется в свою временную папку, а распаковку одной
+        модели двумя воркерами разводит замок кэша декомпиляции
+        """
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+
+    @property
+    def active(self) -> bool:
+        """Сцена собрана или собирается"""
+        return self._shown is not None
+
+    def shows(self, weapon_key: str, mode: str, decor_smd: str = '') -> bool:
+        """Та же сцена уже в кадре - значит хватит одних дорожек"""
+        return self._shown == (weapon_key, mode,
+                               self._session.textures.active_team, decor_smd)
+
+    def load(self, weapon_key: str, mode: str, misc_vpk: str, textures_vpk: str,
+             tf2_root: str, action: str = 'IDLE', lang: str = 'en',
+             custom_smd: str = '', keep_materials: bool = False,
+             decor_smd: str = '', decor_prefix: str = 'deco:') -> None:
+        """Сцена «руки класса с оружием»
+
+        `custom_smd` - меш вместо игрового: так в руке показывается чужой мод
+        из VPK или своя модель. Скелет и анимации остаются игровыми, иначе
+        оружию нечем двигаться. `decor_smd` - гирлянда поверх оружия
+        """
+        self.stop()
+        from src.data import viewmodel_anims
+        from src.services.viewmodel_worker import ViewmodelPreviewWorker
+        from src.services.weapon_anim_catalog import Action
+
+        w = ViewmodelPreviewWorker(
+            weapon_key=weapon_key,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            tf2_root=tf2_root,
+            # Класс берём из режима: всеклассовое оружие принадлежит сразу
+            # девяти классам, и в руках его надо показать у выбранного
+            tf2_class=viewmodel_anims.class_from_mode(mode),
+            action=Action[action],
+            # Рукава и перчатки у семи классов командные: на синей стороне
+            # руки красит воркер, больше их красить некому
+            team=self._session.textures.active_team,
+            custom_smd_path=custom_smd,
+            # У мода свои материалы и свои текстуры - переименовывать их в
+            # игровые значит показать пустую модель
+            custom_keep_materials=keep_materials,
+            decor_smd=decor_smd,
+            decor_prefix=decor_prefix,
+            lang=lang,
+        )
+        w.progress.connect(self.progress.emit)
+        w.ready.connect(lambda obj, _tex: self.ready.emit(obj))
+        w.animated_ready.connect(self.animated.emit)
+        w.multi_material.connect(self._on_materials)
+        w.editable_materials.connect(self._on_editable)
+        w.actions_available.connect(lambda n: self.actions.emit(list(n or [])))
+        w.render_hints.connect(lambda h: self.render_hints.emit(h or {}))
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        self._shown = (weapon_key, mode, self._session.textures.active_team,
+                       decor_smd)
+        w.start()
+
+    def load_taunt(self, prop_key: str, prop_mdl: str, misc_vpk: str,
+                   textures_vpk: str, tf2_root: str, tf2_class: str = '',
+                   lang: str = 'en') -> None:
+        """
+        Сцена насмешки: персонаж с реквизитом
+
+        Собирает её другой воркер, но приходит она теми же сигналами: сцена с
+        дорожками костей, текстуры, редактируемые материалы. Разница с видом от
+        первого лица только в источнике - поэтому и контроллер тот же, просто
+        отдельным экземпляром: две сцены не должны гасить воркер друг друга
+        """
+        self.stop()
+        from src.services.taunt_worker import TauntPreviewWorker
+
+        w = TauntPreviewWorker(
+            prop_key=prop_key,
+            prop_mdl=prop_mdl,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            tf2_root=tf2_root,
+            tf2_class=tf2_class,
+            lang=lang,
+        )
+        w.progress.connect(self.progress.emit)
+        w.animated_ready.connect(self.animated.emit)
+        w.multi_material.connect(self._on_materials)
+        w.editable_materials.connect(self._on_editable)
+        w.classes_available.connect(lambda c: self.classes.emit(list(c or [])))
+        w.render_hints.connect(lambda h: self.render_hints.emit(h or {}))
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        self._shown = (prop_key, tf2_class, self._session.textures.active_team)
+        w.start()
+
+    def load_wear(self, hat_models: dict, misc_vpk: str, textures_vpk: str,
+                  tf2_root: str, tf2_class: str = '', slot: str = '',
+                  lang: str = 'en', hidden_bodygroups: dict = None,
+                  weapon_key: str = '',
+                  custom_smd: str = '', custom_keep: bool = False) -> None:
+        """
+        Сцена «На персонаже»: персонаж в стойке, на нём предмет - шапка или
+        надеваемое оружие (`weapon_key`)
+
+        Тот же случай, что насмешка: свой воркер, общие сигналы. Шапка идёт
+        предметом сцены - правка её текстуры видна на персонаже
+        """
+        self.stop()
+        from src.services.hat_scene_worker import HatScenePreviewWorker
+
+        w = HatScenePreviewWorker(
+            hat_models=hat_models,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            tf2_root=tf2_root,
+            tf2_class=tf2_class,
+            slot=slot,
+            lang=lang,
+            hidden_bodygroups=hidden_bodygroups,
+            weapon_key=weapon_key,
+            custom_smd=custom_smd,
+            custom_keep=custom_keep,
+        )
+        w.progress.connect(self.progress.emit)
+        w.animated_ready.connect(self.animated.emit)
+        w.multi_material.connect(self._on_materials)
+        w.editable_materials.connect(self._on_editable)
+        w.classes_available.connect(lambda c: self.classes.emit(list(c or [])))
+        w.slots_available.connect(lambda info: self.slots.emit(info or {}))
+        w.render_hints.connect(lambda h: self.render_hints.emit(h or {}))
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        self._shown = ('wear', tf2_class, slot, self._session.textures.active_team)
+        w.start()
+
+    def load_death(self, mode: str, misc_vpk: str, textures_vpk: str,
+                   lang: str = 'en') -> None:
+        """
+        Сцена спец-режима: солдат умирает нужной смертью
+
+        Тот же случай, что и насмешка: сцену собирает свой воркер, а приходит
+        она общими сигналами - дорожки костей, текстуры, свойства материалов
+        """
+        self.stop()
+        from src.services.death_scene_worker import DeathScenePreviewWorker
+
+        w = DeathScenePreviewWorker(
+            mode=mode,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            lang=lang,
+        )
+        w.progress.connect(self.progress.emit)
+        w.animated_ready.connect(self.animated.emit)
+        w.multi_material.connect(self._on_materials)
+        w.render_hints.connect(lambda h: self.render_hints.emit(h or {}))
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        self._shown = (mode, '', self._session.textures.active_team)
+        w.start()
+
+    def load_clip(self, weapon_key: str, mode: str, misc_vpk: str,
+                  textures_vpk: str, tf2_root: str, action: str = 'IDLE',
+                  lang: str = 'en') -> None:
+        """Догружает ТОЛЬКО дорожки анимации к уже показанной сцене
+
+        Меш, скелет, материалы и текстуры у одного оружия одни и те же - от
+        выбора анимации зависят только кадры. Полная пересборка ради них
+        заново распаковывала текстуры и перечитывала SMD: переключение
+        действий стоило секунды вместо миллисекунд
+        """
+        self._stop_worker()          # сцену НЕ забываем: она остаётся в кадре
+        from src.data import viewmodel_anims
+        from src.services.viewmodel_worker import ViewmodelPreviewWorker
+        from src.services.weapon_anim_catalog import Action
+
+        w = ViewmodelPreviewWorker(
+            weapon_key=weapon_key,
+            misc_vpk_path=misc_vpk,
+            textures_vpk_path=textures_vpk,
+            tf2_root=tf2_root,
+            tf2_class=viewmodel_anims.class_from_mode(mode),
+            action=Action[action],
+            clip_only=True,
+            lang=lang,
+        )
+        w.progress.connect(self.progress.emit)
+        w.clip_ready.connect(lambda c: self.clip.emit(c or {}))
+        w.actions_available.connect(lambda n: self.actions.emit(list(n or [])))
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        w.start()
+
+    def _on_materials(self, tex_map: dict) -> None:
+        """
+        Текстуры сцены - подложкой, а НЕ составом предмета
+
+        В сцене есть чужая геометрия - руки класса. Её материалы приходят тем
+        же сигналом, но предмету не принадлежат: карточек у них нет и в сборку
+        они не идут. В ``material_names`` руки стали бы карточкой в альбоме, а
+        сами остались бы серыми
+
+        Поэтому весь набор ложится подложкой сцены: предмет свои материалы
+        перекрывает сам (вместе с пользовательской правкой), а руки берут
+        оставшееся
+        """
+        if not tex_map:
+            return
+        self._session.scene_extra_textures = dict(tex_map)
+        self.materials.emit(tex_map)
+
+    def _on_editable(self, names) -> None:
+        """
+        Какие меши сцены - сам предмет
+
+        Не только вьюверу: по этим именам текстура предмета ложится на меши
+        (см. ``PreviewSession._name_for_scene``). У модели с одним материалом
+        она хранится под служебным ключом, и без настоящего имени оружие в
+        руках оставалось стоковым, чего этот режим как раз и не должен делать
+        """
+        own = list(names or [])
+        self._session.scene_item_materials = own
+        self.editable.emit(own)
+
+
+class SkyboxController:
+    """Грани неба для 3D-превью: шесть PNG, которые вьювер ставит кубмапой
+
+    Два источника, оба кладут результат в домен и сообщают одним сигналом:
+    стоковые грани выбранного неба (`load`) и нарезка панорамы 360° на шесть
+    граней (`split`). Что из этого показать, решает домен -
+    `resolve_skybox_face`: своя грань -> нарезка -> стоковая
+    """
+
+    ready = Signal(object)          # {грань: png}
+    failed = Signal(str)
+
+    def __init__(self, session: PreviewSession):
+        self._session = session
+        self._worker = None
+        self._split = None
+
+    def stop(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker = None
+        self.stop_split()
+
+    def stop_split(self) -> None:
+        if self._split is not None:
+            self._split.cancel()
+            self._split = None
+
+    def split(self, equirect_path: str) -> None:
+        """Режет панораму на грани превью (numpy, 512px - см. воркер)
+
+        Нарезку делает воркер, а не сборка: сборка режет заново и в своём
+        разрешении, а превью нужно СЕЙЧАС и мелкое
+        """
+        self.stop_split()
+        from src.services.skybox_preview_worker import SkyboxSplitWorker
+
+        w = SkyboxSplitWorker(equirect_path=equirect_path)
+        w.ready.connect(self._on_split)
+        w.failed.connect(self.failed.emit)
+        self._split = w
+        w.start()
+
+    def _on_split(self, faces: dict) -> None:
+        self._session.textures.skybox_split_faces = dict(faces or {})
+        self.ready.emit(faces or {})
+
+    def load(self, sky_name: str, vpk_paths) -> None:
+        self.stop()
+        from src.services.skybox_preview_worker import SkyboxFacesWorker
+
+        w = SkyboxFacesWorker(sky_name=sky_name, vpk_paths=list(vpk_paths))
+        w.ready.connect(self._on_ready)
+        w.failed.connect(self.failed.emit)
+        self._worker = w
+        w.start()
+
+    def _on_ready(self, faces: dict) -> None:
+        self._session.textures.skybox_stock_faces = dict(faces or {})
+        self.ready.emit(faces or {})

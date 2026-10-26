@@ -123,15 +123,7 @@ export async function openSettings() {
   showTab(cfg.tf2_ok ? cfgTab : 0);
   cfgDlg.showModal();
 
-  // Размер кэша - ПОСЛЕ показа окна и без await: он считается обходом всей
-  // папки со stat на каждый файл, и на большой библиотеке это секунды. Число
-  // нужно только для подписи рядом с кнопкой «очистить», ждать его незачем
-  const cacheSize = document.getElementById('cfg-cache-size');
-  cacheSize.textContent = t('считаю…');
-  api.cacheSize()
-    .then((r) => { cacheSize.textContent =
-      r.cache_mb ? r.cache_mb + ' ' + t('МБ') : t('пусто'); })
-    .catch(() => { cacheSize.textContent = t('пусто'); });
+  showDataUsage();
 
   // Обновление - тоже после показа окна и тоже без await: это запрос к GitHub,
   // и открытие настроек не должно ждать сеть
@@ -265,6 +257,34 @@ document.getElementById('cfg-update').addEventListener('click', () => {
   else showUpdate(true);
 });
 
+/**
+ * Папка данных и что в ней сколько занимает
+ *
+ * ПОСЛЕ показа окна и без await: размеры считаются обходом папок со stat на
+ * каждый файл, и на гигабайте кэша это секунды. Окно их не ждёт
+ */
+function showDataUsage() {
+  const path = document.getElementById('cfg-data-path');
+  const usage = document.getElementById('cfg-data-usage');
+  const models = document.getElementById('cfg-cache-size');
+  usage.textContent = t('считаю…');
+  models.textContent = t('считаю…');
+  api.dataUsage().then((r) => {
+    path.textContent = r.path;
+    path.title = r.path;
+    usage.textContent = `Работы ${fileSize(r.work)}, моды ${fileSize(r.mods)}, кэш ${fileSize(r.cache)}`;
+    models.textContent = r.models ? fileSize(r.models) : t('пусто');
+  }).catch(() => {
+    usage.textContent = '';
+    models.textContent = t('пусто');
+  });
+}
+
+document.getElementById('cfg-data-open').addEventListener('click', async () => {
+  const res = await api.dataFolder();
+  if (res.error) notifyApp(res.error, 'error');
+});
+
 // Обслуживание: после обновления игры старые разобранные модели остаются в
 // кэше и собираются с прежней геометрией. Спрашиваем - очистка не бесплатна:
 // первая сборка каждого оружия после неё будет медленнее
@@ -277,7 +297,7 @@ document.getElementById('cfg-cache').addEventListener('click', async () => {
   });
   if (!go) return;
   const res = await api.clearModelCache();
-  document.getElementById('cfg-cache-size').textContent = 'пусто';
+  showDataUsage();
   notifyApp(`Кэш очищен, записей удалено: ${res.removed ?? 0}`);
 });
 

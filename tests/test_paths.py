@@ -67,14 +67,43 @@ class MigrationTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.install = Path(self._tmp.name) / "install"
         self.data = Path(self._tmp.name) / "data"
+        self.home_cache = Path(self._tmp.name) / ".tf2skingen_cache"
         self.install.mkdir()
         self.data.mkdir()
 
     def _migrate(self):
-        with patch.object(paths, "is_frozen", return_value=True):
-            with patch.object(paths, "install_dir", return_value=self.install):
-                with patch.object(paths, "data_dir", return_value=self.data):
-                    paths.migrate_legacy_data()
+        # Без подмены профиля тест унёс бы настоящий кэш того, кто его запустил
+        with patch.object(paths, "is_frozen", return_value=True), \
+                patch.object(paths, "install_dir", return_value=self.install), \
+                patch.object(paths, "data_dir", return_value=self.data), \
+                patch.object(paths, "_HOME_CACHE", self.home_cache):
+            paths.migrate_legacy_data()
+
+    def test_home_cache_moves_into_data_folder(self):
+        (self.home_cache / "decompiled" / "abc").mkdir(parents=True)
+        (self.home_cache / "decompiled" / "abc" / "m.qc").write_text("qc", encoding="utf-8")
+        (self.home_cache / "particle_attr_catalog.json").write_text("{}", encoding="utf-8")
+        self._migrate()
+        self.assertEqual(
+            (self.data / "cache" / "decompiled" / "abc" / "m.qc").read_text(encoding="utf-8"),
+            "qc")
+        self.assertTrue((self.data / "cache" / "particle_attr_catalog.json").is_file())
+        self.assertFalse(self.home_cache.exists())
+
+    def test_home_cache_moves_without_localappdata(self):
+        """Папка данных совпала с установкой - кэш из профиля всё равно уходит"""
+        (self.home_cache / "decompiled").mkdir(parents=True)
+        self.install = self.data
+        self._migrate()
+        self.assertTrue((self.data / "cache" / "decompiled").is_dir())
+
+    def test_home_cache_never_overwrites_new_cache(self):
+        (self.home_cache / "decompiled").mkdir(parents=True)
+        (self.home_cache / "unknown.txt").write_text("x", encoding="utf-8")
+        (self.data / "cache" / "decompiled").mkdir(parents=True)
+        self._migrate()
+        self.assertTrue((self.home_cache / "decompiled").is_dir())
+        self.assertTrue((self.home_cache / "unknown.txt").is_file())
 
     def test_old_data_moves_once(self):
         (self.install / "work").mkdir()

@@ -53,6 +53,14 @@
   gap: 12px;
 }
 .cfg__maint .mono { color: var(--ink-mute); }
+/* Путь бывает длинным: обрезаем, а кнопка рядом остаётся на месте */
+.cfg__datapath {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfg__maint .textbtn { flex: none; }
 
 /* Ссылка автора - тем же голосом, что остальные текстовые кнопки, и прижата
    к левому краю ряда действий: браузерная синева тут чужая */

@@ -21,10 +21,11 @@ from pathlib import Path
 from typing import Optional
 
 from src.shared.logging_config import get_logger
+from src.shared.paths import data_dir
 
 logger = get_logger(__name__)
 
-_CACHE_DIR = Path(os.path.expanduser("~")) / ".tf2skingen_cache" / "decompiled"
+_CACHE_DIR = data_dir() / "cache" / "decompiled"
 _META_FILENAME = "_cache_meta.json"
 _CACHE_VERSION = 4  # v3: vpk_mtime вместо mdl_hash; v4: SMD дописаны геометрией, которую терял Crowbar (mdl_mesh)
 

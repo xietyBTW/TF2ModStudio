@@ -595,7 +595,7 @@ TRANSLATIONS = {
         'status_crowbar_missing': 'Crowbar не найден',
         'status_cache': 'Кэш',
         'status_models': 'Моделей',
-        'status_cache_tip': 'Кэш декомпилированных моделей (~/.tf2skingen_cache). Очищается в настройках; при превышении 1 ГБ самые давно использованные записи удаляются сами.',
+        'status_cache_tip': 'Кэш декомпилированных моделей (cache\\decompiled в папке данных). Очищается в настройках; при превышении 1 ГБ самые давно использованные записи удаляются сами.',
         'info_resolution': 'Разрешение:',
         'info_format': 'Формат VTF:',
         'info_flags': 'Флаги:',
@@ -800,7 +800,7 @@ TRANSLATIONS = {
         'clear_decompile_cache': 'Очистить кэш моделей',
         'clear_cache_confirm': 'Очистить кэш декомпилированных моделей?\n\nРазмер кэша: {size}\n\nКэш ускоряет повторную сборку того же оружия.\nПосле очистки первая сборка каждого оружия будет медленнее.',
         'clear_cache_done': 'Кэш очищен. Удалено записей: {count}.',
-        'clear_decompile_cache_tooltip': 'Удаляет кэш декомпилированных моделей (~/.tf2skingen_cache).\nИспользуйте если модели перестали собираться после обновления TF2.'
+        'clear_decompile_cache_tooltip': 'Удаляет кэш декомпилированных моделей (cache\\decompiled в папке данных).\nИспользуйте если модели перестали собираться после обновления TF2.'
     },
     'en': {
         'error': 'Error',
@@ -1386,7 +1386,7 @@ TRANSLATIONS = {
         'info_unset': 'not set',
         'status_cache': 'Cache',
         'status_models': 'Models',
-        'status_cache_tip': 'Decompiled model cache (~/.tf2skingen_cache). Cleared from settings; above 1 GB the least recently used entries are evicted automatically.',
+        'status_cache_tip': 'Decompiled model cache (cache\\decompiled in the data folder). Cleared from settings; above 1 GB the least recently used entries are evicted automatically.',
         'status_ready': 'Ready',
         'status_no_game': 'Game folder is not set',
         'status_tf2_ok': 'TF2 found',
@@ -1596,6 +1596,6 @@ TRANSLATIONS = {
         'clear_decompile_cache': 'Clear Model Cache',
         'clear_cache_confirm': 'Clear the model decompile cache?\n\nCache size: {size}\n\nThe cache speeds up repeated builds of the same weapon.\nAfter clearing, the first build of each weapon will be slower.',
         'clear_cache_done': 'Cache cleared. {count} entries removed.',
-        'clear_decompile_cache_tooltip': 'Deletes cached decompiled models (~/.tf2skingen_cache).\nUse if models stopped building correctly after a TF2 update.'
+        'clear_decompile_cache_tooltip': 'Deletes cached decompiled models (cache\\decompiled in the data folder).\nUse if models stopped building correctly after a TF2 update.'
     }
 }

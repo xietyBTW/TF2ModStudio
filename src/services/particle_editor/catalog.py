@@ -4,7 +4,6 @@
 подсказки UI, тесты и фоновый поток"""
 
 import json
-import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +15,7 @@ from src.services.particle_editor.pcf_format import (
 from src.services.tf2_paths import TF2Paths
 from src.services.vtf_preview_service import open_vpks
 from src.shared.logging_config import get_logger
+from src.shared.paths import data_dir
 
 logger = get_logger(__name__)
 
@@ -152,8 +152,7 @@ _CATALOG_FORMAT = 7   # 7: + корни {дочерняя: корневая си
 
 
 def attr_catalog_file() -> Path:
-    return (Path(os.path.expanduser("~")) / ".tf2skingen_cache"
-            / "particle_attr_catalog.json")
+    return data_dir() / "cache" / "particle_attr_catalog.json"
 
 
 def game_stamp(tf2_root_dir: str) -> str:

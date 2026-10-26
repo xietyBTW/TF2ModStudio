@@ -49,6 +49,18 @@ def safe_remove(path: str | Path, is_dir: bool = False) -> bool:
         return False
 
 
+def folder_size(folder: str | Path) -> int:
+    """Сколько байт в папке со всеми вложенными. Нет папки - ноль"""
+    total = 0
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:                  # файл ушёл между обходом и stat
+                pass
+    return total
+
+
 def copy_file_safe(source: str | Path, destination: str | Path) -> Path:
     """
     Безопасно копирует файл, создавая директорию назначения если нужно

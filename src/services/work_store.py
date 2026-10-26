@@ -474,14 +474,6 @@ def size_of(key: str) -> int:
     Показывается перед удалением черновиков: «удалить 12 черновиков» и
     «удалить 12 черновиков (280 МБ)» - это два разных решения
     """
-    folder = WORK_DIR / key
-    if not folder.is_dir():
-        return 0
-    total = 0
-    for root, _dirs, files in os.walk(folder):
-        for name in files:
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                pass
-    return total
+    from src.shared.file_utils import folder_size
+
+    return folder_size(WORK_DIR / key)

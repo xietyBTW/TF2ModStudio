@@ -77,9 +77,10 @@ function cached(method, params) {
 /** Забывает закэшированные справочники: сменился язык - сменились имена */
 export function forgetCached() { memo.clear(); }
 
-//: Размер кэша моделей. Отдельно от settings(): считается обходом всей папки
-//: и на большой библиотеке занимает секунды - окно настроек его не ждёт
-export const cacheSize = () => call('cache_size', {});
+//: Папка данных и размеры работ, модов и кэша. Отдельно от settings():
+//: считается обходом папок и на большой библиотеке занимает секунды - окно
+//: настроек его не ждёт
+export const dataUsage = () => call('data_usage', {});
 
 //: Версия и обновление. update_status ходит в сеть, поэтому страница зовёт его
 //: после отрисовки; install_update качает установщик, запускает его и ГАСИТ
@@ -321,6 +322,7 @@ export const setUiState   = (key, value) => call('set_ui_state', { key, value })
 export const logTail      = (since) => call('log_tail', { since });
 export const clearLog     = () => call('clear_log', {});
 export const logFolder    = () => call('log_folder', {});
+export const dataFolder   = () => call('data_folder', {});
 export const exportFolder = () => call('export_folder', {});
 export const pickFolder   = (start) => call('pick_folder', { start });
 //: Кнопки окна: minimize / maximize / close / theme; без действия - состояние

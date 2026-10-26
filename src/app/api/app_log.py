@@ -54,6 +54,47 @@ def log_folder() -> Dict[str, object]:
 
 
 @endpoint
+def data_folder() -> Dict[str, object]:
+    """Открывает папку данных: работы, моды, настройки, кэш"""
+    from src.shared.paths import ensure_data_dir
+
+    return _open_folder(ensure_data_dir())
+
+
+@endpoint
+def data_usage() -> Dict[str, object]:
+    """
+    Где папка данных и сколько в ней занимают работы, моды и кэш, байтами
+
+    Отдельным вызовом, а не в `settings()`: обход со `stat` на каждый файл на
+    гигабайте кэша - секунды, и открытие окна настроек их ждать не должно.
+    Обходим только свои папки: из исходников папка данных - весь репозиторий.
+    `models` - часть `cache`, кэш разобранных моделей: его чистит своя кнопка
+    """
+    from src.services import mod_library_service, work_store
+    from src.services.decompile_cache import get_cache_dir
+    from src.shared.file_utils import folder_size
+    from src.shared.paths import data_dir
+
+    root = data_dir()
+    models_dir = get_cache_dir().resolve()
+    cache = models = 0
+    if (root / 'cache').is_dir():
+        for entry in (root / 'cache').iterdir():
+            size = folder_size(entry) if entry.is_dir() else entry.stat().st_size
+            cache += size
+            if entry.resolve() == models_dir:
+                models = size
+    return {
+        'path': str(root.resolve()),
+        'work': folder_size(work_store.WORK_DIR),
+        'mods': folder_size(mod_library_service.LIBRARY_DIR),
+        'cache': cache,
+        'models': models,
+    }
+
+
+@endpoint
 def export_folder() -> Dict[str, object]:
     """
     Открывает папку экспорта: там собранные моды и извлечённое

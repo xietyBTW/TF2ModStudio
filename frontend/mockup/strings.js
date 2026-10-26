@@ -301,6 +301,10 @@ export const EN = {
   'по одному в строке или через запятую': 'one per line or comma-separated',
   'Очистить кэш моделей': 'Clear the model cache',
   'Удалить черновики…': 'Delete drafts…',
+  'Папка данных': 'Data folder',
+  'Здесь ваши работы, моды, настройки и кэш. Обновление программы их не трогает.':
+    'Your works, mods, settings and cache live here. Updating the app does not touch them.',
+  'Работы {}, моды {}, кэш {}': 'Works {}, mods {}, cache {}',
   'Поддержать автора': 'Support the author',
   'Сохранить': 'Save',
   'Отмена': 'Cancel',

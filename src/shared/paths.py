@@ -44,6 +44,11 @@ APP_DIR_NAME = "Tf2SkinGenerator"
 #: данные человека и кэш; tools/ и код остаются на месте
 _LEGACY_DIRS = ("config", "work", "mods", "export", "cache")
 
+#: Прежние версии клали часть кэша в профиль, мимо папки данных: его не видно
+#: в приложении и не убирает ни деинсталлятор, ни удаление папки данных
+_HOME_CACHE = Path.home() / ".tf2skingen_cache"
+_HOME_CACHE_ITEMS = ("decompiled", "particle_attr_catalog.json")
+
 
 def is_frozen() -> bool:
     """True - приложение собрано PyInstaller'ом"""
@@ -103,24 +108,33 @@ def migrate_legacy_data() -> None:
     Переносит данные из папки установки в папку данных - один раз
 
     Нужно ровно для тех, кто ставил прежние версии: их config/, work/ и mods/
-    лежат рядом с .exe и первое же обновление их потеряет. Переносим только то,
-    чего ещё нет в новом месте: повторный запуск ничего не перетирает, а сбой
-    на одной папке не мешает остальным
+    лежат рядом с .exe и первое же обновление их потеряет. Туда же кэш из
+    профиля (``~/.tf2skingen_cache``). Переносим только то, чего ещё нет в
+    новом месте: повторный запуск ничего не перетирает, а сбой на одном пункте
+    не мешает остальным
+
+    Из исходников не переносим: там папка данных - репозиторий, часто на
+    другом диске, и гигабайт кэша копировался бы, а не переименовывался
     """
     if not is_frozen():
         return
-    source_root = install_dir()
     target_root = data_dir()
-    if source_root.resolve() == target_root.resolve():
-        return
+    moves = [(_HOME_CACHE / name, target_root / "cache" / name)
+             for name in _HOME_CACHE_ITEMS]
+    if install_dir().resolve() != target_root.resolve():
+        moves = [(install_dir() / name, target_root / name)
+                 for name in _LEGACY_DIRS] + moves
 
-    for name in _LEGACY_DIRS:
-        source, target = source_root / name, target_root / name
-        if not source.is_dir() or target.exists():
+    for source, target in moves:
+        if not source.exists() or target.exists():
             continue
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source), str(target))
-            logger.info(f"Данные перенесены: {name} -> {target}")
+            logger.info(f"Данные перенесены: {source} -> {target}")
         except OSError as exc:                       # занято, нет прав - не фатально
-            logger.warning(f"Не удалось перенести {name}: {exc}")
+            logger.warning(f"Не удалось перенести {source}: {exc}")
+    try:
+        _HOME_CACHE.rmdir()                          # только пустую
+    except OSError:
+        pass

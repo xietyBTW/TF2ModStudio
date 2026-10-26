@@ -90,7 +90,6 @@ The program files and your data live in different places. An update replaces the
 |---|---|---|
 | Program | `%LOCALAPPDATA%\Programs\Tf2SkinGenerator` by default, or the folder you unzipped | the repository |
 | Your data | `%LOCALAPPDATA%\Tf2SkinGenerator` | the repository folder |
-| Decompiled model cache | `%USERPROFILE%\.tf2skingen_cache\decompiled` | the same |
 
 Inside the data folder:
 
@@ -100,7 +99,7 @@ Inside the data folder:
 | `work\` | Drafts and saved works, one folder per item. |
 | `mods\` | The library of opened VPK mods. |
 | `export\` | Built mods and extracted files, unless you chose another export folder. |
-| `cache\` | Backpack icons, the cosmetics list, the window profile and other things the app can rebuild. |
+| `cache\` | Decompiled models (`decompiled`), backpack icons, the cosmetics list, the window profile and other things the app can rebuild. |
 | `tools\edited_vmt\` | Your VMT edits, one file per material. |
 | `tools\temp\` | Temporary build folders. Leftovers of interrupted builds are removed at the next launch. |
 | `tf2sg.log` | The log. It's rotated at about 2 MB, keeping two older files (`tf2sg.log.1`, `tf2sg.log.2`). |
@@ -108,7 +107,9 @@ Inside the data folder:
 
 The model cache is limited to about 1 GB. When it grows past that, the entries used least recently are removed. Entries are also rebuilt by themselves when the game updates its archives.
 
-Earlier versions kept data next to the program. The first launch of a newer version moves `config`, `work`, `mods`, `export` and `cache` into the data folder, unless they're already there.
+Earlier versions kept data next to the program. The first launch of a newer version moves `config`, `work`, `mods`, `export` and `cache` into the data folder, unless they're already there. The model cache moves there too from `%USERPROFILE%\.tf2skingen_cache`, where it used to live.
+
+The data folder path and the size of works, mods and cache are shown in the settings on the Maintenance tab, next to an Open folder button.
 
 Only one copy of the app can run at a time. Starting it again while it's open does nothing: two copies writing the same settings and drafts would overwrite each other.
 

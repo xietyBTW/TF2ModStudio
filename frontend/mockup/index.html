@@ -1523,6 +1523,16 @@
     </section>
 
     <section class="cfg__sec" role="tabpanel">
+    <!-- Где всё лежит: иначе работы и кэш приходилось искать по диску наугад -->
+    <div class="field">
+      <span class="field__label">Папка данных</span>
+      <div class="cfg__maint">
+        <span class="mono cfg__datapath" id="cfg-data-path"></span>
+        <button class="textbtn" id="cfg-data-open" type="button">Открыть папку</button>
+      </div>
+      <span class="field__note" id="cfg-data-usage"></span>
+      <span class="field__note">Здесь ваши работы, моды, настройки и кэш. Обновление программы их не трогает.</span>
+    </div>
     <!-- Потолок кэша разобранных моделей. «Совсем без кэша» нет: кэш - это и
          рабочая папка открытой модели (см. _CACHE_CAPS в src/app/api.py) -->
     <div class="cfg__grid">

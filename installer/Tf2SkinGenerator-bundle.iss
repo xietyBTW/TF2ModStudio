@@ -154,8 +154,8 @@ Type: filesandordirs; Name: "{app}\mods"; Tasks: removedata
 Type: filesandordirs; Name: "{app}\cache"; Tasks: removedata
 ; Работы, моды, настройки и кэш нынешних версий.
 Type: filesandordirs; Name: "{localappdata}\{#AppName}"; Tasks: removedata
-; Кэш разобранных моделей (до 1 ГБ) живёт в профиле, а не в папке данных
-; (src/services/decompile_cache.py). Это только кэш — убираем всегда.
+; Кэш разобранных моделей прежних версий, до переезда в папку данных (см.
+; migrate_legacy_data). Это только кэш, убираем всегда
 Type: filesandordirs; Name: "{%USERPROFILE}\.tf2skingen_cache"
 ; Папку убираем, только если она пуста: человек мог поставить программу в уже
 ; существующую папку, и её содержимое не наше.

@@ -15,7 +15,7 @@ MDL шапка лежит как автору было удобно: у одни
 центрируется по габаритам
 
 Запуск (нужен разобранный Crowbar игрок - например, из кэша декомпиляции
-~/.tf2skingen_cache/decompiled/<ключ>/soldier.qc):
+cache/decompiled/<ключ>/soldier.qc в папке данных):
     python scripts/player_skeleton_build.py <путь к QC или reference-SMD>
 """
 

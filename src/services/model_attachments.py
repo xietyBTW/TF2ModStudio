@@ -9,7 +9,7 @@
 плоскость спрайтов при orientation_type 2/3
 
 Данные берутся из уже декомпилированных Crowbar моделей (кэш
-~/.tf2skingen_cache/decompiled), никакой распаковки VPK здесь не происходит:
+cache/decompiled в папке данных), никакой распаковки VPK здесь не происходит:
     QC:  $attachment "unusual_0" "weapon_bone" 0 3.77 45.82 rotate -90 0 0
     SMD: секции nodes (дерево костей) и skeleton/time 0 (бинд-поза)
 
@@ -323,7 +323,9 @@ def list_decompiled_models_meta() -> List[Dict[str, str]]:
     же модель может лежать в кэше дважды (разведчик как `__player_scout` и
     как `models/player/scout.mdl`) - различать их наверху по `mdl`
     """
-    cache = Path(os.path.expanduser("~")) / ".tf2skingen_cache" / "decompiled"
+    from src.services.decompile_cache import get_cache_dir
+
+    cache = get_cache_dir()
     out: List[Dict[str, str]] = []
     if not cache.is_dir():
         return out

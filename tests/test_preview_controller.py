@@ -311,6 +311,10 @@ class _SceneWorker(BaseWorker):
     materials_ready = Signal(object)
     skins_ready = Signal(object)
     weapon_found = Signal(str, str)
+    sky_ready = Signal(object)
+    unused = Signal()
+    replaced = Signal(str, str, str)
+    links_ready = Signal(object, object)
     animated_ready = Signal(object)
     multi_material = Signal(object)
     editable_materials = Signal(object)
@@ -347,6 +351,16 @@ class SceneControllersDoNotWaitTests(unittest.TestCase):
         with patch("src.services.preview_vpk_mod_worker.PreviewVpkModWorker", _SceneWorker):
             self._check(c, lambda: c.load("mod.vpk", "misc.vpk", "tex.vpk"),
                         "failed", lambda w: w.failed.emit("old"))
+
+    def test_mod_nobody_draws_is_remembered_until_the_next_mod(self):
+        s = PreviewSession()
+        c = VpkModController(s)
+        with patch("src.services.preview_vpk_mod_worker.PreviewVpkModWorker", _SceneWorker):
+            c.load("old.vpk", "misc.vpk", "tex.vpk")
+            c._worker.unused.emit()
+            self.assertTrue(s.custom_vpk_unused)
+            c.load("new.vpk", "misc.vpk", "tex.vpk")
+        self.assertFalse(s.custom_vpk_unused)
 
     def test_taunt(self):
         c = ViewmodelController(PreviewSession())

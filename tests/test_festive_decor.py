@@ -595,6 +595,34 @@ class OwnGarlandTests(unittest.TestCase):
         self.assertEqual(s.decor_bends, {})
         self.assertEqual(s.decor_fit, {"xmas": {"scale": 2}})     # место на оружии остаётся
 
+    def test_wrapped_garland_is_kept_and_dropped_with_its_model(self):
+        # Обтянутая гирлянда - правка работы, как своя модель; сменилась
+        # модель гирлянды - обтянутая от прежней больше не годится
+        from src.domain.preview.session import PreviewSession
+        from src.services import work_store
+        s = PreviewSession()
+        s.decor_wrapped = {"xmas": str(self.dir / "own.smd")}
+        self.assertTrue(s.has_user_edits())
+        edits = work_store._own_paths(s.user_edits(), self.dir / "files")
+        back = PreviewSession()
+        back.apply_user_edits(edits)
+        self.assertEqual(Path(back.decor_wrapped["xmas"]).parent, self.dir / "files")
+        back.forget_decor_look("xmas")
+        self.assertEqual(back.decor_wrapped, {})
+
+    def test_wrapped_geometry_wins_for_show_and_build(self):
+        from types import SimpleNamespace
+        from src.app.decor_editor import DecorEditor
+        from src.domain.preview.session import PreviewSession
+        p = PreviewSession()
+        p.decor_models = {"xmas": "own.smd", "festivizer": "own2.smd"}
+        p.decor_wrapped = {"xmas": "wrapped.smd"}
+        ed = DecorEditor(SimpleNamespace(preview=p))
+        self.assertEqual(ed.geometry("xmas"), "wrapped.smd")
+        self.assertEqual(ed.geometry("festivizer"), "own2.smd")
+        self.assertEqual(ed.geometry("other"), "")
+        self.assertEqual(ed.shapes(), {"xmas": "wrapped.smd", "festivizer": "own2.smd"})
+
 
 if __name__ == "__main__":
     unittest.main()

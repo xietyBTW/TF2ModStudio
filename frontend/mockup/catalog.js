@@ -10,7 +10,8 @@
  */
 
 import * as api from './api.js';
-import { fileSize, chooseFile, plural } from './util.js';
+import { fileSize, plural } from './util.js';
+import { openMod, pickVpkMod, pickModFolder } from './mod-library.js';
 import { ask } from './ask.js';
 import { say, sayError } from './stage.js';
 import {
@@ -48,10 +49,12 @@ export const els = {
   cat:   document.getElementById('cat'),
   fClass:document.getElementById('f-class'),
   fHat:  document.getElementById('f-hat'),
+  fHatSrc: document.getElementById('f-hatsrc'),
   fRegion: document.getElementById('f-region'),
   fCollection: document.getElementById('f-collection'),
   collection: document.getElementById('collection'),
   fSource: document.getElementById('f-source'),
+  fFxCat: document.getElementById('f-fxcat'),
   fType: document.getElementById('f-type'),
   catLabel: document.getElementById('catlabel'),
   note:  document.getElementById('cat-note'),
@@ -60,7 +63,7 @@ export const els = {
 
 export const sel = { section: 'weapons', category: 'weapon', cls: null,
               type: null, region: null, collection: null, mode: 'normal',
-              query: '' };
+              query: '', hatSrc: '' };
 
 /** Рисует ряд фильтров; null-кнопка «Все» снимает ограничение */
 export function fillFilters(row, list, chosen, onPick) {
@@ -179,6 +182,11 @@ function showCount(n) {
   el.textContent = n + ' ' + plural(n, 'предмет', 'предмета', 'предметов');
 }
 
+// Импорт ZIP или папки пополнил библиотеку - перерисовать, если она открыта
+document.addEventListener('mods:changed', () => {
+  if (sel.category === 'custom' || sel.hatSrc === 'mods') showModLibrary();
+});
+
 /**
  * Категория «Кастомный мод»: дверь к файлу и всё, что через неё уже прошло
  *
@@ -197,10 +205,16 @@ export async function showModLibrary() {
   const open = document.createElement('button');
   open.className = 'pick pick--open';
   open.innerHTML = `<span class="pick__box"></span>
-    <span class="pick__name">Открыть VPK-мод…</span>
-    <span class="mono">файл с диска</span>`;
+    <span class="pick__name">Открыть мод…</span>
+    <span class="mono">VPK или ZIP</span>`;
   open.addEventListener('click', pickVpkMod);
-  els.grid.append(open);
+  const folder = document.createElement('button');
+  folder.className = 'pick pick--open';
+  folder.innerHTML = `<span class="pick__box"></span>
+    <span class="pick__name">Открыть папку мода…</span>
+    <span class="mono">как в tf/custom</span>`;
+  folder.addEventListener('click', pickModFolder);
+  els.grid.append(open, folder);
 
   const mods = await api.modLibrary();
   for (const mod of mods) {
@@ -350,7 +364,9 @@ async function openWork(work) {
   say('Открываю работу…');
 
   if (work.mod) {
-    await openMod({ name: work.name, path: work.mod });
+    // Мод не открылся (отказ, отмена выбора модели) - в кадре прошлый
+    // предмет, и работа легла бы на него
+    if (!await openMod({ name: work.name, path: work.mod })) return;
     const back = await api.restoreWork();
     if (back.error) sayError(back.error);
     return;
@@ -361,41 +377,6 @@ async function openWork(work) {
   const res = await api.loadPreview(work.mode, null, work.item_key || null,
                                     work.per_class || null, null, true);
   if (res.error) sayError(res.error);
-}
-
-/**
- * Показ чужого мода из VPK
- *
- * Предмет не меняется: мод накладывается поверх текущего выбора, его модель и
- * текстуры становятся тем, что на экране, а сам файл уходит в сборку
- * источником.
- */
-export async function openMod(mod) {
-  say(`Разбор ${mod.name}…`);
-  const res = await api.loadVpkMod(mod.path);
-  if (res.error) { sayError(res.error); return; }
-  showModAsItem(mod.name);
-}
-
-/** Выбирает файл с диска: он попадает в библиотеку и сразу открывается */
-async function pickVpkMod() {
-  const file = await chooseFile('.vpk');
-  if (!file) return;
-
-  say(`Разбор ${file.name}…`);
-  // Сохраняем ДО открытия: временную копию, в которую браузер положил файл,
-  // рано или поздно чистят, и вернуться к моду было бы не по чему
-  const saved = await api.addMod(await api.upload(file));
-  if (saved.error) { sayError(saved.error); return; }
-  await openMod({ name: saved.name, path: saved.path });
-}
-
-/** Показанный мод становится выбранным предметом: заголовок называет его */
-function showModAsItem(name) {
-  document.querySelector('.title__name').textContent = name;
-  document.querySelector('.title__meta').textContent = 'мод из VPK';
-  closeCat();
-  setMode('custom');
 }
 
 async function choose(button, item) {
@@ -419,6 +400,11 @@ let reloadSeq = 0;
 
 export async function reload() {
   const seq = ++reloadSeq;
+  // Библиотека модов на странице шапок: мод-шапка открывается здесь же
+  if (sel.section === 'hats' && sel.hatSrc === 'mods') {
+    await showModLibrary();
+    return;
+  }
   // Косметика при первом открытии разбирает items_game целиком - это пара
   // секунд с пустым списком на экране. Ждём четверть секунды, прежде чем
   // сказать: обычный отбор укладывается в миллисекунды, и мигать словом на
@@ -613,8 +599,11 @@ export async function pickSection(name) {
   els.fRegion.hidden = !это_шапки;
   els.fCollection.hidden = !это_шапки;
   els.fSource.hidden = !это_частицы;
+  if (!это_частицы) els.fFxCat.hidden = true;
   els.fClass.hidden = это_частицы;
   els.fHat.hidden = !это_шапки;
+  els.fHatSrc.hidden = !это_шапки;
+  pickHatSource('', false);
   catalog.classList.toggle('no-icons', это_частицы);
   catalog.classList.toggle('catalog--tree', это_частицы);
 
@@ -707,6 +696,24 @@ export async function pickCategory(key) {
   await setMode(await api.modeFor(key), '', Boolean(lastModel));   // см. выше
   await reload();
 }
+
+/** Шапки игры или библиотека модов. Фильтры шапок к модам не относятся */
+function pickHatSource(src, again = true) {
+  sel.hatSrc = src;
+  els.fHatSrc.querySelectorAll('[data-src]').forEach(
+    (b) => b.classList.toggle('is-active', b.dataset.src === src));
+  // Без проверки раздела: уходя из шапок, метку надо снять, иначе класс
+  // пропадал и на странице оружия
+  for (const row of [els.fClass, els.fRegion, els.fCollection, els.fHat]) {
+    row.classList.toggle('is-off', src === 'mods');
+  }
+  if (again) reload();
+}
+
+els.fHatSrc.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-src]');
+  if (b) pickHatSource(b.dataset.src);
+});
 
 /**
  * Фильтр категорий косметики: медали, Halloween, сезонные
@@ -830,6 +837,15 @@ export async function boot() {
   let back = '';
   try { back = sessionStorage.getItem('section') || ''; sessionStorage.removeItem('section'); } catch {}
   if (back) document.querySelector(`.chrome__nav [data-section="${back}"]`)?.click();
+}
+
+/** Переход в раздел не щелчком: мод открывается там, где живёт то, что он
+ *  заменяет. Уже там - ничего не трогаем: смена раздела гасит превью */
+export async function goSection(name) {
+  if (sel.section === name) return;
+  await pickSection(name);
+  document.querySelectorAll('.chrome__nav .underlined')
+          .forEach((b) => b.classList.toggle('is-active', b.dataset.section === name));
 }
 
 // Разделы в шапке: «Оружие», «Шапки» и «Частицы» - разные источники каталога.

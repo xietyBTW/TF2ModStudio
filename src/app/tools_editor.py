@@ -246,6 +246,81 @@ class ToolsEditor:
             use_explicit_list=bool(explicit),
         ))
 
+    def export_card_texture(self, material: str, original: bool = False) -> Dict[str, Any]:
+        """
+        Текстура одной карточки - в папку экспорта
+
+        Без original - ровно то, что на карточке, с правками и краской. С
+        original - игровой оригинал. У красящейся вещи он хранится и
+        некрашеным, с маской краски в альфе: так его и отдаём
+        """
+        import os
+
+        from src.domain.preview.texture_state import SINGLE_TEX_KEY
+        from src.services import vmt_tint
+
+        textures = self._host.preview.textures
+        if original:
+            path = textures.original_card(material)
+            if path and os.path.isfile(vmt_tint.raw_of(path)):
+                path = vmt_tint.raw_of(path)
+        else:
+            path = self._host.preview.visible_textures().get(material)
+            if path:
+                path = self._host._painted({material: path}).get(material, path)
+        if not path or not os.path.isfile(path):
+            return {'error': ('У этой карточки нет оригинала игры' if original
+                              else 'У этой карточки нет текстуры')}
+        # Предмет с одним материалом хранит его под служебным ключом: файлу
+        # нужно имя предмета, а не «__single__»
+        if material == SINGLE_TEX_KEY:
+            material = self._host.preview.weapon_key or 'texture'
+        return self._save_texture(path, material, original)
+
+    def changed_cards(self, shown: Dict[str, str]) -> List[str]:
+        """Карточки, на которых не игровой оригинал: своя картинка, правка,
+        краска. Только им меню предлагает «Экспортировать оригинал игры» -
+        у остальных он и есть то, что на карточке
+
+        `shown` - то же, что видит страница (с краской), {карточка: путь}
+        """
+        import os
+
+        textures = self._host.preview.textures
+        norm = lambda p: os.path.normcase(os.path.abspath(p))  # noqa: E731
+        out = []
+        for mat, path in shown.items():
+            game = textures.original_card(mat)
+            if path and game and norm(path) != norm(game):
+                out.append(mat)
+        return out
+
+    def export_particle_material(self, material: str,
+                                 original: bool = False) -> Dict[str, Any]:
+        """Текстура материала частиц (своя или игровая) - в папку экспорта"""
+        pcf = self._host.particles.pcf
+        if pcf is None:
+            return {'error': 'PCF не загружен'}
+        paths = self._host.tf2_paths()
+        if 'error' in paths:
+            return paths
+        png = pcf.material_png(paths['root'], material, original=original)
+        if png is None:
+            return {'error': 'У этого материала нет текстуры'}
+        return self._save_texture(png, material, original)
+
+    def _save_texture(self, source, material: str, original: bool) -> Dict[str, Any]:
+        from src.services import texture_export
+
+        folder, fmt = self._host._export_settings()
+        name = material + '_original' if original else material
+        try:
+            saved = texture_export.export_image(source, folder, name, fmt)
+        except (OSError, ValueError) as exc:
+            logger.warning(f"Экспорт текстуры {material}: {exc}")
+            return {'error': f'Не удалось сохранить текстуру: {exc}'}
+        return {'path': str(saved), 'name': saved.name}
+
     def export_vpks(self) -> List[str]:
         """Имена собранных модов в папке экспорта - из них выбирают, что слить"""
         from pathlib import Path
@@ -255,38 +330,57 @@ class ToolsEditor:
             return []
         return sorted((f.name for f in folder.glob('*.vpk')), key=str.lower)
 
+    def _export_paths(self, files: Optional[List[str]]):
+        """Пути выбранных модов. От страницы берём только имена: путь
+        собираем сами, иначе она могла бы указать файл вне папки экспорта"""
+        from pathlib import Path
+        export_folder, _ = self._host._export_settings()
+        return [Path(export_folder) / Path(f).name for f in (files or []) if f]
+
+    def merge_candidates(self) -> List[Dict[str, Any]]:
+        """Моды папки экспорта для окна объединения: имя, размер, что внутри"""
+        from src.services import merge_plan
+        out = []
+        for path in self._export_paths(self.export_vpks()):
+            out.append({'name': path.name, 'size': merge_plan.size_of(path),
+                        **merge_plan.describe(path)})
+        return out
+
+    def merge_check(self, files: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Где выбранные моды пересекаются - в порядке списка, первый главнее"""
+        from src.services import merge_plan
+        paths = [p for p in self._export_paths(files) if p.is_file()]
+        return {'conflicts': merge_plan.conflicts(paths)}
+
     def merge_vpk(self, files: Optional[List[str]] = None, name: str = '',
                   confirmed: bool = False, lang: str = 'ru') -> Dict[str, Any]:
         """
         Сливает несколько модов из папки экспорта в один VPK
 
-        Моды, трогающие одно оружие, друг друга затирают - о таких сначала
-        предупреждаем (``duplicates``) и ждём подтверждения, как это делает
-        окно приложения
+        Моды, кладущие файл по одному пути, друг друга перекрывают: о таких
+        сначала предупреждаем (``conflicts``) и ждём подтверждения. Порядок
+        `files` - приоритет: при совпадении остаётся файл мода выше в списке
         """
-        from pathlib import Path
-        from src.services.merge_vpk_service import MergeVPKService
+        from src.services import merge_plan
 
-        chosen = [f for f in (files or []) if f]
-        if len(chosen) < 2:
+        paths = self._export_paths(files)
+        if len(paths) < 2:
             return {'error': 'Выберите хотя бы два мода'}
-        if not name.strip():
+        name = name.strip()
+        if not name:
             return {'error': 'Задайте имя выходного файла'}
+        if not name.lower().endswith('.vpk'):
+            name += '.vpk'
         if self._tool_busy():
             return {'error': 'Объединение уже идёт'}
-
-        export_folder, _ = self._host._export_settings()
-        # От страницы берём только имена: путь собираем сами, иначе она могла бы
-        # указать файл за пределами папки экспорта
-        paths = [Path(export_folder) / Path(f).name for f in chosen]
         missing = [p.name for p in paths if not p.is_file()]
         if missing:
             return {'error': 'Не найдены: ' + ', '.join(missing)}
-
         if not confirmed:
-            duplicates = MergeVPKService.check_duplicate_weapons(paths)
-            if duplicates:
-                return {'duplicates': {str(k): list(v) for k, v in duplicates.items()}}
+            found = merge_plan.conflicts(paths)
+            if found:
+                return {'conflicts': found}
 
+        export_folder, _ = self._host._export_settings()
         from src.services.merge_vpk_worker import MergeVpkWorker
-        return self._run_tool(MergeVpkWorker(paths, name.strip(), export_folder, lang))
+        return self._run_tool(MergeVpkWorker(paths, name, export_folder, lang))

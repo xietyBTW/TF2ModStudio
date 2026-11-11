@@ -13,6 +13,7 @@ import { pSystem, pcfNodes, setDiff } from './state.js';
 import { showParams } from './params.js';
 import { fillTree, setTitle } from './tree.js';
 import { ensureEffectMaterials } from './materials.js';
+import { paintTrack } from '../util.js';
 
 /**
  * Дорожка ползунка. Границы у неё МЯГКИЕ (сколько нужно в 99% эффектов), а
@@ -61,20 +62,74 @@ export function numberField(value, param, onEdit) {
  *
  * Дорожка ходит по мягким границам, поле принимает и жёсткие - поэтому
  * значение из чужого эффекта (emission_rate под миллион) правится вручную,
- * а дорожка просто упирается в край.
+ * а дорожка просто упирается в край. `onLive` - значение, пока дорожку тянут
  */
-export function pairedField(value, param, onEdit) {
-  const wrap = document.createElement('div');
-  wrap.className = 'pair';
+export function valueControl(value, param, onEdit, onLive) {
   const field = numberField(value, param, onEdit);
-  const track = sliderField(value, param,
-    (v) => { field.value = v.toFixed(param.decimals); },
-    onEdit);
+  const track = sliderField(value, param, (v) => {
+    field.value = v.toFixed(param.decimals);
+    onLive?.(v);
+  }, onEdit);
+  // Закраска от нуля: у гравитации и спина ноль посередине дорожки
+  const zero = param.min < 0 && param.max > 0 ? curveFraction(param, 0) * 1000 : null;
+  paintTrack(track, zero);
   field.addEventListener('input', () => {
     track.value = Math.round(curveFraction(param, Number(field.value)) * 1000);
+    paintTrack(track, zero);
   });
-  wrap.append(track, field);
-  return wrap;
+  return { fields: [field], track };
+}
+
+/**
+ * Диапазон: одна дорожка с двумя ручками и залитым отрезком между ними, два
+ * поля для точного ввода. Две дорожки подряд не говорили, какая из них «от»,
+ * а какая «до». У `ordered` начало не обгоняет конец, у «начало - конец»
+ * (рост размера) концы независимы
+ */
+export function rangeControl(values, param, onEdit, onLive) {
+  const vals = values.slice();
+  const put = (n, x) => {
+    vals[n] = x;
+    if (!param.ordered) return;
+    if (n === 0) vals[1] = Math.max(vals[1], x);
+    else vals[0] = Math.min(vals[0], x);
+  };
+  const track = document.createElement('div');
+  track.className = 'dual';
+  const fill = document.createElement('i');
+  fill.className = 'dual__fill';
+  const fields = vals.map((v, n) => numberField(v, param, (x) => {
+    put(n, x);
+    show();
+    onEdit(vals.slice());
+  }));
+  const knobs = vals.map((v, n) => sliderField(v, param, (x) => {
+    put(n, x);
+    show();
+    onLive?.(vals.slice());
+  }, (x) => {
+    put(n, x);
+    onEdit(vals.slice());
+  }));
+  // Ручки и отрезок по значениям; поля - только когда тянут дорожку, иначе
+  // набор числа перебивался бы его же округлением
+  const place = () => {
+    vals.forEach((v, n) => { knobs[n].value = Math.round(curveFraction(param, v) * 1000); });
+    const [a, b] = knobs.map((k) => Number(k.value) / 10);
+    fill.style.left = Math.min(a, b) + '%';
+    fill.style.width = Math.abs(b - a) + '%';
+  };
+  const show = () => {
+    vals.forEach((v, n) => { fields[n].value = Number(v).toFixed(param.decimals); });
+    place();
+  };
+  fields.forEach((f, n) => f.addEventListener('input', () => {
+    vals[n] = Number(f.value);
+    place();
+  }));
+  track.append(fill, ...knobs);
+  place();
+  return { fields, track };
 }
 
 /** Цвет как #rrggbb; альфу сохраняем - её правит отдельный параметр */
@@ -91,11 +146,55 @@ export function colorField(rgba, onEdit) {
   return i;
 }
 
+/**
+ * Значение крутилки - сразу в превью, без Python: пока тянут ползунок,
+ * эффект меняется на глазах и не начинается заново. Работает, когда модуль
+ * на месте (`targets` не пуст); false - показать нечем
+ */
+export function previewParam(param, value) {
+  const targets = param.targets || [];
+  if (!targets.length) return false;
+  const slots = param.kind === 'range' || param.kind === 'color_pair' ? value : [value];
+  const edits = targets.map((x) => {
+    let v = slots[x.slot];
+    if (typeof v === 'number') {
+      v *= x.scale;
+      if (x.type === 'integer') v = Math.round(v);
+    }
+    if (x.type === 'bool') v = Boolean(v);
+    return { group: x.group, index: x.index, attr: x.attr,
+             component: x.component, type: x.type, value: v };
+  });
+  withParticles((w) => w.previewAttrs && w.previewAttrs(pSystem, edits));
+  return true;
+}
+
 /** Отправляет правку и переливает результат в живое превью */
 export async function editParam(param, value) {
+  // Значение уже в кадре - итог из Python сверяется по составу и эффект не
+  // перезапускается. Если правка создала модуль, состав другой, и превью
+  // соберётся заново само
+  const live = previewParam(param, value);
   const res = await api.setParticleParam(pSystem, param.key, value);
+  // Файл правку не принял - кадр возвращается к тому, что в файле
+  if (res.error && live) previewParam(param, param.value);
+  await applyEdit(res, live);
+}
+
+/**
+ * Быстрая правка всего эффекта: масштаб, плотность, темп. Меняется сразу
+ * много систем, поэтому эффект в кадре собирается заново
+ */
+export async function quickEdit(kind, up) {
+  await applyEdit(await api.quickParticleEdit(pSystem, kind, up), false);
+}
+
+/** Ответ правки - в превью, метки «изменено» и панель */
+async function applyEdit(res, soft) {
   if (res.error) { sayError(res.error); return; }
-  withParticles((w) => w.updateSystems(res.systems, pSystem));
+  // В ответе только изменённые системы (`changed`) - превью вливает их в
+  // свои, весь файл заново не передаётся
+  withParticles((w) => w.mergeSystems(res.changed, pSystem, { soft }));
   ensureEffectMaterials();
   setDiff(res.diff);
   fillTree(pcfNodes, pSystem);

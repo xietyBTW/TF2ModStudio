@@ -23,12 +23,23 @@ def particle_files() -> List[dict]:
 
 
 @endpoint
-def particle_effects(query: str = '', source: str = '',
+def particle_effects(query: str = '', source: str = '', category: str = '',
                      lang: str = '') -> Dict[str, object]:
     """Эффекты игры по имени и по источнику - необычные, оружие, постройки…"""
     from src.app.session import session
 
-    return session().particles.particle_effects(query, source, lang=_lang(lang))
+    return session().particles.effects.particle_effects(query, source, lang=_lang(lang),
+                                                        category=category)
+
+
+@endpoint
+def particle_effect_kids(system: str, query: str = '', source: str = '',
+                         category: str = '', lang: str = '') -> List[dict]:
+    """Дочерние строки эффекта из списка: каталог отдаёт их по раскрытию"""
+    from src.app.session import session
+
+    return session().particles.effects.effect_kids(system, query, source,
+                                                   lang=_lang(lang), category=category)
 
 
 @endpoint
@@ -272,6 +283,13 @@ def reset_particle_texture(material: str) -> Dict[str, object]:
 
 
 @endpoint
+def export_particle_material(material: str, original: bool = False) -> Dict[str, object]:
+    """Текстуру материала частиц (или игровую) - в папку экспорта"""
+    from src.app.session import session
+    return session().tools.export_particle_material(material, original)
+
+
+@endpoint
 def game_particle_materials() -> List[str]:
     """Материалы всех эффектов игры - работают в казуале без нового файла"""
     from src.app.session import session
@@ -348,3 +366,10 @@ def set_particle_param(system: str, key: str, value) -> Dict[str, object]:
     """Меняет параметр эффекта, в ответе - обновлённые системы для превью"""
     from src.app.session import session
     return session().particles.set_particle_param(system, key, value)
+
+
+@endpoint
+def quick_particle_edit(system: str, kind: str, up: bool = True) -> Dict[str, object]:
+    """Масштаб, плотность или темп всего эффекта одним шагом истории"""
+    from src.app.session import session
+    return session().particles.quick_particle_edit(system, kind, bool(up))

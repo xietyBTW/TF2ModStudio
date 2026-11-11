@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -47,6 +48,9 @@ _BROWSERS = (
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    # Chrome, поставленный без прав администратора. Там, где вычищен Edge,
+    # браузер часто именно такой
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe"),
 )
 
 
@@ -122,10 +126,16 @@ def _drop_request_hooks() -> None:
 
 
 def _open_pywebview(url: str, look: dict) -> bool:
-    """Настоящее окно приложения. False - pywebview не установлен"""
+    """Настоящее окно приложения. False - pywebview не установлен или окну
+    нечем рисовать (нет WebView2)"""
     try:
         import webview
     except ImportError:
+        return False
+
+    from frontend import webview2_check
+    if not webview2_check.engine_ok():
+        webview2_check.offer_install()
         return False
 
     _drop_request_hooks()
@@ -248,9 +258,33 @@ def _snappy_gil() -> None:
             pass
 
 
+def _wait_while_page_open(server: Server, grace: float = 60.0) -> None:
+    """
+    Держит приложение, пока открыта его вкладка в браузере по умолчанию
+
+    О закрытии вкладки браузер не сообщает. Зато страница держит поток
+    событий (/events), и его обрыв сервер замечает на ближайшей отправке, раз
+    в 20 с. Выходим, когда страниц нет дольше grace: перезагрузка рвёт поток
+    лишь на миг. Без этого процесс жил бы после закрытия вкладки, держал
+    мьютекс, и следующий запуск молча ничего не открывал
+    """
+    empty_since = time.monotonic()
+    while True:
+        time.sleep(2)
+        if server.listeners:
+            empty_since = time.monotonic()
+            continue
+        # Пока страница не подключилась ни разу, ждём дольше: браузер мог
+        # только открываться
+        limit = grace if server.ever_listened else 5 * grace
+        if time.monotonic() - empty_since >= limit:
+            return
+
+
 def main() -> None:
     _snappy_gil()
-    port = _serve().server_address[1]
+    server = _serve()
+    port = server.server_address[1]
     # Индексы архивов игры греются, пока открывается окно
     api.warm_up()
     look = _look()
@@ -262,12 +296,11 @@ def main() -> None:
     if _open_browser_app(url):
         return
 
-    # Ни того, ни другого: открываем как обычную страницу и ждём Ctrl+C
-    print("Окно приложения недоступно - открываю в браузере. "
-          "Для своего окна: pip install pywebview")
+    # Ни того, ни другого: открываем как обычную страницу
+    print("Окно приложения недоступно - открываю в браузере")
     webbrowser.open(url)
     try:
-        threading.Event().wait()
+        _wait_while_page_open(server)
     except KeyboardInterrupt:
         pass
 

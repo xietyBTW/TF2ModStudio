@@ -63,8 +63,12 @@ ANIMATED = {
 
 def _run(worker, *, sequence=SEQUENCE, scene=SCENE, animated=ANIMATED,
          decompile=None, textures=None, resolver=None, on_build=None,
-         catalog_actions=(), team_map=None):
-    """Прогоняет run() с подменёнными соседями"""
+         catalog_actions=(), team_map=None, readers=None, cdmaterials=None):
+    """Прогоняет run() с подменёнными соседями
+
+    `readers` - сюда пишутся списки архивов, из которых воркер читает;
+    `cdmaterials` - {папка разбора: её $cdmaterials}, иначе у всех ["models/x"]
+    """
     textures = {"c_scattergun": "gun.png", "scout_hands": "hands.png"} \
         if textures is None else textures
 
@@ -101,7 +105,12 @@ def _run(worker, *, sequence=SEQUENCE, scene=SCENE, animated=ANIMATED,
     catalog = SimpleNamespace(
         find=_find,
         actions_for=lambda _profile: dict.fromkeys(catalog_actions))
-    with patch.object(vw, "GameVpkReader", lambda *_a: SimpleNamespace(close=lambda: None)), \
+    def _reader(paths):
+        if readers is not None:
+            readers.append(list(paths))
+        return SimpleNamespace(close=lambda: None)
+
+    with patch.object(vw, "GameVpkReader", _reader), \
          patch.object(vw.mds, "ensure_decompiled", decompile), \
          patch.object(vw.anim_catalog, "load", lambda _d: catalog), \
          patch.object(vw.smd_service, "find_reference_smd",
@@ -110,7 +119,8 @@ def _run(worker, *, sequence=SEQUENCE, scene=SCENE, animated=ANIMATED,
          patch.object(vw.viewmodel_animation, "build_scene", _build_animated), \
          patch.object(vw, "MaterialResolver", resolver or _Resolver), \
          patch.object(vw.qc_skin_parser, "load_model",
-                      lambda _d: SimpleNamespace(cdmaterials=["models/x"], bonemerge=[],
+                      lambda d: SimpleNamespace(cdmaterials=(cdmaterials or {}).get(
+                                                    d, ["models/x"]), bonemerge=[],
                                                 team_map=team_map or {},
                                                 qc_path="x.qc")):
         worker.run()
@@ -172,6 +182,30 @@ def test_textures_of_both_parts_are_collected():
     assert len(seen) == 2, "текстуры оружия и рук берутся отдельными запросами"
     assert rec.data["multi_material"] == {"c_scattergun": "c_scattergun.png",
                                           "scout_hands": "scout_hands.png"}
+
+
+def test_mod_from_vpk_reads_its_own_textures_first():
+    # Чужой мод: текстуры его материалов - в самом VPK и в его папках из QC
+    # рядом с разбором. Без них модель в руке была белой
+    seen, readers = [], []
+
+    class _Resolver:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def texture_map(self, names, cd):
+            seen.append(list(cd))
+            return {n: f"{n}.png" for n in names}
+
+        def render_map(self, *_a):
+            return {}
+
+    worker = _worker(custom_smd_path=os.path.join("moddir", "quakeshot.smd"),
+                     custom_keep_materials=True, mod_vpk_path="mod.vpk")
+    _run(worker, resolver=_Resolver, readers=readers,
+         cdmaterials={"moddir": ["models/weapons/quakeshot"]})
+    assert readers[0][0] == "mod.vpk"
+    assert "models/weapons/quakeshot" in seen[0]
 
 
 def test_material_without_a_texture_is_dropped_not_passed_as_none():

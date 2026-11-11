@@ -21,6 +21,7 @@
 
 import io
 from pathlib import Path
+from collections import deque
 from typing import Dict, List, Optional
 
 from src.services.crit_pcf_service import CritPcfService
@@ -192,46 +193,62 @@ class ParticleEditorService:
         добавляются в результат при обходе
         """
         result: Dict[str, dict] = {}
-        pending = list(self._definitions())
+        pending = deque(self._definitions())
         while pending:
-            d = pending.pop(0)
+            d = pending.popleft()
             if d.name in result:
                 continue
-            sys_json = {
-                "name": d.name,
-                "attrs": element_attrs_to_json(d),
-                "children": [],
-            }
-            for group in MODULE_GROUPS:
-                mods = []
-                if group in d:
-                    try:
-                        mods = [module_to_json(m) for m in d[group].iter_elem()]
-                    except Exception as exc:
-                        logger.warning(f"{d.name}/{group}: {exc}")
-                sys_json[group] = mods
-            if "children" in d:
-                try:
-                    for ch in d["children"].iter_elem():
-                        delay = 0.0
-                        if "delay" in ch:
-                            delay = ch["delay"].val_float
-                        child_el = None
-                        if "child" in ch:
-                            try:
-                                child_el = ch["child"].val_elem
-                            except Exception:
-                                child_el = None
-                        if child_el is None:
-                            continue
-                        sys_json["children"].append(
-                            {"delay": delay, "childName": child_el.name}
-                        )
-                        pending.append(child_el)
-                except Exception as exc:
-                    logger.warning(f"{d.name}/children: {exc}")
+            sys_json, kids = self._definition_json(d)
             result[d.name] = sys_json
+            pending.extend(kids)
         return result
+
+    def system_json(self, name: str) -> Optional[dict]:
+        """Одна система в формате systems_json. None - такой нет
+
+        Правке нужна ровно одна система, а весь файл в JSON - это 60 мс на
+        `item_fx` (378 систем) за каждый вызов
+        """
+        d = self._find_definition(name)
+        return None if d is None else self._definition_json(d)[0]
+
+    def _definition_json(self, d) -> tuple:
+        """(система в формате systems_json, элементы дочерних систем)"""
+        sys_json = {
+            "name": d.name,
+            "attrs": element_attrs_to_json(d),
+            "children": [],
+        }
+        kids = []
+        for group in MODULE_GROUPS:
+            mods = []
+            if group in d:
+                try:
+                    mods = [module_to_json(m) for m in d[group].iter_elem()]
+                except Exception as exc:
+                    logger.warning(f"{d.name}/{group}: {exc}")
+            sys_json[group] = mods
+        if "children" in d:
+            try:
+                for ch in d["children"].iter_elem():
+                    delay = 0.0
+                    if "delay" in ch:
+                        delay = ch["delay"].val_float
+                    child_el = None
+                    if "child" in ch:
+                        try:
+                            child_el = ch["child"].val_elem
+                        except Exception:
+                            child_el = None
+                    if child_el is None:
+                        continue
+                    sys_json["children"].append(
+                        {"delay": delay, "childName": child_el.name}
+                    )
+                    kids.append(child_el)
+            except Exception as exc:
+                logger.warning(f"{d.name}/children: {exc}")
+        return sys_json, kids
 
     # Соавторы документа
     # Функции модулей пакета particle_editor с документом первым аргументом:
@@ -241,12 +258,14 @@ class ParticleEditorService:
     stock_path = stock_mod.stock_path
     stock = stock_mod.stock
     stock_diff = stock_mod.stock_diff
+    stock_systems = stock_mod.stock_systems
     revert_system = stock_mod.revert_system
     revert_attr = stock_mod.revert_attr
 
     # Материалы: текстуры для превью, смена материала (materials.py)
     material_names = materials.material_names
     materials_json = materials.materials_json
+    material_png = materials.material_png
     set_material_to_game = materials.set_material_to_game
     rename_material = materials.rename_material
 

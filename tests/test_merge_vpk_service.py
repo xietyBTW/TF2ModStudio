@@ -27,25 +27,6 @@ class FakeVPK:
 
 
 class MergeVpkServiceTests(unittest.TestCase):
-    def test_extract_weapon_name(self):
-        self.assertEqual(MergeVPKService._extract_weapon_name("models/weapons/c_models/c_test/c_test.mdl"), "c_test")
-        self.assertEqual(MergeVPKService._extract_weapon_name("models/weapons/v_models/v_test.mdl"), "v_test")
-        self.assertIsNone(MergeVPKService._extract_weapon_name("materials/models/weapons/c_models/c_test.vtf"))
-    
-    def test_check_duplicate_weapons(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            vpk_a = base / "a.vpk"
-            vpk_b = base / "b.vpk"
-            vpk_a.write_bytes(b"data")
-            vpk_b.write_bytes(b"data")
-            files_a = {"models/weapons/c_models/c_test/c_test.mdl": b"mdl"}
-            files_b = {"models/workshop_partner/weapons/c_models/c_test.mdl": b"mdl"}
-            with patch("src.services.merge_vpk_service.VPK_AVAILABLE", True):
-                with patch("src.services.merge_vpk_service.vpk.open", side_effect=[FakeVPK(files_a), FakeVPK(files_b)]):
-                    duplicates = MergeVPKService.check_duplicate_weapons([vpk_a, vpk_b])
-            self.assertIn("c_test", duplicates)
-            self.assertEqual(len(duplicates["c_test"]), 2)
     def test_merge_vpk_files_library_missing(self):
         with patch("src.services.merge_vpk_service.VPK_AVAILABLE", False):
             success, message = MergeVPKService.merge_vpk_files([], "out.vpk")
@@ -80,7 +61,9 @@ class MergeVpkServiceTests(unittest.TestCase):
                         self.assertTrue(success)
                         self.assertIn("out.vpk", message)
 
-    def test_merge_directory_renames_duplicates(self):
+    def test_merge_directory_keeps_the_file_of_the_mod_above(self):
+        # Копия под другим именем (file_1.txt) игре не видна - это мусор в VPK.
+        # Остаётся файл мода, который выше в списке и пришёл первым
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             source = base / "source"
@@ -89,9 +72,11 @@ class MergeVpkServiceTests(unittest.TestCase):
             (target / "folder").mkdir(parents=True)
             (source / "folder" / "file.txt").write_text("a", encoding="utf-8")
             (target / "folder" / "file.txt").write_text("b", encoding="utf-8")
+            (source / "folder" / "new.txt").write_text("c", encoding="utf-8")
             MergeVPKService._merge_directory(source, target)
-            files = list((target / "folder").iterdir())
-            self.assertEqual(len(files), 2)
+            files = sorted(p.name for p in (target / "folder").iterdir())
+            self.assertEqual(files, ["file.txt", "new.txt"])
+            self.assertEqual((target / "folder" / "file.txt").read_text(encoding="utf-8"), "b")
     
     def test_merge_vpk_files_cancel(self):
         with tempfile.TemporaryDirectory() as tmp:

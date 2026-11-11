@@ -89,13 +89,19 @@ export const updateStatus = (force = false) => call('update_status', { force });
 export const installUpdate = () => call('install_update', {});
 export const updateProgress = () => call('update_progress', {});
 
+//: Вкладка «О программе». app_links ходит на GitHub один раз за сеанс
+export const appLinks = () => call('app_links', {});
+export const reportInfo = () => call('report_info', {});
+
 export const categories   = () => cached('categories', {});
 export const classes      = () => cached('classes', {});
 export const weaponTypes  = (tf2_class) => cached('weapon_types', { tf2_class });
 export const items        = (params) => call('items', params);
 export const hats         = (params) => call('hats', params);
-export const particleEffects = (query = '', source = '') =>
-  call('particle_effects', { query, source });
+export const particleEffects = (query = '', source = '', category = '') =>
+  call('particle_effects', { query, source, category });
+export const particleEffectKids = (system, query = '', source = '', category = '') =>
+  call('particle_effect_kids', { system, query, source, category });
 export const revertParticleSystem = (system) =>
   call('revert_particle_system', { system });
 export const revertParticleAttr = (system, group, index, attr) =>
@@ -105,6 +111,8 @@ export const loadParticles = (source, system = '') => call('load_particles', { s
 export const particleEffectMaterials = (system) =>
   call('particle_effect_materials', { system });
 export const particleParams = (system) => call('particle_params', { system });
+export const quickParticleEdit = (system, kind, up) =>
+  call('quick_particle_edit', { system, kind, up });
 export const setParticleParam = (system, key, value) =>
   call('set_particle_param', { system, key, value });
 export const particleSystem = (system) => call('particle_system', { system });
@@ -158,6 +166,8 @@ export const setParticleTexture = (material, path, max_size = 512) =>
   call('set_particle_texture', { material, path, max_size });
 export const resetParticleTexture = (material) =>
   call('reset_particle_texture', { material });
+export const exportParticleMaterial = (material, original = false) =>
+  call('export_particle_material', { material, original });
 export const gameParticleMaterials = () => cached('game_particle_materials', {});
 export const setParticleMaterialToGame = (material, game_material) =>
   call('set_particle_material_to_game', { material, game_material });
@@ -194,6 +204,7 @@ export const setFestive = (kind) => call('set_festive', { kind });
 export const bakeFestive = (kind) => call('bake_festive', { kind });
 export const setDecorFit = (fit) => call('set_decor_fit', { fit });
 export const setDecorBends = (bends) => call('set_decor_bends', { bends });
+export const autofitDecor = () => call('autofit_decor', {});
 export const setSkin      = (index) => call('set_skin', { index });
 export const setBodygroup = (name, variant) => call('set_bodygroup', { name, variant });
 export const addToStyle   = (material) => call('add_to_style', { material });
@@ -206,7 +217,11 @@ export const forceTeam    = () => call('force_team');
 export const extractModel = () => call('extract_model');
 export const exportModelFiles = (files) => call('export_model_files', { files });
 export const extractTexture = (textures = null) => call('extract_texture', { textures });
+export const exportCardTexture = (material, original = false) =>
+  call('export_card_texture', { material, original });
 export const exportVpks   = () => call('export_vpks');
+export const mergeCandidates = () => call('merge_candidates');
+export const mergeCheck   = (files) => call('merge_check', { files });
 export const mergeVpk     = (files, name, confirmed = false) =>
   call('merge_vpk', { files, name, confirmed });
 
@@ -235,10 +250,12 @@ export const parts          = (material = '', known_shape = '') =>
 export const setPartTexture = (material, part, path = null, options = null,
                                layer = null) =>
   call('set_part_texture', { material, part, path, options, layer });
-export const movePartTexture = (material, part, layer, to) =>
-  call('move_part_texture', { material, part, layer, to });
-export const partShape = (material, part, layer = null) =>
-  call('part_shape', { material, part, layer });
+//: Вся стопка картинок части снизу вверх: окно посадки сдаёт её одним шагом
+export const setPartLayers = (material, part, layers) =>
+  call('set_part_layers', { material, part, layers });
+export const partShape = (material, part, layer = null, whole = false) =>
+  call('part_shape', { material, part, layer, whole });
+export const imageFrames = (path) => call('image_frames', { path });
 export const partMask = (material, part) =>
   call('part_mask', { material, part });
 export const setPartColors  = (material, colors, strength = null,
@@ -289,7 +306,10 @@ export const buildSounds   = (filename = '') => call('build_sounds', { filename 
 /** URL игрового звука прямо из VPK. Путь - от корня `sound/` */
 export const soundUrl = (path) => '/sound?wave=' + encodeURIComponent(path);
 export const removeMod    = (name) => call('remove_mod', { name });
-export const loadVpkMod   = (path) => call('load_vpk_mod', { path });
+export const loadVpkMod   = (path, model = '') => call('load_vpk_mod', { path, model });
+export const vpkModModels = (path) => call('vpk_mod_models', { path });
+export const modTarget    = (path, model = '') => call('mod_target', { path, model });
+export const importMod    = (path) => call('import_mod', { path });
 export const diagnose     = (path) => call('diagnose', { path });
 
 // Настройки приложения: конфиг общий с окном, поэтому правка видна обоим

@@ -25,6 +25,7 @@ ParticleEditorService.set_attr/ensure_attr и читают один systems_json
 Логика чтения/записи тестируется напрямую
 """
 
+import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -46,12 +47,21 @@ class AttrRef:
     attr: str
     attr_type: str                    # DMX-тип для создания атрибута
     component: Optional[int] = None   # компонента vec3 (напр. 2 = Z гравитации)
+    #: В атрибуте лежит значение крутилки, умноженное на это. Доля жизни
+    #: 0..1 показывается процентами (0.01), «от» случайной силы - минусом
+    scale: float = 1.0
+
+
+#: Виды крутилок, у которых одно значение (а не пара)
+SINGLE_KINDS = ("value", "color", "bool", "choice")
+#: Все виды. "module" - не атрибут, а наличие модуля: включить = добавить
+KINDS = SINGLE_KINDS + ("range", "color_pair", "module")
 
 
 @dataclass(frozen=True)
 class SimpleParam:
     key: str            # ключ перевода particles_sp_<key>
-    kind: str           # "value" | "range" | "color_pair"
+    kind: str           # один из KINDS
     #: Адреса по приоритету: первый вариант, чьи модули есть в системе.
     #: Кнопка «Включить» создаёт модули ПЕРВОГО варианта
     variants: Tuple[Tuple[AttrRef, ...], ...]
@@ -63,6 +73,23 @@ class SimpleParam:
     decimals: int = 2
     default: float = 0.0     # значение-заглушка, если атрибута ещё нет
     creatable: bool = True   # недостающий модуль можно создать кнопкой
+    #: Раздел панели (particles_sp_group_<group>): крутилки одной природы рядом
+    group: str = "emit"
+    #: Диапазон «от - до»: начало не больше конца. У «начало - конец» (рост
+    #: размера) концы независимы - частица может и усыхать
+    ordered: bool = True
+    #: Подпись единицы после числа (particles_sp_unit_<unit>), пусто - без
+    unit: str = ""
+    #: Значения выбора ("choice"): подписи - particles_sp_<key>_<значение>
+    choices: Tuple[int, ...] = ()
+    #: Что крутят «быстрыми правками» всего эффекта: {правка: степень}.
+    #: Значение умножается на множитель правки в этой степени
+    scales: Tuple[Tuple[str, float], ...] = ()
+    #: Что выставить в только что созданном модуле, кроме самой крутилки:
+    #: ((группа, функция, атрибут, тип, значение), ...). Шаблон модуля
+    #: берётся из первого попавшегося стокового эффекта, и без этого новая
+    #: «закрутка» вертелась бы вокруг его оси X, а не вокруг вертикали
+    seed: Tuple[Tuple[str, str, str, str, object], ...] = ()
 
     @property
     def refs(self) -> Tuple[AttrRef, ...]:
@@ -76,11 +103,21 @@ class SimpleParam:
         Умолчание Source: строка-заготовка обязана врать как можно меньше -
         именно это значение эффект и получит, если правку не трогать
         """
-        if self.kind == "value":
+        if self.kind in ("value", "choice"):
             return self.default
+        if self.kind in ("bool", "module"):
+            return bool(self.default)
+        if self.kind == "color":
+            return [255, 255, 255, 255]
         if self.kind == "color_pair":
             return ([255, 255, 255, 255], [255, 255, 255, 255])
-        return tuple(self.default for _ in self.refs)
+        return tuple(self.default for _ in range(self.slots))
+
+    @property
+    def slots(self) -> int:
+        """Сколько значений у крутилки: у одиночной на них может работать
+        несколько адресов (сила по трём осям), у пары - по адресу на конец"""
+        return 1 if self.kind in SINGLE_KINDS or self.kind == "module" else 2
 
     @property
     def input_min(self) -> float:
@@ -171,22 +208,142 @@ def _read_ref(sys_json: dict, ref: AttrRef):
     return v
 
 
+def _slot(param: SimpleParam, n: int) -> int:
+    """Какому значению крутилки служит n-й адрес варианта"""
+    return 0 if param.slots == 1 else n
+
+
+def _from_attr(param: SimpleParam, ref: AttrRef, raw):
+    """Значение атрибута -> значение крутилки (масштаб, тип)"""
+    if param.kind == "bool":
+        return bool(raw)
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and ref.scale != 1.0:
+        return raw / ref.scale
+    return raw
+
+
+def _to_attr(param: SimpleParam, ref: AttrRef, value, attr_type: str = ""):
+    """Значение крутилки -> значение атрибута"""
+    if param.kind == "bool":
+        return bool(value)
+    if param.kind in ("color", "color_pair"):
+        return list(value)
+    v = value * ref.scale if ref.scale != 1.0 else value
+    return int(round(v)) if (attr_type or ref.attr_type) == "integer" else v
+
+
+def _stored_type(sys_json: dict, ref: AttrRef) -> str:
+    """Тип атрибута в файле, если он там есть, иначе - из схемы
+
+    Запись берёт тип, который у атрибута уже есть (attr_edit), и целое
+    в файле обрезает дробь. Превью и запись должны считать одинаково
+    """
+    if ref.group is None:
+        tv = sys_json["attrs"].get(ref.attr.lower()) or sys_json["attrs"].get(ref.attr)
+    else:
+        idx = module_index(sys_json, ref.group, ref.function_name)
+        attrs = sys_json[ref.group][idx]["attrs"] if idx is not None else {}
+        tv = attrs.get(ref.attr.lower()) or attrs.get(ref.attr)
+    return (tv or {}).get("t") or ref.attr_type
+
+
+def _step_number(param: SimpleParam, ref: AttrRef, raw, factor: float, integer: bool,
+                 vector: bool = False):
+    """Одно число атрибута после быстрой правки
+
+    Считается в единицах крутилки (с её жёсткими границами) и переводится
+    обратно. Целое сдвигается хотя бы на единицу - иначе 1 и 2 частицы за
+    залп не менялись бы ни в какую сторону. Ноль остаётся нулём: у
+    длительности это «бесконечно»
+    """
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or not raw:
+        return raw
+    v = raw / ref.scale
+    x = v * factor
+    if integer or param.decimals == 0:
+        mag, was = abs(x), abs(v)
+        if factor > 1:
+            mag = max(math.ceil(mag), was + 1)
+        else:
+            # Целое не уходит в ноль: залп в одну частицу «реже» - всё ещё залп
+            mag = max(min(math.floor(mag), was - 1), min(was, 1))
+        x = math.copysign(mag, v)
+    if vector:
+        # Оси вектора бывают любого знака - держим только величину
+        top = max(abs(param.input_min), abs(param.input_max))
+        x = max(-top, min(top, x))
+    else:
+        x = min(param.input_max, max(param.input_min, x))
+    out = x * ref.scale
+    return int(round(out)) if integer else out
+
+
+def scale_calls(sys_json: dict, param: SimpleParam, factor: float) -> List[tuple]:
+    """
+    Быстрая правка: атрибуты крутилки, умноженные на `factor`, как вызовы
+    ensure_attr. Только то, что уже лежит в файле: недостающий атрибут игра
+    держит в дефолте, и дописывать его - раздувать PCF и метить систему
+    изменённой. Компоненты вектора умножаются каждая сама: у хаотичной силы
+    (-5,-5,0)..(5,5,100) «крупнее» не должно терять снос вверх
+    """
+    refs = active_refs(sys_json, param)
+    if param.kind not in ("value", "range") or not _refs_present(sys_json, refs):
+        return []
+    calls: List[list] = []
+    vectors: dict = {}
+    for ref in refs:
+        whole = _read_ref(sys_json, AttrRef(ref.group, ref.function_name,
+                                             ref.attr, ref.attr_type))
+        if whole is None:
+            continue
+        idx = 0 if ref.group is None else module_index(sys_json, ref.group,
+                                                       ref.function_name)
+        integer = _stored_type(sys_json, ref) == "integer"
+        if ref.component is None:
+            calls.append([ref.group, idx, ref.attr, _stored_type(sys_json, ref),
+                          _step_number(param, ref, whole, factor, integer)])
+            continue
+        if not isinstance(whole, (list, tuple)) or ref.component >= len(whole):
+            continue
+        # Вектор умножается целиком, а не только ось крутилки: гравитация
+        # или подъём со сносом вбок сохраняют направление
+        key = (ref.group, idx, ref.attr)
+        if key not in vectors:
+            vectors[key] = [_step_number(param, ref, c, factor, False, vector=True)
+                            for c in whole]
+            calls.append([ref.group, idx, ref.attr, ref.attr_type, vectors[key]])
+    return [tuple(c) for c in calls]
+
+
 def read_param(sys_json: dict, param: SimpleParam):
     """
     Текущее значение крутилки из systems_json
 
     Returns:
-        "value" -> скаляр; "range"/"color_pair" -> кортеж по refs.
-        None - нужного модуля в системе нет (крутилка выключена, показывается
-        кнопка «Включить»). Отсутствующий АТРИБУТ существующего модуля - не
-        причина выключать: игра держит его в дефолте, и правка его создаст
+        одиночная -> значение; "range"/"color_pair" -> кортеж из двух;
+        "module" -> есть ли модуль. None - нужного модуля в системе нет
+        (крутилка бледная, первая правка его создаст). Отсутствующий АТРИБУТ
+        существующего модуля - не причина выключать: игра держит его в
+        дефолте, и правка его создаст
     """
     refs = active_refs(sys_json, param)
-    if not _refs_present(sys_json, refs):
+    present = _refs_present(sys_json, refs)
+    if param.kind == "module":
+        return present
+    if not present:
         return None
-    vals = [param.default if (v := _read_ref(sys_json, ref)) is None else v
-            for ref in refs]
-    return vals[0] if param.kind == "value" else tuple(vals)
+    ph = param.placeholder_value
+    vals = [ph] if param.slots == 1 else list(ph)
+    seen = set()
+    for n, ref in enumerate(refs):
+        slot = _slot(param, n)
+        if slot in seen:
+            continue                       # у одиночной правит первый адрес
+        seen.add(slot)
+        raw = _read_ref(sys_json, ref)
+        if raw is not None:
+            vals[slot] = _from_attr(param, ref, raw)
+    return vals[0] if param.slots == 1 else tuple(vals)
 
 
 def missing_modules(sys_json: dict, param: SimpleParam) -> List[tuple]:
@@ -201,32 +358,67 @@ def missing_modules(sys_json: dict, param: SimpleParam) -> List[tuple]:
     return out
 
 
-def write_calls(sys_json: dict, param: SimpleParam, value) -> List[tuple]:
+def targets(sys_json: dict, param: SimpleParam) -> List[dict]:
+    """Куда крутилка пишет в ЭТОЙ системе: [{slot, group, index, attr,
+    component, scale, type}]. Пусто - модуля нет
+
+    Нужно странице для живой правки: пока тянут ползунок, превью меняет
+    атрибуты у себя, не дожидаясь Python
     """
-    Значение крутилки -> [(group|None, mod_idx, attr, attr_type, new_value)]
-    для ParticleEditorService.ensure_attr. Пусто - нужного модуля нет
-    """
+    if param.kind == "module":
+        return []
     refs = active_refs(sys_json, param)
-    vals = [value] if param.kind == "value" else list(value)
-    calls = []
-    for ref, v in zip(refs, vals):
+    out = []
+    for n, ref in enumerate(refs):
         idx = 0
         if ref.group is not None:
             idx = module_index(sys_json, ref.group, ref.function_name)
             if idx is None:
                 return []
-        if ref.component is not None:
+        out.append({"slot": _slot(param, n), "group": ref.group, "index": idx,
+                    "attr": ref.attr.lower(), "component": ref.component,
+                    "scale": ref.scale,
+                    "type": (ref.attr_type if ref.component is not None
+                             else _stored_type(sys_json, ref))})
+    return out
+
+
+def write_calls(sys_json: dict, param: SimpleParam, value) -> List[tuple]:
+    """
+    Значение крутилки -> [(group|None, mod_idx, attr, attr_type, new_value)]
+    для ParticleEditorService.ensure_attr. Пусто - нужного модуля нет
+
+    Несколько компонент одного вектора (сила по трём осям) собираются в один
+    вызов: по отдельности каждый следующий затирал бы предыдущий
+    """
+    refs = active_refs(sys_json, param)
+    vals = [value] if param.slots == 1 else list(value)
+    calls: List[list] = []
+    vectors: dict = {}
+    for n, ref in enumerate(refs):
+        idx = 0
+        if ref.group is not None:
+            idx = module_index(sys_json, ref.group, ref.function_name)
+            if idx is None:
+                return []
+        v = _to_attr(param, ref, vals[_slot(param, n)],
+                     "" if ref.component is not None else _stored_type(sys_json, ref))
+        if ref.component is None:
+            calls.append([ref.group, idx, ref.attr, ref.attr_type, v])
+            continue
+        key = (ref.group, idx, ref.attr)
+        if key not in vectors:
             cur = _read_ref(sys_json, AttrRef(
                 ref.group, ref.function_name, ref.attr, ref.attr_type))
             base = list(cur) if isinstance(cur, (list, tuple)) else [0.0, 0.0, 0.0]
-            base[ref.component] = v
-            v = base
-        calls.append((ref.group, idx, ref.attr, ref.attr_type, v))
-    return calls
+            vectors[key] = base
+            calls.append([ref.group, idx, ref.attr, ref.attr_type, base])
+        vectors[key][ref.component] = v
+    return [tuple(c) for c in calls]
 
 
-def _r(group, fn, attr, attr_type="float", component=None) -> AttrRef:
-    return AttrRef(group, fn, attr, attr_type, component)
+def _r(group, fn, attr, attr_type="float", component=None, scale=1.0) -> AttrRef:
+    return AttrRef(group, fn, attr, attr_type, component, scale)
 
 
 def _v(*refs: AttrRef) -> Tuple[AttrRef, ...]:
@@ -234,113 +426,6 @@ def _v(*refs: AttrRef) -> Tuple[AttrRef, ...]:
     return refs
 
 
-#: Схема простого режима. Новая крутилка = одна запись здесь
-#: + ключ перевода particles_sp_<key> в translations.py (ru и en)
-#:
-#: Мягкие границы и дефолты выставлены по срезу стоковых PCF игры
-#: (134 файла, 10426 систем): мягкая граница ≈ 99-й процентиль, жёсткая -
-#: с запасом над максимумом, дефолт - как в Source
-SIMPLE_PARAMS: Tuple[SimpleParam, ...] = (
-    # Эмиссия
-    # Параметры эмиттеров показываются только при их наличии: автосоздание
-    # эмиттера может задвоить залп, поэтому creatable=False
-    SimpleParam("spawn_rate", "value",
-                (_v(_r("emitters", "emit_continuously", "emission_rate")),),
-                minimum=0, maximum=500, hard_max=1e6, curve=CURVE_SQRT,
-                default=100, creatable=False),
-    SimpleParam("spawn_burst", "value",
-                (_v(_r("emitters", "emit_instantaneously", "num_to_emit",
-                       "integer")),),
-                minimum=0, maximum=1000, hard_max=1e6, curve=CURVE_SQRT,
-                decimals=0, default=100, creatable=False),
-    # Задержка старта эмиссии - есть у обоих эмиттеров, имя атрибута одно
-    SimpleParam("emit_delay", "value",
-                (_v(_r("emitters", "emit_continuously", "emission_start_time")),
-                 _v(_r("emitters", "emit_instantaneously",
-                       "emission_start_time"))),
-                minimum=0, maximum=10, hard_max=1e5, curve=CURVE_SQRT,
-                creatable=False),
-    # Длительность эмиссии; 0 = бесконечно (так в игре)
-    SimpleParam("emit_duration", "value",
-                (_v(_r("emitters", "emit_continuously", "emission_duration")),),
-                minimum=0, maximum=10, hard_max=1e5, curve=CURVE_SQRT,
-                creatable=False),
-    SimpleParam("max_particles", "value",
-                (_v(_r(None, "", "max_particles", "integer")),),
-                minimum=1, maximum=5000, hard_max=1e6, curve=CURVE_SQRT,
-                decimals=0, default=1000),
-    # Область спавна и разлёт
-    # Сферическая область - самая ходовая (7032 модуля в стоке), бокс -
-    # запасной вариант (273), у обоих гизмо в 3D-превью
-    SimpleParam("spawn_area", "range",
-                (_v(_r("initializers", "Position Within Sphere Random",
-                       "distance_min"),
-                    _r("initializers", "Position Within Sphere Random",
-                       "distance_max")),),
-                minimum=0, maximum=500, hard_max=1e5, curve=CURVE_SQRT,
-                creatable=False),
-    # Скорость: в сферическом инициализаторе либо в отдельном Velocity Random
-    SimpleParam("speed", "range",
-                (_v(_r("initializers", "Position Within Sphere Random",
-                       "speed_min"),
-                    _r("initializers", "Position Within Sphere Random",
-                       "speed_max")),
-                 _v(_r("initializers", "Velocity Random", "speed_min"),
-                    _r("initializers", "Velocity Random", "speed_max"))),
-                minimum=0, maximum=2000, hard_max=1e5, curve=CURVE_SQRT,
-                creatable=False),
-    SimpleParam("gravity", "value",
-                (_v(_r("operators", "Movement Basic", "gravity", "vec3",
-                       component=2)),),
-                minimum=-800, maximum=800, hard_min=-1e6, hard_max=1e6,
-                curve=CURVE_SIGNED_SQRT),
-    # Сопротивление среды: 0 - движение по инерции, 1 - мгновенная остановка
-    SimpleParam("drag", "value",
-                (_v(_r("operators", "Movement Basic", "drag")),),
-                minimum=0, maximum=1, hard_min=-10, hard_max=10, decimals=3),
-    # Размер
-    SimpleParam("size", "value",
-                (_v(_r(None, "", "radius")),),
-                minimum=0.1, maximum=200, hard_min=0, hard_max=1e5,
-                curve=CURVE_SQRT, default=5.0),
-    SimpleParam("size_range", "range",
-                (_v(_r("initializers", "Radius Random", "radius_min"),
-                    _r("initializers", "Radius Random", "radius_max")),),
-                minimum=0.1, maximum=200, hard_min=0, hard_max=1e5,
-                curve=CURVE_SQRT, default=5.0),
-    # Рост/усадка за жизнь частицы: 7262 модуля в стоке
-    SimpleParam("size_scale", "range",
-                (_v(_r("operators", "Radius Scale", "radius_start_scale"),
-                    _r("operators", "Radius Scale", "radius_end_scale")),),
-                minimum=0, maximum=10, hard_max=1e4, curve=CURVE_SQRT,
-                default=1.0),
-    # Жизнь, прозрачность, затухание
-    SimpleParam("lifetime", "range",
-                (_v(_r("initializers", "Lifetime Random", "lifetime_min"),
-                    _r("initializers", "Lifetime Random", "lifetime_max")),),
-                minimum=0.05, maximum=30, hard_min=0, hard_max=1e10,
-                curve=CURVE_SQRT, default=0.5),
-    # Стартовая прозрачность 0-255: 7449 модулей в стоке
-    SimpleParam("alpha", "range",
-                (_v(_r("initializers", "Alpha Random", "alpha_min", "integer"),
-                    _r("initializers", "Alpha Random", "alpha_max", "integer")),),
-                minimum=0, maximum=255, decimals=0, default=255),
-    SimpleParam("fade_in", "range",
-                (_v(_r("operators", "Alpha Fade In Random", "fade in time min"),
-                    _r("operators", "Alpha Fade In Random", "fade in time max")),),
-                minimum=0, maximum=10, hard_max=1e4, default=0.25),
-    SimpleParam("fade_out", "range",
-                (_v(_r("operators", "Alpha Fade Out Random", "fade out time min"),
-                    _r("operators", "Alpha Fade Out Random",
-                       "fade out time max")),),
-                minimum=0, maximum=10, hard_max=1e4, default=0.25),
-    # Цвет и вращение
-    SimpleParam("colors", "color_pair",
-                (_v(_r("initializers", "Color Random", "color1", "color"),
-                    _r("initializers", "Color Random", "color2", "color")),)),
-    SimpleParam("spin", "value",
-                (_v(_r("operators", "Rotation Spin Roll", "spin_rate_degrees",
-                       "integer")),),
-                minimum=-1000, maximum=1000, hard_min=-1e6, hard_max=1e6,
-                curve=CURVE_SIGNED_SQRT, decimals=0),
-)
+# Схема - отдельным файлом: логика выше от неё не зависит, а сама схема
+# растёт с каждой крутилкой
+from src.services.simple_params_schema import SIMPLE_PARAMS  # noqa: E402,F401

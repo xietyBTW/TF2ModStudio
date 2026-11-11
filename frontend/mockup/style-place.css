@@ -77,60 +77,72 @@
 }
 .picker__hex:focus { outline: none; border-bottom-color: var(--accent); }
 
-/* Посадка картинки на часть
-   Окно-редактор из трёх панелей: слои · холст · свойства. Панели отделены
-   волосяными линиями и стоят от края до края окна, как столбцы таблицы, -
-   ничего не плавает в пустоте. Холст - единственная «масса»: всё остальное
-   подписи, поля-подчёркивания и линии, как и везде в приложении */
-.place { width: min(1060px, 96vw); }
+/* Картинки на части
+   Окно-редактор из двух зон: холст и одна колонка справа (слои, под ними
+   посадка выбранного). Холст - единственная «масса», забирает всю ширину;
+   остальное - подписи, поля-подчёркивания и волосяные линии, как везде */
+.place { width: min(1120px, 96vw); }
 .place__frame { display: flex; flex-direction: column; max-height: 92vh; }
 .place__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 14px;
-  padding: 18px 22px 16px;
+  padding: 12px 18px 12px 22px;
   border-bottom: 1px solid var(--hairline);
 }
+.place__chip {
+  padding: 2px 7px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--accent);
+  font-size: 11px;
+}
+.place__showlabel { margin-left: auto; color: var(--ink-mute); }
+.place__show { display: flex; gap: 2px; }
 .place__panes {
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr) 216px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   min-height: 0;
+  flex: 1 1 auto;
 }
 .place__panes > * { min-width: 0; min-height: 0; }
-.place__layers, .place__props {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px;
-  overflow: auto;
-}
-.place__layers { border-right: 1px solid var(--hairline); }
-.place__props  { border-left: 1px solid var(--hairline); }
 .place__foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 18px;
-  padding: 14px 22px;
+  padding: 12px 22px;
   border-top: 1px solid var(--hairline);
 }
+.place__status { margin-right: auto; font-size: 11px; color: var(--ink-mute); }
 
-/* Холст в своей панели: по центру, с воздухом, рамка на самом холсте, чтобы
-   не оставалось пустых полей внутри коробки. Фон у панели тот же, что у окна:
-   тёмная подложка читалась чёрной рамкой вокруг холста */
+/* Холст на подложке вьювера, панель инструментов висит над ним */
 .place__stage {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px;
+  justify-content: center;
+  align-items: center;
+  padding: 58px 20px 44px;
+  background: var(--viewport);
 }
-.place__box { display: flex; justify-content: center; align-items: flex-start; flex: 1 1 auto; min-height: 0; }
+.place__tools {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--overlay);
+}
+.place__toolsep { width: 1px; height: 18px; margin: 0 4px; background: var(--hairline-strong); }
 .place__canvas {
   display: block;
   width: auto;
   height: auto;
   max-width: 100%;
-  max-height: min(58vh, 540px);
+  max-height: min(62vh, 600px);
   border: 1px solid var(--hairline-strong);
   background: var(--viewport);
   cursor: grab;
@@ -141,28 +153,62 @@
    лишней линией поверх картинки, поэтому только по клавиатуре */
 .place__canvas:focus { outline: none; }
 .place__canvas:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.place__view { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
-.place__toggle { flex: none; font-size: 11px; white-space: nowrap; }
-.place__keys {
-  margin-left: auto;
-  font-size: 10.5px;
-  line-height: 1.4;
+.place__hint {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
   color: var(--ink-mute);
-  text-align: right;
 }
+.place__zoomk {
+  padding: 2px 7px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+/* Файл над холстом: вся зона обводится и говорит, что будет */
+.place__dropzone {
+  position: absolute;
+  inset: 8px;
+  z-index: 3;
+  display: none;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--viewport) 82%, transparent);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.place__stage.is-drop .place__dropzone { display: grid; }
 
-/* Слои */
-.place__panehead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.place__count { font-size: 10px; }
-.place__order { margin: -6px 0 0; font-size: 11px; line-height: 1.45; color: var(--ink-mute); }
+/* Правая колонка: слои, вписывание, точные значения */
+.place__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+  border-left: 1px solid var(--hairline);
+}
+.place__panehead { display: flex; align-items: center; gap: 8px; }
+.place__count { margin-right: auto; font-size: 11px; color: var(--ink-mute); }
+.place__panehead .ptools__btn:disabled { opacity: .35; cursor: default; background: none; }
+
 /* Строки - стопкой, как лежат картинки: верхняя поверх. Отступ и
    отрицательное поле - чтобы тень поднятой строки не резалась прокруткой */
 .place__list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   overflow: auto;
-  max-height: min(44vh, 400px);
+  max-height: min(40vh, 360px);
   padding: 3px;
   margin: -3px;
 }
@@ -170,17 +216,12 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 9px 7px 7px;
   border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--ink-soft);
-  font: inherit;
-  text-align: left;
-  min-width: 0;
-  cursor: grab;
   touch-action: none;
   user-select: none;
+  cursor: grab;
   transition: border-color var(--dur), color var(--dur), box-shadow var(--dur);
 }
 .place__layer:hover { border-color: var(--hairline-strong); color: var(--ink); }
@@ -188,6 +229,21 @@
   border-color: var(--accent);
   color: var(--ink);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Выбор слоя - настоящая кнопка на всю строку, кроме действий справа */
+.place__pick {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 8px 7px 7px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: inherit;
 }
 /* Захват - точки слева: подсказка, что строку можно тащить */
 .place__grip {
@@ -206,8 +262,8 @@
   flex: none;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border: 1px solid var(--hairline);
   background: repeating-conic-gradient(var(--viewport) 0 25%, var(--surface) 0 50%)
               0 0 / 10px 10px;
@@ -222,7 +278,11 @@
   white-space: nowrap;
   min-width: 0;
 }
-.place__pos { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); }
+.place__pos { display: flex; gap: 6px; font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); }
+.place__pos span + span::before { content: "·"; margin-right: 6px; }
+.place__rowacts { flex: none; display: flex; padding-right: 4px; }
+.place__rowacts .ptools__btn { width: 26px; height: 26px; }
+.place__rowacts .ptools__btn svg { width: 15px; height: 15px; }
 /* Перетаскивание: поднятая строка едет за курсором без задержки, соседи
    уступают место плавно, отпущенная доезжает до своей щели */
 .place__list.is-sorting .place__layer:not(.is-dragging) { transition: transform var(--dur); }
@@ -234,26 +294,15 @@
   transition: none;
 }
 .place__layer.is-settling { transition: transform var(--dur); }
-.place__add {
-  align-self: stretch;
-  padding: 9px;
-  border: 1px dashed var(--hairline-strong);
-  background: none;
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: 10px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: border-color var(--dur), color var(--dur);
-}
-.place__add:hover { border-color: var(--accent); color: var(--accent); }
-.place__layeracts { display: flex; gap: 16px; flex-wrap: wrap; }
 
-/* Свойства */
-.place__prop { display: flex; flex-direction: column; gap: 9px; }
-.place__prop + .place__prop { padding-top: 14px; border-top: 1px solid var(--hairline); }
-/* Сегментный переключатель: три кнопки одной полосой, общие рамки */
+.place__prop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+/* Сегментный переключатель: кнопки одной полосой, общие рамки */
 .seg { display: flex; }
 .seg button {
   flex: 1 1 0;
@@ -279,7 +328,41 @@
   border-color: var(--ink);
   color: var(--chosen-ink);
 }
-.place__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* Вписывание - со схемой на кнопке: слово одно, а что станет с картинкой,
+   видно сразу */
+.place__fit button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 2px 7px;
+  letter-spacing: .06em;
+}
+.place__fit svg { width: 20px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; overflow: visible; }
+
+.place__precise { padding-top: 12px; border-top: 1px solid var(--hairline); }
+.place__precise summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-mute);
+}
+.place__precise summary::-webkit-details-marker { display: none; }
+.place__precise summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur);
+}
+.place__precise[open] summary::after { transform: rotate(45deg); }
+.place__precise summary:hover { color: var(--ink); }
+.place__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; margin-top: 12px; }
 .place__field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .place__field span {
   font-size: 9.5px;
@@ -294,7 +377,6 @@
   font-size: 12px;
   text-align: left;
 }
-.place__reset { align-self: flex-start; margin-top: auto; }
 
 /* Счётчик найденного под фильтрами каталога */
 .catalog__count {

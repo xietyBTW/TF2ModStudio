@@ -362,6 +362,7 @@ export function closeParts() {
   bar.hidden = true;
   document.getElementById('partspaint').hidden = true;
   document.getElementById('partspaint').classList.remove('is-folded');
+  showMenu(false);
   // Выбор цвета держит у себя блок перехода: уйти, не закрыв его, значило бы
   // оставить кусок спрятанной палитры висеть поверх кадра
   closeColor();
@@ -479,14 +480,22 @@ export function showParts(res) {
       if (P.cutMode) { selectWholePart(part); return; }
       pickPart(part.id);
     });
-    if (part.color) {
+    // Метка покраски показывает то, что сверху: картинка лежит поверх цвета
+    if (images.length) {
+      b.style.setProperty('--paint', 'center / cover url("'
+        + api.fileUrl(images[images.length - 1].path) + '")');
+    } else if (part.color) {
       const { color, color2 } = part.color;
       b.style.setProperty('--paint', color2
         ? 'linear-gradient(180deg,' + color + ',' + color2 + ')' : color);
     }
+    // Действия лежат поверх плашки и видны при наведении: своим местом они
+    // растягивали её вдвое, и вся сетка шла вразнобой
+    const acts = document.createElement('span');
+    acts.className = 'part__acts';
     // Кнопка только на ОТРЕЗАННОЙ части - вернуть её туда, откуда вырезали
     if ((part.islands && part.islands.length) || part.region >= 0) {
-      b.appendChild(chunkStep(part, '−', 'Прирастить обратно'));
+      acts.appendChild(chunkStep(part, '−', 'Прирастить обратно'));
     }
     // У части с картинками - вход в их редактор: посадка, замена, ещё одна.
     // Туда же ведёт щелчок по чипу с картинкой-курсором, кнопка - для тех,
@@ -501,7 +510,7 @@ export function showParts(res) {
         e.stopPropagation();
         editPartLayers(part.id);
       });
-      b.appendChild(fix);
+      acts.appendChild(fix);
     }
     if (part.id === hoverPart) b.classList.add('is-hover');
     if (images.length || part.color) {
@@ -516,10 +525,9 @@ export function showParts(res) {
         if (images.length) await paintPart(part.id, null);
         if (part.color) await colorParts({ [part.id]: null });
       });
-      b.appendChild(x);
+      acts.appendChild(x);
     }
-    // Действий на чипе больше одного - одна клетка сетки для них узка
-    if (b.querySelectorAll('button').length > 1) b.classList.add('part--wide');
+    if (acts.childElementCount) b.appendChild(acts);
     grid.appendChild(b);
   });
 }
@@ -541,36 +549,41 @@ export async function refreshParts() {
   return fresh;
 }
 
+/** Для правок не из режима частей (сброс, возврат работы, команда): открытая
+ *  полоса иначе показывает номера материалов и покраску, которых уже нет */
+export async function syncParts() {
+  if (!document.getElementById('partsbar').hidden) await refreshParts();
+}
+
 /**
  * Картинка на часть
  *
  * `file` не задан - щелчок по части: у части с картинками открывает их
  * редактор (посадка, замена, ещё одна), у пустой спрашивает файл. `null` -
- * снять: слой `layer` либо все. Файл (в том числе брошенный на модель)
- * ложится сразу, поверх лежащих или на место слоя `layer`, и тут же
- * открывается редактор - поправить посадку, глядя на неё на месте.
+ * снять все. Файл (в том числе брошенный на модель) открывает редактор с
+ * ним поверх лежащих: посадку правят, глядя на неё на месте, а в текстуру
+ * она ложится по «Готово».
  */
-export async function paintPart(part, file = undefined, layer = null) {
+export async function paintPart(part, file = undefined) {
   if (file === undefined) {
     const known = (P.list || []).find((x) => x.id === part);
     if (known && (known.images || []).length) { await editPartLayers(part); return; }
     file = await chooseFile('image/*,.vtf');
     if (!file) return;
   }
-  hintParts(file ? 'Наложение на часть…' : 'Убираю…');
   try {
-    const path = file ? await api.upload(file) : null;
-    const res = await api.setPartTexture(P.material, part, path, null, layer);
+    if (file) {
+      // Картинка ложится в окне, а в текстуру - по «Готово», вместе со всем,
+      // что в нём поправят: склейка одна на всё окно
+      await editPartLayers(part, -1, await api.upload(file));
+      return;
+    }
+    hintParts('Убираю…');
+    const res = await api.setPartTexture(P.material, part, null);
     if (res.error) { hintParts(res.error); return; }
     applyView(res);
-    const fresh = await refreshParts();
-    // Куски, делящие развёртку, красятся вместе. Сказать об этом надо в тот
-    // момент, когда это произошло, а не только подсказкой на кнопке
-    const painted = (fresh.parts || []).find((p) => p.id === part);
-    hintParts(file && painted && painted.shared.length
-      ? 'Эта часть делит развёртку с соседними - они покрасились вместе'
-      : '');
-    if (file) await editPartLayers(part, layer === null ? -1 : layer);
+    await refreshParts();
+    hintParts('');
   } catch (err) {
     hintParts(`Не удалось: ${err.message}`);
   }
@@ -628,13 +641,54 @@ async function stepHistory(delta) {
 }
 
 document.getElementById('parts-done').addEventListener('click', closeParts);
+document.getElementById('parts-undo').addEventListener('click', () => stepHistory(-1));
+document.getElementById('parts-redo').addEventListener('click', () => stepHistory(1));
+
+/** Меню «…» - всплывающее: закрывается щелчком мимо */
+function showMenu(on) {
+  document.getElementById('parts-menu').hidden = !on;
+  document.getElementById('parts-more').classList.toggle('is-active', on);
+}
+document.getElementById('parts-more').addEventListener('click', () => {
+  showMenu(document.getElementById('parts-menu').hidden);
+});
+// Пункт меню сделал своё - меню больше не нужно
+document.getElementById('parts-menu').addEventListener('click', () => showMenu(false));
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('#parts-menu, #parts-more')) showMenu(false);
+});
+
+//: Буквы инструментов - по коду клавиши, чтобы работали и в русской раскладке
+const TOOL_KEYS = { KeyI: 'image', KeyB: 'brush', KeyC: 'cut', KeyM: 'material' };
 
 /**
- * Отмена и возврат - только с клавиатуры
+ * Клавиши режима частей без Ctrl: Tab сворачивает палитру, буквы берут
+ * инструмент. Только пока режим открыт и курсор не в поле ввода
+ */
+function partsKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (document.getElementById('partsbar').hidden) return false;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')
+      || document.querySelector('dialog[open]')) return false;
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    showMenu(false);
+    document.getElementById('parts-fold').click();
+    return true;
+  }
+  const tool = TOOL_KEYS[e.code];
+  if (!tool) return false;
+  const btn = document.querySelector('#partspaint [data-tool="' + tool + '"]');
+  if (!btn || btn.hidden) return false;
+  e.preventDefault();
+  showToolGroup(tool);
+  return true;
+}
+
+/**
+ * Отмена и возврат с клавиатуры
  *
- * Кнопки у них нет намеренно: красят десятками щелчков подряд, а откатывают
- * редко, и ряд действий из-за неё стоял вчетвером. Раскладка та же, что
- * везде: Ctrl+Z назад, Ctrl+Y (и Ctrl+Shift+Z, как в редакторах) вперёд.
+ * Раскладка та же, что везде: Ctrl+Z назад, Ctrl+Y (и Ctrl+Shift+Z, как в редакторах) вперёд.
  * Работает по всему редактору предмета, не только в частях: положенная
  * текстура и подменённая модель откатываются той же лентой
  *
@@ -647,6 +701,7 @@ document.getElementById('parts-done').addEventListener('click', closeParts);
  * Второй копии раскладки при этом нет: вьювер передаёт само событие.
  */
 function historyKey(e) {
+  if (partsKey(e)) return;
   const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   if (!(e.ctrlKey || e.metaKey) || editing
       || document.querySelector('dialog[open]')

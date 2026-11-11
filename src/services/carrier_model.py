@@ -93,6 +93,23 @@ def find(weapon_key: str, misc_vpk_path: str, tf2_root: str,
     return Carrier(smds=smds, directory=result.directory, key=base)
 
 
+def weapon_reference(weapon_key: str, misc_vpk_path: str, tf2_root: str) -> str:
+    """Главный меш обычного оружия по ключу - из кэша или после Crowbar.
+    Пусто - не достали
+
+    Raises:
+        model_decompile_service.DecompileError: нет Crowbar или он упал
+    """
+    from src.services import model_decompile_service as mds
+    from src.services import smd_service
+
+    result = mds.ensure_decompiled(weapon_key, misc_vpk_path,
+                                   _candidates(weapon_key, tf2_root))
+    if result is None:
+        return ''
+    return smd_service.find_reference_smd(result.directory, weapon_key) or ''
+
+
 def materials(carrier: Carrier) -> set:
     """Материалы носителя - их показывают, но человек их не правит"""
     if not carrier:

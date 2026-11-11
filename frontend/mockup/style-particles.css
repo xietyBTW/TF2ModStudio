@@ -6,19 +6,176 @@
  * (style.css первым), порядок менять нельзя.
  */
 
-/* Параметры эффекта
-   Список «подпись - поле», а не сетка колонок: у крутилок частиц одна
-   природа, и разносить их по столбцам нечем */
+/* Параметры эффекта */
 .params { overflow: auto; }
 .params__note { margin: 0; color: var(--ink-mute); font-size: 12px; }
-/* Плавающая панель разворачивается на всю ширину экрана - одна колонка
-   растянула бы подпись и поле по разным краям. Прибитая узкая, и та же
-   сетка сама сворачивается в столбец */
-.params__list {
+.params__list { display: flex; flex-direction: column; gap: 18px; }
+
+/* Простой режим: разделы, в разделе - карточки одной высоты. Широкая панель
+   добавляет колонки, а не тянет дорожки на полэкрана */
+.spg__head { margin: 0 0 10px; padding-bottom: 5px; border-bottom: 1px solid var(--hairline); }
+.spg__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 10px 34px;
+  /* min(): уже 230 px колонка не растягивает панель вбок, а сжимается с ней */
+  grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr));
+  gap: 14px 30px;
 }
+.sp { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Высота строки одна и без чисел: иначе у «Добавить» дорожка вставала выше
+   соседних */
+.sp__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-height: 26px;
+}
+.sp__name {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Числа не помещаются рядом с подписью - переносятся под неё, к правому краю */
+.sp__vals { display: flex; align-items: center; gap: 3px; flex: none; margin-left: auto; }
+.sp__vals .input--num { width: 46px; }
+.sp__dash { color: var(--ink-mute); }
+.sp__none { font-size: 11px; color: var(--ink-mute); }
+.sp > .slider { width: 100%; min-width: 0; }
+.sp > .textbtn { align-self: flex-start; }
+/* Модуля нет: числа не выдумываем, вместо них «Добавить»; дорожка бледная */
+.sp.is-empty .input--num,
+.sp.is-empty .sp__dash,
+.sp.is-empty .sp__unit,
+.sp.is-dead .sp__unit { display: none; }
+.sp:not(.is-empty) .sp__add { display: none; }
+.sp.is-empty .sp__name,
+.sp.is-dead .sp__name { color: var(--ink-mute); }
+.sp.is-empty .slider,
+.sp.is-empty .dual,
+.sp.is-empty .colorfield,
+.sp.is-dead .slider,
+.sp.is-dead .dual { opacity: .4; }
+.sp.is-dead .input--num,
+.sp.is-dead .sp__dash { display: none; }
+
+/* Пояснение под подписью: включается кнопкой «Пояснения» */
+.sp__hint { margin: -2px 0 2px; font-size: 11px; line-height: 1.35; color: var(--ink-mute); }
+.sp__unit { margin-left: 2px; font-size: 11px; color: var(--ink-mute); }
+/* Отличается от игры: точка у подписи, «как в игре» - при наведении */
+.sp.is-changed .sp__name::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  vertical-align: 2px;
+  background: var(--accent);
+}
+.sp__reset { display: none; }
+.sp.is-changed:hover .sp__reset,
+.sp__reset:focus-visible { display: inline-block; }
+.spseg { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+
+/* Переключатель: квадратный, как ручки ползунков */
+.switch { position: relative; display: inline-block; width: 30px; height: 14px; cursor: pointer; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch__knob {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--hairline-strong);
+  transition: border-color var(--dur), background var(--dur);
+}
+.switch__knob::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 8px; height: 8px;
+  background: var(--ink-mute);
+  transition: transform var(--dur), background var(--dur);
+}
+.switch input:checked + .switch__knob { border-color: var(--accent); }
+.switch input:checked + .switch__knob::after { transform: translateX(16px); background: var(--accent); }
+.switch input:focus-visible + .switch__knob { outline: 1px solid var(--ink); outline-offset: 2px; }
+.switch input:disabled + .switch__knob { opacity: .4; }
+
+/* Выбор из нескольких: все варианты на виду, выбранный подчёркнут */
+.spchoice { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.spchoice__b {
+  padding: 0 0 2px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  color: var(--ink-mute);
+  font-size: 11px;
+  cursor: pointer;
+}
+.spchoice__b:hover { color: var(--ink); }
+.spchoice__b.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+.sp.is-dead .spchoice { opacity: .4; }
+
+/* Строка над разделами: быстрые правки всего эффекта и вид панели */
+.spbar { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px;
+         border-bottom: 1px solid var(--hairline); }
+/* Три правки - строками «название · меньше · больше»: в узкой панели они
+   стоят столбиком, в широкой встают в ряд */
+.spbar__quick {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr));
+  gap: 8px 30px;
+}
+.spbar__quick > .label { grid-column: 1 / -1; }
+/* В узкой панели кнопки уходят строкой под название, а не за край */
+.spq { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.spq__name { flex: 1 1 auto; }
+.spq__name { font-size: 12px; color: var(--ink-soft); }
+.spbar__view { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.spbar__hints { margin-left: auto; }
+
+/* Заголовок раздела - кнопка: щелчок сворачивает раздел */
+.spg__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 0 0 5px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.spg__head::after { content: "-"; margin-left: auto; color: var(--ink-mute); }
+.spg.is-folded .spg__head::after { content: "+"; }
+.spg__head:hover { color: var(--ink); }
+.spg__mark { letter-spacing: .08em; color: var(--accent); white-space: nowrap; }
+.spg.is-folded .spg__grid { display: none; }
+
+/* Две ручки на одной дорожке: два ползунка друг на друге, ловят только
+   ручки, иначе верхний перехватывал бы щелчки по всей длине */
+.dual { position: relative; height: 18px; }
+.dual::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 1px;
+  background: var(--hairline-strong);
+}
+.dual__fill { position: absolute; top: calc(50% - 1px); height: 3px; background: var(--ink-soft); }
+.dual .slider {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  pointer-events: none;
+}
+.dual .slider::-webkit-slider-runnable-track { background: transparent; }
+.dual .slider::-moz-range-track { background: transparent; }
+.dual .slider::-webkit-slider-thumb { pointer-events: auto; }
+.dual .slider::-moz-range-thumb { pointer-events: auto; }
 
 .params__row {
   display: grid;
@@ -34,16 +191,6 @@
   white-space: nowrap;
 }
 .params__in { display: flex; gap: 6px; align-items: center; }
-.pair { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-
-/* Колонка узкая: подпись, дорожка и поле в одну строку не встают - подпись
-   съедалась до «Час…». Кладём её строкой выше */
-.params__row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
-.params__list { gap: 12px; }
-/* Диапазон - две пары «дорожка + поле», рядом они не помещаются, и поле
-   обрезалось до «0,0». Ставим их одну под другой */
-.params__in { flex-direction: column; align-items: stretch; }
-.params__in > .colorfield { align-self: flex-start; }
 /* А в экспертном дереве значение короткое и подпись рядом читается лучше */
 .expert .params__row {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -113,6 +260,19 @@
 .slider::-moz-range-thumb {
   width: 9px; height: 9px; border: 0; border-radius: 0; background: var(--ink);
 }
+/* Закрашенный отрезок от нуля до ручки (util.js paintTrack). Дорожка
+   становится высотой с ручку: волосяная линия и полоса поверх неё рисуются
+   фоном, а края полосы считаются от центров крайних положений ручки */
+.slider--fill::-webkit-slider-runnable-track {
+  height: 9px;
+  background:
+    linear-gradient(var(--ink-soft), var(--ink-soft))
+      calc(4.5px + (100% - 9px) * var(--fill-from, 0)) 50% /
+      calc((100% - 9px) * (var(--fill-to, 0) - var(--fill-from, 0))) 3px no-repeat,
+    linear-gradient(var(--hairline-strong), var(--hairline-strong)) 0 50% / 100% 1px no-repeat;
+}
+.slider--fill::-webkit-slider-thumb { margin-top: 0; }
+.slider--fill:disabled::-webkit-slider-runnable-track { opacity: .5; }
 
 /* Переключатель «обычный / эксперт» - над списком, той же строкой */
 .params__modes { display: flex; gap: 16px; margin-bottom: 4px; }
@@ -253,6 +413,11 @@
 /* Длинное меню (готовые эффекты VMT) не должно уходить за край окна */
 .ctx { max-height: calc(100vh - 16px); overflow-y: auto; }
 .ctx__head { padding: 12px 14px 6px; color: var(--accent); }
+/* Пункт с подменю: стрелка у правого края, раскрытый подсвечен, пока
+   открыто его подменю */
+.ctx__more { display: flex; justify-content: space-between; gap: 16px; }
+.ctx__more::after { content: '›'; color: var(--ink-mute); }
+.ctx__more.is-open { color: var(--ink); background: var(--bg); }
 /* Пояснение под подписью пункта: мельче и тише, чтобы список читался по
    подписям, а пояснение - когда глаз на пункте */
 .ctx__hint {
@@ -280,6 +445,11 @@
   padding-left: calc(var(--depth, 0) * 14px);
   border-bottom: 1px solid var(--hairline);
 }
+
+/* Дети строки списка эффектов: обёртка без своей коробки, прячется целиком
+   вместе с внуками */
+.fx__kids { display: contents; }
+.fx__kids[hidden] { display: none; }
 
 .tree__twist {
   flex: none;

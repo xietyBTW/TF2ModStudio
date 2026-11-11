@@ -31,7 +31,7 @@ from src.data import stock_loadout
 from src.data.viewmodel_anims import CLASS_MODEL_STEM
 from src.services import anim_store
 from src.services import model_decompile_service as mds
-from src.services import smd_service, viewmodel_animation
+from src.services import scene_textures, smd_service, viewmodel_animation
 from src.services import weapon_anim_catalog as anim_catalog
 from src.services.base_worker import BaseWorker, Signal
 from src.services.game_vpk_reader import GameVpkReader
@@ -90,8 +90,10 @@ class HatScenePreviewWorker(BaseWorker):
                  hidden_bodygroups: Optional[Dict[str, int]] = None,
                  weapon_key: str = '',
                  custom_smd: str = '', custom_keep: bool = False,
-                 parent=None):
+                 mod_vpk_path: str = '', parent=None):
         super().__init__(parent)
+        #: Показанный мод из VPK: его файлы - первыми, как в игре
+        self.mod_vpk_path = mod_vpk_path or ''
         #: Надеваемое оружие вместо шапки (ботинки, щит): ключ предмета
         self.weapon_key = weapon_key or ''
         #: Своя модель предмета (SMD) - слитая со скелетом игровой, как в
@@ -116,7 +118,8 @@ class HatScenePreviewWorker(BaseWorker):
     # Точка входа
 
     def run(self) -> None:
-        reader = GameVpkReader([self.textures_vpk_path, self.misc_vpk_path])
+        reader = GameVpkReader(scene_textures.archives(
+            self.mod_vpk_path, self.textures_vpk_path, self.misc_vpk_path))
         try:
             self._preview_dir = tempfile.mkdtemp(prefix='tf2sg_wear_')
             classes = [c for c in CLASS_MODEL_STEM if c in self.hat_models]
@@ -294,19 +297,15 @@ class HatScenePreviewWorker(BaseWorker):
         """
         from src.services.viewmodel_worker import _cdmaterials, _scene_materials
 
-        resolver = MaterialResolver(reader, self._preview_dir)
         weapon_names, player_names = _scene_materials(scene)
         names = [*weapon_names, *player_names]
-        textures: dict = {}
-        hints: dict = {}
-        for directory in dirs:
-            left = [n for n in names if n not in textures]
-            if not directory or not left:
-                continue
-            cdmaterials = _cdmaterials(directory)
-            textures.update({n: png for n, png
-                             in resolver.texture_map(left, cdmaterials).items() if png})
-            hints.update(resolver.render_map(left, cdmaterials))
+        # Своя модель предмета ищет текстуры в своих папках из QC рядом с её
+        # разбором (мод из VPK) - первой: имена у мода те же, что у игры, и
+        # игровая папка забирала их раньше
+        own = os.path.dirname(self.custom_smd) if self.custom_smd else ''
+        textures, hints = scene_textures.resolve(
+            MaterialResolver(reader, self._preview_dir),
+            [(names, _cdmaterials(d)) for d in (own, *dirs) if d])
 
         self.render_hints.emit(hints)
         self.animated_ready.emit(scene)

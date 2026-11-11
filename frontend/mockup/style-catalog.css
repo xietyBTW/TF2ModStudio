@@ -28,6 +28,8 @@
   padding-bottom: 4px;
   border-bottom: 1px solid var(--hairline);
 }
+/* Фильтры шапок над библиотекой модов: к модам они не относятся */
+.catalog__filters.is-off { display: none; }
 
 .catalog__grid {
   flex: 1;

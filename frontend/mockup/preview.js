@@ -19,7 +19,7 @@ import { SINGLE_TEX } from './album.js';
 import { modeControls, restoreBadges } from './controls.js';
 import { syncPaint } from './paint.js';
 import { hideWarpaint, warpaintPreview } from './warpaint.js';
-import { closeParts, bindParts, refreshParts } from './parts.js';
+import { closeParts, bindParts, syncParts } from './parts.js';
 import { updateDockSummary } from './build.js';
 import { refreshNormal } from './normals.js';
 import { showFit, showDecorFit, showDecorBends, dropFitSave, bindFitViewer, isFitOn }
@@ -28,7 +28,8 @@ import { hatModels, showHatClasses, showHatStyles, markEditedStyles } from './pr
 import { showMaterials, setCardTitles } from './preview-frames.js';
 import { showBodygroups, decorFittable, showFestive, forgetDecor, showSkins, showStyleBar }
   from './preview-variants.js';
-import { resetView, forgetSpecialScene, applySpecialTexture } from './preview-scenes.js';
+import { resetView, forgetSpecialScene, applySpecialTexture, showModSky }
+  from './preview-scenes.js';
 
 // Области превью - свои модули: шапки (preview-hats), карточки альбома
 // (preview-frames), ряды вариантов модели (preview-variants), сцены кадра
@@ -176,6 +177,18 @@ export let lastModel = null;
 export async function showModel(ev) {
   const w = viewer();
   if (!w) { stage.frame.addEventListener('load', () => showModel(ev), { once: true }); return; }
+  // Мод из одних текстур, чьей модели нет и в игре: правят его в альбоме.
+  // Текстуры моделей, которых игра не рисует, - мод от старой версии предмета
+  if (!ev.obj) {
+    if (w.showNoModel) {
+      w.showNoModel(t(ev.unused
+        ? 'Эти текстуры игра не рисует ни на одной модели - в игре мод ничего не изменит'
+        : 'В моде нет модели - текстуры правятся в альбоме'));
+    }
+    say('');
+    refreshView();
+    return;
+  }
 
   try {
     const obj = await (await fetch(api.fileUrl(ev.obj))).text();
@@ -402,6 +415,7 @@ export function applyView(st) {
   showDecorFit(st.decor_fit || null, Boolean(st.festive) && work.dataset.scene === 'item'
                                      && decorFittable(st));
   showDecorBends(st.decor_bends || []);
+  showModSky(st);
   withViewer((w) => w.setDecorOverrides && w.setDecorOverrides(Object.fromEntries(
     Object.entries(st.decor_textures || {}).map(([mesh, teams]) => [mesh, {
       red: (teams.red || []).map(api.fileUrl),
@@ -521,7 +535,7 @@ document.querySelector('.teams').addEventListener('click', async (e) => {
     : await api.setAustralium(!btn.classList.contains('is-active')));
   // Части красят то, что в кадре: с австралием - его карточку. Полоса
   // должна показать её покраску, а не главной
-  if (!document.getElementById('partsbar').hidden) await refreshParts();
+  await syncParts();
 });
 
 // «Прочее» и «Сделать командным»: состояние меняет Python, страница

@@ -24,12 +24,7 @@ python -m venv .venv
 .venv\Scripts\python main.py
 ```
 
-`requirements.txt` holds what the app needs at runtime: pywebview, Pillow, vpk, srctools and NumPy. `requirements-dev.txt` adds the development tools on top: PyInstaller, coverage, vulture and ruff.
-
-Two packages are optional:
-
-- `vtf2img` converts extracted textures to PNG, TGA or JPG (**Settings → Extraction format**). Without it, extraction keeps the VTF and writes a note to the log.
-- `pytest` runs the test suite with the fixtures from `tests/conftest.py`, which redirect temporary files and drafts into a throwaway folder.
+`requirements.txt` holds what the app needs at runtime: pywebview, Pillow, vpk, srctools and NumPy. `requirements-dev.txt` adds the development tools on top: PyInstaller, pytest, coverage, vulture and ruff. The tests run with the fixtures from `tests/conftest.py`, which redirect temporary files and drafts into a throwaway folder.
 
 ### Bundled tools
 

@@ -327,6 +327,33 @@ export function applySpecialTexture(textures) {
 }
 
 /** Небо: шесть граней кубмапой вместо модели */
+//: Какие картинки сейчас на небе мода: applyView зовут после каждого
+//: действия, а грузить шесть граней заново ради этого незачем
+let modSkyKey = '';
+
+/**
+ * Мод неба из VPK: кубмапа из картинок его карточек
+ *
+ * Грани - это карточки альбома мода (`mod_sky` - какая на какой). Картинка
+ * берётся та, что сейчас на карточке: своя, если её заменили, иначе мода -
+ * поэтому замена видна на небе сразу
+ */
+export function showModSky(st) {
+  const sky = st.mod_sky || {};
+  const faces = Object.fromEntries(Object.entries(sky)
+    .map(([face, card]) => [face, (st.textures || {})[card]])
+    .filter(([, path]) => path));
+  const key = JSON.stringify(faces);
+  if (!Object.keys(faces).length || work.dataset.scene !== 'item') {
+    modSkyKey = '';
+    return;
+  }
+  if (key === modSkyKey) return;
+  modSkyKey = key;
+  withViewer((w) => w.loadSkybox(
+    Object.fromEntries(Object.entries(faces).map(([f, p]) => [f, api.fileUrl(p)]))));
+}
+
 export function showSkybox(ev) {
   const faces = (ev && ev.faces) || {};
   const names = Object.keys(faces);

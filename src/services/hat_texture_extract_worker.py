@@ -276,8 +276,11 @@ class HatTextureExtractWorker(BaseWorker):
         converted = TF2VPKExtractService._convert_vtf_to_image(
             vtf_path, self._export, self._fmt
         )
+        if not converted:
+            # Не перевелось - отдаём хотя бы VTF, а не удаляем его
+            return vtf_path
         try:
             os.remove(vtf_path)
         except OSError:
             pass
-        return converted or vtf_path
+        return converted

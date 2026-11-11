@@ -33,7 +33,7 @@ from src.data import taunt_scenes
 from src.data.viewmodel_anims import CLASS_MODEL_STEM
 from src.services import anim_store
 from src.services import model_decompile_service as mds
-from src.services import smd_service, viewmodel_animation, viewmodel_pose
+from src.services import scene_textures, smd_service, viewmodel_animation, viewmodel_pose
 from src.services import weapon_anim_catalog as anim_catalog
 from src.services.base_worker import BaseWorker, Signal
 from src.services.game_vpk_reader import GameVpkReader
@@ -475,25 +475,16 @@ class TauntPreviewWorker(BaseWorker):
         """Текстуры обеих частей сцены и сама сцена"""
         from src.services.viewmodel_worker import _cdmaterials, _scene_materials
 
-        resolver = MaterialResolver(reader, self._preview_dir)
         # В сцене с персонажем реквизит идёт «оружием», а персонаж «руками».
         # Без персонажа реквизит остаётся единственным мешем - то есть тем же
         # «руками», и материалы приходят вторым списком
         weapon_names, arms_names = _scene_materials(scene)
         prop_names, player_names = ((weapon_names, arms_names) if player_dir
                                     else (arms_names, []))
-
-        textures: dict = {}
-        hints: dict = {}
-        for names, directory in ((prop_names, prop_dir),
-                                 (player_names, player_dir)):
-            if not names or not directory:
-                continue
-            cdmaterials = _cdmaterials(directory)
-            textures.update({name: png for name, png
-                             in resolver.texture_map(names, cdmaterials).items()
-                             if png})
-            hints.update(resolver.render_map(names, cdmaterials))
+        textures, hints = scene_textures.resolve(
+            MaterialResolver(reader, self._preview_dir),
+            [(names, _cdmaterials(d)) for names, d in ((prop_names, prop_dir),
+                                                       (player_names, player_dir)) if d])
 
         # Свойства материалов - ДО сцены: вьювер применит их по мере прихода
         # картинок, а не пересоберёт материалы дважды

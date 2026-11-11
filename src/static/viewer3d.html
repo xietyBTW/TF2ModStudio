@@ -1982,6 +1982,13 @@ window.resetViewer = function() {
   setStatus(_t.select_weapon);
 };
 
+/** Модели нет (мод из одних текстур скайбокса, спрея): кадр пуст и говорит
+ *  об этом, а не «выберите предмет» */
+window.showNoModel = function(text) {
+  window.resetViewer();
+  setStatus(text);
+};
+
 // Skybox
 
 let _skyboxTexture = null;
@@ -3190,7 +3197,7 @@ function _tellSample(hex, e) {
   box.addEventListener('pointercancel', e => finish(e, false), true);
 })();
 
-// Клавиши отмены принадлежат СТРАНИЦЕ, а фокус после щелчка по модели
+// Отмена, Tab и буквы инструментов частей - СТРАНИЦЕ, а фокус после щелчка
 // достаётся iframe - и Ctrl+Z, обещанный подсказкой режима частей, молча не
 // работал, пока не щёлкнешь мимо кадра. Своей обработки не заводим: история
 // покраски живёт на странице, здесь только передача нажатия
@@ -3203,7 +3210,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape' && _isolated) { _endIsolation(); return; }
-  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!(e.ctrlKey || e.metaKey) && !/^(Tab|KeyI|KeyB|KeyC|KeyM)$/.test(e.code)) return;
   if (typeof window.onPartsKey === 'function') window.onPartsKey(e);
 });
 

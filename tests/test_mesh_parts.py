@@ -1511,6 +1511,59 @@ class SessionPartsTests(unittest.TestCase):
         self.assertNotIn((0, 255, 0), pixels())
         self.assertIn('error', self.session.parts.move_part_texture('weapon', 0, 0, 7))
 
+    def test_the_whole_stack_is_replaced_in_one_step(self):
+        """Окно посадки сдаёт стопку целиком: порядок, посадка и якорь - как
+        прислали, одна склейка; пустая стопка снимает все картинки"""
+        from src.domain.preview.part_specs import image_list as _image_specs
+
+        green = os.path.join(self.tmp, 'green.png')
+        Image.new('RGBA', (8, 8), (0, 255, 0, 255)).save(green)
+        self.session.parts.set_part_texture('weapon', 0, self.patch)
+        anchor = [0.1, 0.1, 0.4, 0.4]
+        old = dict(_image_specs(self.session.preview.part_textures['weapon'][0])[0])
+        res = self.session.parts.set_part_layers('weapon', 0, [
+            {'path': green, 'fit': 'cover', 'scale': 0.5},
+            {**old, 'anchor': anchor, 'angle': 90},
+        ])
+        self.assertNotIn('error', res)
+        stack = _image_specs(self.session.preview.part_textures['weapon'][0])
+        self.assertEqual([s['path'] for s in stack], [green, self.patch])
+        self.assertEqual(stack[0]['fit'], 'cover')
+        self.assertAlmostEqual(stack[0]['scale'], 0.5)
+        self.assertEqual(stack[1]['anchor'], anchor)
+        self.assertAlmostEqual(stack[1]['angle'], 90.0)
+        pixels = {c for _, c in Image.open(self._painted()).convert('RGB').getcolors(65536)}
+        self.assertIn((255, 0, 0), pixels, 'верхний слой не лёг')
+
+        self.assertIn('error', self.session.parts.set_part_layers(
+            'weapon', 0, [{'path': os.path.join(self.tmp, 'нет.png')}]))
+        self.assertIn('error', self.session.parts.set_part_layers('weapon', 0, {'path': green}))
+        self.assertIn('error', self.session.parts.set_part_layers('weapon', 0, ['x']))
+        self.assertEqual(len(_image_specs(self.session.preview.part_textures['weapon'][0])), 2,
+                         'отказ испортил стопку')
+        self.session.parts.set_part_layers('weapon', 0, [])
+        self.assertNotIn(0, self.session.preview.part_textures.get('weapon', {}))
+
+    def test_placement_window_base_without_any_layer_of_the_part(self):
+        """Окно рисует стопку само: в основе нет ни одной картинки части, а
+        соседняя часть видна"""
+        Image.new('RGBA', (64, 64), (0, 0, 0, 255)).save(self.base)
+        green = os.path.join(self.tmp, 'green.png')
+        blue = os.path.join(self.tmp, 'blue.png')
+        Image.new('RGBA', (8, 8), (0, 255, 0, 255)).save(green)
+        Image.new('RGBA', (8, 8), (0, 0, 255, 255)).save(blue)
+        self.session.parts.set_part_texture('weapon', 0, self.patch)
+        self.session.parts.set_part_texture('weapon', 0, blue)
+        self.session.parts.set_part_texture('weapon', 1, green)
+        shape = self.session.parts.part_shape('weapon', 0, whole=True)
+        self.assertEqual(len(shape['images']), 2)
+        self.assertIsNone(shape['image'])
+        self.assertEqual(len(shape['part_bbox']), 4)
+        colors = {c for _, c in Image.open(shape['base']).convert('RGB').getcolors(65536)}
+        self.assertIn((0, 255, 0), colors, 'соседняя часть не видна')
+        self.assertNotIn((255, 0, 0), colors)
+        self.assertNotIn((0, 0, 255), colors)
+
     def test_a_cut_moves_every_layer(self):
         from src.domain.preview.part_specs import image_list as _image_specs
 

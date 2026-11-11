@@ -32,7 +32,7 @@ export const EN = {
   'Выберите эффект': 'Select an effect',
   'Извлечь модель (SMD)': 'Extract model (SMD)',
   'Экспорт UV-шаблона (PNG)': 'Export UV template (PNG)',
-  'Извлечь оригинальную текстуру': 'Extract original texture',
+  'Экспортировать оригинальную текстуру': 'Export original texture',
   'Собрать несколько VPK в один': 'Merge several VPKs into one',
   'Открыть PCF с диска…': 'Open PCF from disk…',
   'Сохранить PCF…': 'Save PCF…',
@@ -179,8 +179,6 @@ export const EN = {
   // Библиотека модов и работы
   'Свои работы и моды из VPK. Предмет из списка оружия открывается игровым - сохранённая работа открывается отсюда.':
     'Your saved works and VPK mods. An item picked from the weapons list opens as it is in the game - a saved work opens from here.',
-  'Открыть VPK-мод…': 'Open a VPK mod…',
-  'файл с диска': 'file from disk',
   'Убрать из библиотеки (исходный файл останется)':
     'Remove from the library (the source file stays)',
   'Убрать мод из библиотеки': 'Remove the mod from the library',
@@ -195,6 +193,9 @@ export const EN = {
   'Открываю работу…': 'Opening the work…',
   'Разбор {}…': 'Reading {}…',
   'мод из VPK': 'VPK mod',
+  'мод из VPK: {}': 'VPK mod: {}',
+  'Шапки игры': 'Game cosmetics',
+  'Моды и работы': 'Mods and works',
   'Работа сохранена - она в разделе «Кастомный мод»':
     'Work saved - it is in the “Custom mod” section',
   'Отложенные правки вернулись': 'The edits you set aside are back',
@@ -282,9 +283,27 @@ export const EN = {
   'Игра и файлы': 'Game and files',
   'Работа и сборка': 'Work and build',
   'Обслуживание': 'Maintenance',
+  'Картинка на часть (I)': 'Image on a part (I)',
+  'Кисть: красить части цветом (B)': 'Brush: paint parts with a color (B)',
+  'Ножницы: дробить куски мельче (C)': 'Scissors: split pieces into smaller ones (C)',
+  'Материал: свой VMT, карты и флаги для частей (M)':
+    'Material: own VMT, maps and flags for parts (M)',
+  'Случайные цвета': 'Random colors',
+  'Снять всю покраску': 'Remove all painting',
+  'О программе': 'About',
+  'Связаться с автором': 'Contact the author',
+  'Профиль Steam': 'Steam profile',
+  'Скопировать ник': 'Copy username',
+  'Ник скопирован': 'Username copied',
+  'Нашли ошибку?': 'Found a bug?',
+  'Скопируйте сведения и пришлите автору вместе с тем, что делали и что пошло не так.':
+    'Copy the details and send them to the author along with what you did and what went wrong.',
+  'Скопировать сведения': 'Copy details',
+  'Сведения скопированы': 'Details copied',
+  'Написать на GitHub': 'Report on GitHub',
   'Папка игры': 'Game folder',
   'Папка экспорта': 'Export folder',
-  'Формат извлечения': 'Extraction format',
+  'Формат экспорта текстур': 'Texture export format',
   'Язык приложения': 'Application language',
   'Тема приложения': 'Application theme',
   'Обход sv_pure': 'sv_pure bypass',
@@ -394,6 +413,12 @@ export const EN = {
     'Bigger is sharper up close but makes the mod heavier. Crit text in the game is 256.',
   'Разрешение {} возьмёт следующая картинка': 'The next image will use {}',
   'Вернуть текстуру игры': 'Bring back the game texture',
+  'Экспортировать текстуру': 'Export texture',
+  'Текстура сохранена в папку экспорта: {}': 'Texture saved to the export folder: {}',
+  'У этой карточки нет текстуры': 'This card has no texture',
+  'У этой карточки нет оригинала игры': 'This card has no game original',
+  'У этого материала нет текстуры': 'This material has no texture',
+  'Не удалось сохранить текстуру: {}': "Couldn't save the texture: {}",
   'Текстура из эффектов игры': 'Texture from the game effects',
   'Такой материал уже есть в игре, поэтому мод работает в казуале.':
     'This material already exists in the game, so the mod works in casual.',
@@ -570,6 +595,58 @@ export const EN = {
   'Гирлянду этой версии не удалось загрузить': 'Could not load the lights for this version',
   'У этого предмета такой версии нет': 'This item has no such version',
   'Подогнать гирлянду': 'Fit the lights',
+  'Обтянуть модель': 'Wrap the model',
+  'Посадить гирлянду на свою модель так, как она сидит на стоковой':
+    'Seat the lights on your model the way they sit on the stock one',
+  'Гирлянда садится на модель…': 'Seating the lights on the model…',
+  'Гирлянда обтянула модель': 'The lights now wrap the model',
+  'Обтянуть можно только свою модель': 'Only a custom model can be wrapped',
+  'Стоковая модель оружия не нашлась': 'The stock weapon model was not found',
+  'Гирлянду не удалось обтянуть': 'Could not wrap the lights onto the model',
+  'Какую модель показать?': 'Which model to show?',
+  'В моде несколько моделей. В сборку он уйдёт целиком - это только то, что будет в кадре':
+    'The mod has several models. It is built in full either way - this is only what the view shows',
+  'Гирлянды': 'Festive lights',
+  'Персонажи': 'Characters',
+  'Снаряды': 'Projectiles',
+  'Подбираемое': 'Pickups',
+  'В моде нет модели - текстуры правятся в альбоме': 'The mod has no model - edit its textures in the album',
+  'Эти текстуры игра не рисует ни на одной модели - в игре мод ничего не изменит':
+    'The game draws these textures on no model - the mod will change nothing in game',
+  'VPK не открылся': 'The VPK could not be opened',
+  'Открыть мод…': 'Open a mod…',
+  'VPK или ZIP': 'VPK or ZIP',
+  'Открыть папку мода…': 'Open a mod folder…',
+  'как в tf/custom': 'as in tf/custom',
+  'Упаковка мода…': 'Packing the mod…',
+  'Какой мод открыть?': 'Which mod to open?',
+  'Внутри несколько модов - все они уже в библиотеке': 'There are several mods inside - all of them are in the library now',
+  'Нужен VPK, ZIP или папка мода': 'A VPK, a ZIP or a mod folder is needed',
+  'Внутри нет ни VPK, ни папки мода (materials, models, sound...)': 'There is no VPK or mod folder inside (materials, models, sound...)',
+  'В архиве слишком много файлов': 'The archive has too many files',
+  'Архив распаковывается в слишком большой объём': 'The archive unpacks to too much data',
+  'Не удалось упаковать мод в VPK': 'Could not pack the mod into a VPK',
+  'ZIP не открылся: {}': 'The ZIP could not be opened: {}',
+  'Путь в архиве ведёт наружу: {}': 'A path in the archive leads outside: {}',
+  'Не скопировать {}': 'Could not copy {}',
+  'Не скопировать {}.vpk': 'Could not copy {}.vpk',
+  'Файл или папка не найдены': 'File or folder not found',
+  'Собрать несколько модов в один': 'Merge several mods into one',
+  'Отметьте моды из папки экспорта. Если два мода меняют одно и то же, останется версия того, что выше в списке. Порядок меняется стрелками.':
+    'Mark mods from the export folder. If two mods change the same thing, the one higher in the list wins. Change the order with the arrows.',
+  'Имя файла': 'File name',
+  'Отмечено: {}': 'Marked: {}',
+  'Выше - главнее': 'Higher wins',
+  'Ниже': 'Lower',
+  '{} файлов': '{} files',
+  'Пересечений нет - войдёт всё': 'No overlaps - everything goes in',
+  'Моды меняют одно и то же': 'The mods change the same thing',
+  '{}: останется из {}': '{}: kept from {}',
+  '{}: модель лежит по разным путям, в игре будет видна одна':
+    '{}: the model sits at different paths, the game will show only one',
+  'Для объединения нужно хотя бы два собранных мода': 'Merging needs at least two built mods',
+  'Нет треугольников у стоковой или своей модели': 'The stock or custom model has no triangles',
+  'Нет треугольников у гирлянды': 'The lights model has no triangles',
   'Гнуть: тяните гирлянду мышью, колесо - радиус': 'Bend: drag the lights with the mouse, wheel changes the radius',
   'Гнуть': 'Bend',
   'Выпрямить: убрать все изгибы гирлянды': 'Straighten: remove all bends of the lights',
@@ -711,11 +788,36 @@ export const EN = {
   'Выделено: {}': 'Selected: {}',
   'Нарезать по островам': 'Split by UV islands',
   // Посадка картинки: отражение, копия, сетка
-  'Сетка': 'Mesh',
-  'Показать сетку треугольников детали вместо её контура - на мелкой детали видно, куда именно ляжет картинка': 'Show the part’s triangle mesh instead of its outline - on a small part you see exactly where the picture lands',
-  'Тяни мышью · размер - за квадратики, за край дальше противоположного - отражение · поворот - за маркер или стрелками · колесо - ближе': 'Drag to move · size - by the squares, past the opposite edge - mirror · rotate - by the handle or arrow keys · wheel - closer',
-  'Скопировать картинку с посадкой (Ctrl+C)': 'Copy the picture with its placement (Ctrl+C)',
-  'Вставить скопированную картинку поверх (Ctrl+V)': 'Paste the copied picture on top (Ctrl+V)',
+  // Окно картинок на части
+  'Картинки на части': 'Images on the part',
+  'Колесо - ближе, Ctrl+колесо - размер, стрелки - поворот':
+    'Wheel - zoom, Ctrl+wheel - size, arrows - rotate',
+  'Отпустите - ляжет новым слоем': 'Drop to add as a new layer',
+  'Точные значения': 'Exact values',
+  'Ширина, %': 'Width, %',
+  'Высота, %': 'Height, %',
+  'Угол, °': 'Angle, °',
+  'Вправо, %': 'Right, %',
+  'Вниз, %': 'Down, %',
+  'В текстуру ляжет по «Готово»': 'Goes into the texture on Done',
+  'Приблизить к части': 'Zoom to the part',
+  'Без игровой текстуры': 'Without the game texture',
+  'Сетка треугольников вместо контура': 'Triangle mesh instead of the outline',
+  'Сетка треугольников': 'Triangle mesh',
+  'Повернуть на -90°': 'Rotate by -90°',
+  'Повернуть на 90°': 'Rotate by 90°',
+  'Отразить по горизонтали': 'Flip horizontally',
+  'Отразить по вертикали': 'Flip vertically',
+  'По центру части': 'Center on the part',
+  'Сбросить посадку: целиком, без поворота и сдвига':
+    'Reset placement: contain, no rotation or offset',
+  'Вставить скопированную поверх (Ctrl+V)': 'Paste the copied image on top (Ctrl+V)',
+  'Вставить скопированную': 'Paste the copied image',
+  'Добавить картинку': 'Add an image',
+  'Заменить файл, посадка останется': 'Replace the file, keeping the placement',
+  'Скопировать с посадкой (Ctrl+C)': 'Copy with placement (Ctrl+C)',
+  'Убрать слой': 'Remove the layer',
+  'Треугольников в развёртке: {}': 'Triangles in the UV layout: {}',
   'Минус - отражение по ширине': 'Minus mirrors horizontally',
   'Минус - отражение по высоте': 'Minus mirrors vertically',
   'Вставляю…': 'Pasting…',
@@ -723,10 +825,8 @@ export const EN = {
   'Тяни за заголовок - двигать, за уголок справа снизу - менять размер. Двойной щелчок - вернуть на место': 'Drag the title to move, the bottom-right corner to resize. Double-click puts it back',
   'Картинка вставлена - поправить посадку можно в «…»': 'Picture pasted - adjust its placement with “…”',
   'Не удалось перейти к материалу выделения - попробуй ещё раз': 'Could not switch to the selection’s material - try again',
-  'Обводить': 'Outline',
   'Толщина': 'Width',
   'Отменить': 'Undo',
-  'Случайно': 'Random',
   'Убрать всё': 'Clear all',
   'Свой цвет': 'Custom color',
   'Красить переходом из первого цвета во второй':
@@ -735,16 +835,12 @@ export const EN = {
   'Направление перехода - потяни или стрелками':
     'Gradient direction - drag it or use the arrows',
   'Направление перехода: {}°': 'Gradient direction: {}°',
-  'Щёлкать по кускам модели, чтобы дробить их мельче':
-    'Click parts of the model to cut them finer',
   'Обвести края покрашенных частей': 'Outline the edges of painted parts',
   'Цвет окантовки': 'Outline color',
   'Эта модель - один цельный кусок, делить нечего':
     'This model is a single solid piece, there is nothing to split',
   'Щёлкай по частям модели - покрасятся в этот цвет':
     'Click the parts of the model to paint them this color',
-  'Положить картинку на часть': 'Place an image on the part',
-  'Красить части выбранным цветом': 'Paint parts with the chosen color',
   'Щёлкай по частям модели или тащи на них картинку - она ляжет на кусок':
     'Click the parts of the model or drag an image onto them - it will land '
     + 'on that piece',
@@ -763,7 +859,6 @@ export const EN = {
   'Часть': 'Part',
   'Часть ': 'Part ',
   ' развёртки': ' of the UV map',
-  'часть {} · развёртка {} тр.': 'part {} · UV {} tri',
   'развёртки': 'of the UV map',
   'Делит развёртку с другими: в игре они покрасятся вместе, разными их сделать нельзя':
     'Shares the UV map with others: in the game they are painted together and cannot be made different',
@@ -771,14 +866,9 @@ export const EN = {
   'Картинки части: посадка, замена, ещё одна':
     'Images on the part: placement, replace, one more',
   'Такой картинки на части нет': 'There is no such image on the part',
-  'Заменить…': 'Replace…',
-  '+ Добавить': '+ Add',
-  'Другой файл на место этой картинки, посадка останется':
-    'Another file in place of this image; the placement stays',
-  'Снять эту картинку с части': 'Take this image off the part',
+  'Неверный список картинок': 'Invalid list of images',
   'Ещё одна картинка поверх': 'One more image on top',
   'Убираю…': 'Removing…',
-  'Переставляю…': 'Reordering…',
   'поверх': 'on top',
   'внизу': 'bottom',
   'Вернуть этой части игровую текстуру':
@@ -811,33 +901,15 @@ export const EN = {
   'Целиком': 'Whole',
   'Заполнить': 'Fill',
   'Растянуть': 'Stretch',
-  'Ширина': 'Width',
-  'Высота': 'Height',
-  'Приблизить': 'Zoom',
-  'Без игровой': 'No game texture',
-  'Размер, %': 'Size, %',
-  'Посадка картинки': 'Image placement',
   'Слои': 'Layers',
-  'Верхний лежит поверх остальных. Тяни строку, чтобы переставить':
-    'The top one lies over the rest. Drag a row to reorder',
   'Показ': 'View',
-  'Приблизить холст к куску: класть картинку, глядя на всю текстуру, - целиться в спичку с другого конца комнаты':
-    'Zoom the canvas to the piece: placing an image while looking at the whole texture is like aiming at a match from across the room',
-  'Спрятать игровую текстуру: на пёстрой не видно границ своей картинки':
-    'Hide the game texture: on a busy one the edges of your image are hard to see',
   'Целиком в место части, с сохранением пропорций':
     'Whole into the part area, proportions kept',
   'Заполнить место части, края уйдут под маску':
     'Fill the part area, the edges go under the mask',
   'Растянуть по месту части, пропорции не сохраняются':
     'Stretch over the part area, proportions are not kept',
-  'Угол': 'Angle',
-  'Сдвиг, % места': 'Offset, % of the area',
-  'Вправо': 'Right',
-  'Вниз': 'Down',
   'Сбросить посадку': 'Reset placement',
-  'Вернуть посадку к исходной: целиком, без поворота и сдвига':
-    'Back to the initial placement: whole, no rotation, no offset',
   'Отменить правку (Ctrl+Z)': 'Undo (Ctrl+Z)',
   'Вернуть правку (Ctrl+Y)': 'Redo (Ctrl+Y)',
 
@@ -863,11 +935,7 @@ export const EN = {
   'Извлечение текстуры…': 'Extracting the texture…',
   'В папке экспорта нет собранных модов':
     'There are no built mods in the export folder',
-  'Какие моды объединить': 'Which mods to merge',
   'Далее': 'Next',
-  'Имя выходного файла': 'Output file name',
-  'Моды трогают одно оружие': 'The mods touch the same weapon',
-  '{}\nОдин перекроет другой. Продолжить?': '{}\nOne will override the other. Continue?',
   'Объединение…': 'Merging…',
   'Не получилось': 'It did not work out',
 
@@ -925,7 +993,6 @@ export const EN = {
   'Свои материалы частей не перенесены на модель класса {}': 'Own part materials didn’t carry over to the {} class model',
   'Свои материалы частей неоткрытого стиля в мод не попали: их собирает только открытый стиль': 'Own part materials of a style that is not open did not go into the mod: only the open style builds them',
   'Текстура материала части «{}» не создана: в игре он будет без неё': 'The texture of part material “{}” was not created: it will be missing in game',
-  'Отдать части в свой материал: свой VMT, карты и флаги': 'Give parts their own material: own VMT, maps and flags',
   'Свой VMT, карты и флаги материала - на его карточке в альбоме': 'The material’s own VMT, maps and flags are on its card in the album',
   'Новый материал': 'New material',
   'Вернуть все части материала в общий': 'Return all parts of this material to the shared one',
@@ -951,6 +1018,7 @@ export const EN = {
   'Источник': 'Source',
   'Все эффекты игры': 'All game effects',
   'Без предмета': 'No item',
+  'Без названия': 'Unnamed',
   'Попадания и взрывы': 'Impacts and explosions',
   'Анюжуалы': 'Unusuals',
   'Режимы и правила': 'Modes and rules',
@@ -995,8 +1063,6 @@ export const EN = {
   '- не выбрана -': '- none -',
   'Правка отменена': 'Edit undone',
   'Правка возвращена': 'Edit redone',
-  'В этой системе нет модуля для этого параметра, а создавать его нельзя: лишний эмиттер задваивает залп.':
-    'This system has no module for that parameter, and creating one is not allowed: an extra emitter doubles the burst.',
   'не получилось': 'it did not work out',
   'В какую группу': 'Into which group',
   'operators - что делает с частицей по ходу жизни':
@@ -1011,6 +1077,30 @@ export const EN = {
   'Сверху - ходовые, ниже всё, что встречается в эффектах игры.':
     'The common ones are on top, below is everything found in the game effects.',
   'Добавить': 'Add',
+  'Нет в системе': 'Not in this system',
+  'Мельче': 'Smaller',
+  'Крупнее': 'Bigger',
+  'Плотность': 'Density',
+  'Реже': 'Sparser',
+  'Гуще': 'Denser',
+  'Темп': 'Tempo',
+  'Медленнее': 'Slower',
+  'Быстрее': 'Faster',
+  'Весь эффект крупнее или мельче: размер частиц, область, скорости и силы вместе': 'Make the whole effect bigger or smaller: particle size, area, speeds and forces together',
+  'Больше или меньше частиц во всём эффекте: темп, залпы и потолок вместе': 'More or fewer particles in the whole effect: rate, bursts and cap together',
+  'Весь эффект быстрее или медленнее: время жизни, скорости и ускорения согласованно': 'Make the whole effect faster or slower: lifetime, speeds and accelerations in step',
+  'В системе': 'In system',
+  'Изменённые': 'Changed',
+  'Только то, что уже есть в этой системе': 'Only what this system already has',
+  'Только то, что отличается от игры': 'Only what differs from the game',
+  'Пояснения': 'Explanations',
+  'Короткое описание под каждой крутилкой': 'A short description under every control',
+  'изменено: {}': 'changed: {}',
+  'Эта система не отличается от игры.': 'This system matches the game.',
+  'Под фильтр ничего не подходит.': 'Nothing matches the filter.',
+  'Вернуть значение из игры': 'Restore the value from the game',
+  'Отличается от игры': 'Differs from the game',
+  'В этой системе нет модуля для этого параметра. Отсюда его не добавить: второй эмиттер или рендерер задвоил бы эффект.': 'This system has no module for this setting. It cannot be added here: a second emitter or renderer would double the effect.',
   'Удалить модуль?': 'Delete the module?',
   'Удалить': 'Delete',
   'Раскройте модуль в экспертном режиме - параметр добавляется в него':
@@ -1064,12 +1154,9 @@ export const EN = {
   'Имя копии': 'Name of the copy',
   'Новое имя системы': 'New system name',
   'Дочерние системы': 'Child systems',
-  'Пока ни одной.': 'None yet.',
   'Подцепить существующую…': 'Attach an existing one…',
-  'Отцепить…': 'Detach…',
   'Какую систему подцепить': 'Which system to attach',
   'Подцепить': 'Attach',
-  'Какую отцепить': 'Which one to detach',
   'Отцепить': 'Detach',
   'Слой добавлен - задайте ему параметры и текстуру':
     'Layer added - give it parameters and a texture',
@@ -1083,13 +1170,14 @@ export const EN = {
   'Удалить систему?': 'Delete the system?',
   'Копировать все параметры системы': 'Copy every parameter of the system',
   'Вставить параметры': 'Paste parameters',
-  'Добавить слой со своей текстурой…': 'Add a layer with a custom texture…',
+  'Новый слой под свою картинку': 'New layer for your own image',
   'Переименовать систему…': 'Rename the system…',
   'Дублировать систему…': 'Duplicate the system…',
-  'Добавить дочернюю…': 'Add a child…',
   'Удалить систему': 'Delete the system',
   'Перейти к файлу': 'Go to file',
-  'Цвета текстуры (снять подкраску)': 'Texture colors (remove the tint)',
+  'Родные цвета текстуры': 'Native texture colors',
+  'Убирает подкраску у системы и её дочерних: частицы будут цвета самой текстуры':
+    'Removes the tint from the system and its children: particles take the colors of the texture itself',
   'Отцепить дочернюю': 'Detach the child',
   'Копировать группу «{}»': 'Copy the “{}” group',
   'Добавить модуль…': 'Add a module…',
@@ -1175,6 +1263,9 @@ export const EN = {
   'PCF не загружен': 'No PCF is loaded',
   'PCF {} не разобран: {}': 'PCF {} was not parsed: {}',
   'неизвестный параметр: {}': 'unknown parameter: {}',
+  'неизвестная правка: {}': 'unknown edit: {}',
+  'в эффекте нечего менять': 'nothing to change in this effect',
+  'не удалось убрать модуль {}': 'could not remove module {}',
   'система не найдена: {}': 'system not found: {}',
   'модуль не найден': 'module not found',
   'параметра нет: {}': 'no such parameter: {}',
@@ -1372,8 +1463,8 @@ export const EN = {
     'Build',
   'Соберите мод и положите файл в папку tf/custom игры.':
     'Build the mod and put the file into the game\'s tf/custom folder.',
-  'Извлечь оригинальную текстуру, UV-шаблон и прочее.':
-    'Extract the original texture, a UV template and more.',
+  'Экспортировать оригинальную текстуру, UV-шаблон и прочее.':
+    'Export the original texture, a UV template and more.',
   'Путь к игре, язык и тема. Здесь же можно пройти обучение ещё раз.':
     'Game path, language and theme. You can replay the tutorial here too.',
   'Остальное подскажу по ходу, когда дойдёте.':
@@ -1382,8 +1473,8 @@ export const EN = {
     'The model is split into parts. Hover a number to see where it is.',
   'Щёлкните по части, чтобы положить на неё картинку.':
     'Click a part to put an image on it.',
-  'Красит часть в выбранный цвет.':
-    'Paints a part with the chosen color.',
+  'Красит часть в выбранный цвет. В настройках кисти там же окантовка.':
+    'Paints a part with the chosen color. The outline is in the brush options too.',
   'Цвет':
     'Color',
   'Выбор цвета. Там же градиент и пипетка.':
@@ -1392,14 +1483,10 @@ export const EN = {
     'Scissors',
   'Делят часть на части поменьше.':
     'Split a part into smaller ones.',
-  'Обводит края покрашенных частей.':
-    'Outlines the edges of painted parts.',
   'Отдаёт части в свой материал: свой VMT, карты и флаги.':
     'Moves parts into a material of their own: own VMT, maps and flags.',
-  'Кубик и ластик':
-    'Die and eraser',
-  'Случайная раскраска и сброс. Ctrl+Z отменяет.':
-    'Random colors and reset. Ctrl+Z undoes.',
+  'Отмена, случайная раскраска и сброс.':
+    'Undo, random colors and reset.',
   'Выйти из режима частей.':
     'Leave parts mode.',
   'Подгоните свою модель под полупрозрачный оригинал. G - двигать, R - вращать, S - масштаб.':

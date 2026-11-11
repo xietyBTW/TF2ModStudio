@@ -21,6 +21,7 @@ import { buildParams, checkName } from './build.js';
 import { openMaterialMaps } from './maps.js';
 import { openVmtEditor } from './vmt.js';
 import { applyView, markEditedStyles } from './preview.js';
+import { syncParts } from './parts.js';
 import { syncNormal } from './normals.js';
 
 
@@ -76,6 +77,11 @@ export let modeControls = {};
 
 export function applyControls(c, hasItem = true) {
   modeControls = { ...c, has_item: hasItem };
+  // Выбран ли предмет - признаком на корне: сборка и её сводка читают его, не
+  // импортируя modeControls (модули грузятся по кругу, и при старте
+  // переменной ещё нет)
+  document.documentElement.dataset.item = hasItem ? '1' : '';
+  document.dispatchEvent(new Event('controls:changed'));
   document.querySelectorAll('[data-cond]').forEach((el) => {
     const shown = Boolean(c[COND_KEY[el.dataset.cond]])
       && !MODEL_DRIVEN.has(el.dataset.cond)
@@ -350,6 +356,7 @@ async function restoreWork() {
   // applyView сам пересобирает альбом и через restoreBadges обновляет кнопки
   applyView(res);
   markEditedStyles(res.edited_styles);
+  await syncParts();
   say('Отложенные правки вернулись');
 }
 
@@ -368,6 +375,7 @@ async function forgetWork() {
   const res = await api.forgetWork();
   if (res.error) { sayError(res.error); return; }
   applyView(res);
+  await syncParts();
   say('Правки удалены');
 }
 

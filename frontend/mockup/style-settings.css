@@ -33,7 +33,9 @@
 /* Настройки
    Два столбца полей, дальше галочки и список исключений - тот же порядок,
    что в окне приложения */
-.cfg { width: min(720px, 94vw); }
+/* Ширина - под шесть вкладок в одну строку: на 720 «О программе» уезжала
+   второй строкой */
+.cfg { width: min(800px, 94vw); }
 .cfg__grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -46,7 +48,7 @@
 .cfg__tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 24px;
+  gap: 8px 20px;
   border-bottom: 1px solid var(--hairline-strong);
 }
 .cfg__tabs .underlined { padding-bottom: 9px; margin-bottom: -1px; }

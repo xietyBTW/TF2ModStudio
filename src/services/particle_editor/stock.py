@@ -124,15 +124,22 @@ def stock(pcf, tf2_root_dir: str):
     return svc
 
 
-def stock_diff(pcf, tf2_root_dir: str) -> Dict[str, dict]:
-    """Отличия от игры по системам (см. diff_systems). Пусто - стока нет"""
+def stock_systems(pcf, tf2_root_dir: str) -> Dict[str, dict]:
+    """systems_json игровой версии файла (один раз на файл). Пусто - стока нет"""
     stock = pcf.stock(tf2_root_dir)
     if stock is None:
         return {}
-    cached = pcf._stock_systems
-    if cached is None:
-        cached = pcf._stock_systems = stock.systems_json()
-    return diff_systems(pcf.systems_json(), cached)
+    if pcf._stock_systems is None:
+        pcf._stock_systems = stock.systems_json()
+    return pcf._stock_systems
+
+
+def stock_diff(pcf, tf2_root_dir: str) -> Dict[str, dict]:
+    """Отличия от игры по системам (см. diff_systems). Пусто - стока нет"""
+    systems = stock_systems(pcf, tf2_root_dir)
+    if not systems:
+        return {}
+    return diff_systems(pcf.systems_json(), systems)
 
 
 def revert_system(pcf, tf2_root_dir: str, system_name: str) -> bool:

@@ -14,6 +14,7 @@ import { contextMenu } from '../menu.js';
 import { stage, say, sayError, withParticles, particles } from '../stage.js';
 import { bindAlbum } from '../album.js';
 import { pSystem } from './state.js';
+import { exportItems, runExport } from '../texture-export.js';
 
 // Текстуры эффекта в движке
 // Файл приходит с текстурами только открытого эффекта (см. load_particles):
@@ -93,9 +94,12 @@ export async function materialMenu(e, mat) {
     null,
     { label: t('Разрешение своей картинки: {}').replace('{}', texSize), value: 'size' },
     { label: 'Переименовать материал…', value: 'rename' },
-    { label: 'Вернуть текстуру игры', value: 'reset', disabled: !mat.custom },
+    ...(mat.custom ? [{ label: 'Вернуть текстуру игры', value: 'reset' }] : []),
+    null,
+    ...exportItems(mat.custom),
   ]);
   if (!chosen) return;
+  if (await runExport(chosen, (original) => api.exportParticleMaterial(mat.name, original))) return;
 
   if (chosen === 'image') {
     await applyTexture(mat.name, await chooseImage(), mat.sheet);

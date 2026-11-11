@@ -229,37 +229,21 @@ export const PACTS = {
                          { reselect: name });
   },
 
-  async child() {
-    // Дочернюю можно подцепить и отцепить - обе операции об одном списке
-    const kids = await api.particleChildren(pSystem);
-    const what = await ask({
-      title: 'Дочерние системы',
-      text: kids.length ? kids.map((k) => k.name).join(', ') : 'Пока ни одной.',
-      list: [
-        { label: 'Подцепить существующую…', value: 'add' },
-        ...(kids.length ? [{ label: 'Отцепить…', value: 'remove' }] : []),
-      ],
-      ok: 'Дальше',
+  /** Подцепить готовую систему файла. Окно, а не подменю: систем в файле
+   *  бывают сотни, и в подменю такой список не поместится */
+  async attach() {
+    const child = await ask({
+      title: 'Какую систему подцепить',
+      list: pcfTree.filter((n) => n.key !== pSystem)
+                   .map((n) => ({ label: n.key, value: n.key })),
+      ok: 'Подцепить',
     });
-    if (what === 'add') {
-      const child = await ask({
-        title: 'Какую систему подцепить',
-        list: pcfTree.filter((n) => n.key !== pSystem)
-                     .map((n) => ({ label: n.key, value: n.key })),
-        ok: 'Подцепить',
-      });
-      if (child) await applyStructure(await api.addParticleChild(pSystem, child));
-    } else if (what === 'remove') {
-      const idx = await ask({
-        title: 'Какую отцепить',
-        list: kids.map((k) => ({ label: k.name, value: String(k.index) })),
-        ok: 'Отцепить',
-      });
-      if (idx !== null) {
-        await applyStructure(
-          await api.removeParticleChild(pSystem, Number(idx)));
-      }
-    }
+    if (child) await applyStructure(await api.addParticleChild(pSystem, child));
+  },
+
+  /** Отцепить дочернюю по её номеру у родителя */
+  async unhook(index) {
+    await applyStructure(await api.removeParticleChild(pSystem, Number(index)));
   },
 
   async layer() {
@@ -325,48 +309,71 @@ export function copyItems(label) {
   ];
 }
 
+/** Подменю дочерних систем: новый слой, готовая система файла или отцепить
+ *  одну из своих - сразу списком, без окна */
+async function childrenItem(system) {
+  const kids = await api.particleChildren(system);
+  return {
+    label: 'Дочерние системы',
+    sub: [
+      { label: 'Новый слой под свою картинку', value: 'layer' },
+      { label: 'Подцепить существующую…', value: 'attach' },
+      ...(kids.length ? [{ label: 'Отцепить',
+        sub: kids.map((k) => ({ label: k.name, value: `unhook:${k.index}` })) }] : []),
+    ],
+  };
+}
+
+/** Пункт меню -> действие. У части действий есть аргумент: `unhook:2` */
+async function runAction(chosen) {
+  const [name, arg] = chosen.split(':');
+  await PACTS[name](arg);
+}
+
 /**
  * Меню системы - то же, что было на дереве систем в приложении. `lead` -
  * свои пункты сверху ({label, value, run}): у строки списка эффектов это
  * «Перейти к файлу».
  */
 export async function systemMenu(e, name, lead = []) {
+  // Список дочерних запрашивается до показа, а меню браузера нужно погасить
+  // сразу, пока событие ещё живо
+  e.preventDefault();
   // Действия работают с выбранной системой, но выбор - только если пункт
   // выбран: закрытое меню оставляло выбранной систему под курсором, и правки
   // панели (она показывает прежнюю) уходили не в ту систему
   const prev = pSystem;
   setSystem(name);
-  // «Вернуть как в игре» - только когда есть что возвращать: у стоковой
-  // системы пункт погашен, у файла без игрового собрата его нет вовсе
+  // «Вернуть как в игре» - только когда есть что возвращать. Недоступный
+  // пункт меню не гасим, а не показываем - так во всём приложении
   const status = pcfDiff.get(name);
+  // Удаление - последним: подальше от обычных действий, чтобы не попасть
+  // мимо. Родные цвета текстуры живут в простом режиме рядом с цветом
   const chosen = await contextMenu(e, [
     ...lead, ...(lead.length ? [null] : []),
-    { label: 'Добавить слой со своей текстурой…', value: 'layer' },
-    null,
+    await childrenItem(name),
     { label: 'Переименовать систему…', value: 'rename' },
     { label: 'Дублировать систему…', value: 'duplicate' },
-    { label: 'Добавить дочернюю…', value: 'child' },
-    { label: 'Удалить систему', value: 'remove' },
-    ...(pcfDiff.size ? [null, { label: 'Вернуть как в игре', value: 'revert',
-                                 disabled: status !== 'changed' }] : []),
-    null,
-    { label: 'Цвета текстуры (снять подкраску)', value: 'natural' },
     null,
     ...copyItems(null),
+    null,
+    ...(status === 'changed' ? [{ label: 'Вернуть как в игре', value: 'revert' }] : []),
+    { label: 'Удалить систему', value: 'remove' },
   ]);
   const own = lead.find((item) => item.value === chosen);
   if (!chosen || own) setSystem(prev);
   if (own) await own.run();
-  else if (chosen) await PACTS[chosen]();
+  else if (chosen) await runAction(chosen);
 }
 
 /** Меню в дереве свойств. Что предложить - решает узел под курсором */
 export async function expertMenu(e, node) {
+  e.preventDefault();
   const { group, index, attr } = node;
   let items;
   if (group === 'children') {
     items = index === null
-      ? [{ label: 'Добавить дочернюю…', value: 'child' }]
+      ? (await childrenItem(pSystem)).sub
       : [{ label: 'Отцепить дочернюю', value: 'detach' }];
   } else if (index === null) {
     // Заголовок группы: сюда добавляют модуль, отсюда копируют её целиком
@@ -389,7 +396,7 @@ export async function expertMenu(e, node) {
   // Узел под курсором и есть адрес: кнопке «Параметр +» иначе пришлось бы
   // угадывать, в какой модуль добавлять
   ctxNode = node;
-  await PACTS[chosen]();
+  await runAction(chosen);
   ctxNode = null;
 }
 

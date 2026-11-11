@@ -135,6 +135,7 @@ The lights are a separate model, and you can work on them separately:
 - **Repaint them**: switch the version on and drop an image on the lights' card.
 - **Replace them**: **Replace model** asks whether to replace **The weapon itself** or the lights. A custom garland keeps the bones of the stock one, so the game can hang it the usual way, and uses its own materials.
 - **Fit them to your model**: with a custom weapon model, the lights still hang where they would on the stock weapon, and the row says so. **Fit the lights** opens the same fitting tools as for the model, plus **Bend**: drag the wire and the bulbs with the mouse, and change the grab radius with the wheel or the **Radius** field. **Straighten** removes all bends.
+- **Wrap the model**: the lights seat themselves on your model the way they sat on the stock one. The wire and the bulbs keep the same height above the surface, and on a model larger or smaller than the stock one the garland stretches or shrinks with it while the bulbs keep their size. If you have already fitted the lights, their placement stays and the wrap starts from there. Paint and parts of the lights stay in place. You can still adjust them with **Bend** on top, and Ctrl+Z undoes the wrap. Wrapping removes earlier bends. Pieces that hung on a part your model doesn't have stay where they were.
 
 Edits of the lights go into the mod as a separate model and don't affect other weapons. A dot next to the version name means its lights were changed.
 

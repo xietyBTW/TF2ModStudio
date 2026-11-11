@@ -810,65 +810,27 @@ class TF2VPKExtractService:
     @staticmethod
     def _convert_vtf_to_image(vtf_path: str, out_dir: str, image_format: str) -> Optional[str]:
         """
-        Конвертирует VTF файл в изображение (PNG, TGA, JPG) используя библиотеку vtf2img
-        
-        Args:
-            vtf_path: Путь к VTF файлу
-            out_dir: Директория для сохранения
-            image_format: Формат изображения (PNG, TGA, JPG)
-            
-        Returns:
-            Путь к конвертированному файлу или None если ошибка
+        VTF -> PNG, TGA или JPG рядом, под тем же именем. None - не вышло
+
+        Альфа остаётся: в ней у текстур игры маски блеска, краски и свечения,
+        и без неё извлечённое для правки бесполезно. У JPG альфы нет
         """
+        from PIL import Image
+        from src.services.vtflib_wrapper import VTFLib
+
+        ext = {"PNG": "png", "TGA": "tga", "JPG": "jpg", "JPEG": "jpg"}.get(
+            image_format.upper(), "png")
+        stem = os.path.splitext(os.path.basename(vtf_path))[0]
+        output_path = os.path.join(out_dir, f"{stem}.{ext}")
         try:
-            # Пробуем использовать библиотеку vtf2img для конвертации
-            try:
-                from vtf2img import Parser
-            except ImportError:
-                logger.warning("Библиотека vtf2img не установлена.")
-                logger.info("Установите её через: .venv\\Scripts\\python.exe -m pip install vtf2img")
-                logger.info("Или активируйте .venv и выполните: pip install vtf2img")
-                return None
-            
-            # Формируем имя выходного файла
-            vtf_basename = os.path.splitext(os.path.basename(vtf_path))[0]
-            format_mapping = {
-                "PNG": "png",
-                "TGA": "tga",
-                "JPG": "jpg",
-                "JPEG": "jpg"
-            }
-            ext = format_mapping.get(image_format.upper(), "png")
-            output_filename = f"{vtf_basename}.{ext}"
-            output_path = os.path.join(out_dir, output_filename)
-            
-            # Открываем VTF файл
-            parser = Parser(vtf_path)
-            
-            # Получаем изображение (vtf2img возвращает PIL Image напрямую)
-            image = parser.get_image()
-            
-            # Логируем информацию об изображении для диагностики
-            logger.debug(f"Изображение из VTF: mode={image.mode}, size={image.size}")
-            
-            # Конвертируем изображение в RGB
-            # Используем стандартную конвертацию PIL, которая правильно обрабатывает альфа-канал
-            if image.mode != "RGB":
-                # PIL автоматически смешивает альфа-канал с черным фоном при convert("RGB")
-                # Для текстуры игры нужен черный фон, а не белый
-                image = image.convert("RGB")
-            
-            # Сохраняем изображение в нужном формате
-            if image_format.upper() == "JPG" or image_format.upper() == "JPEG":
-                image.save(output_path, "JPEG", quality=95)
-            elif image_format.upper() == "TGA":
-                image.save(output_path, "TGA")
-            else:  # PNG по умолчанию
-                image.save(output_path, "PNG")
-            
-            logger.info(f"Текстура конвертирована: {vtf_path} -> {output_path}")
-            return output_path
-                
-        except Exception as e:
+            rgba, width, height = VTFLib.read_vtf_as_rgba(vtf_path)
+            image = Image.frombytes("RGBA", (width, height), rgba)
+            if ext == "jpg":
+                image.convert("RGB").save(output_path, "JPEG", quality=95)
+            else:
+                image.save(output_path)
+        except Exception as e:  # noqa: BLE001 - битый VTF не роняет всё извлечение
             logger.error(f"Ошибка при конвертации VTF в {image_format}: {e}", exc_info=True)
             return None
+        logger.info(f"Текстура конвертирована: {vtf_path} -> {output_path}")
+        return output_path

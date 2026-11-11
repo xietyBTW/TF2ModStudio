@@ -335,11 +335,22 @@ button, input, select, textarea { color: inherit; }
 .textbtn:active, .mattab:active { transform: translateY(1px); }
 .tag:active, .btn:active, .pick:active { transform: scale(.96); }
 
-/* Скроллбары под общий тон */
-* { scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: var(--hairline-strong); }
-::-webkit-scrollbar-track { background: transparent; }
+/* Скроллбары под общий тон: тонкая полоска без стрелок. В покое она бледная,
+   над прокручиваемым блоком - заметнее, под мышью - ещё ярче. Совсем не
+   прятать: длинная панель без полоски не говорит, что ниже есть ещё.
+   Стандартные scrollbar-width/scrollbar-color только там, где нет
+   ::-webkit-scrollbar: в Chromium (WebView2) они его перебивают, и окно
+   рисовало системную полосу со стрелками */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--hairline-strong) transparent; }
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline); }
+:hover::-webkit-scrollbar-thumb { background: var(--hairline-strong); }
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active { background: var(--ink-mute); }
 
 /* Кому анимации мешают - всё происходит мгновенно */
 @media (prefers-reduced-motion: reduce) {

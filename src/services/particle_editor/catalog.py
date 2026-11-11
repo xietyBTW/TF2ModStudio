@@ -4,6 +4,7 @@
 подсказки UI, тесты и фоновый поток"""
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -79,12 +80,31 @@ MODULE_CATALOG = {
 }
 
 
+#: {путь архива: (mtime, список PCF)}: перебор 104 тысяч записей архива -
+#: 150 мс, а список спрашивают на каждый вход в раздел частиц
+_PCF_LISTS: Dict[str, tuple] = {}
+
+
 def list_game_pcfs(tf2_root_dir: str) -> List[str]:
     """Список путей particles/*.pcf внутри tf2_misc_dir.vpk (отсортирован)"""
     try:
         _, misc_vpk, _ = TF2Paths.resolve(tf2_root_dir)
     except FileNotFoundError:
         return []
+    try:
+        stamp = os.path.getmtime(misc_vpk)
+    except OSError:
+        stamp = None
+    known = _PCF_LISTS.get(misc_vpk)
+    if known is not None and known[0] == stamp:
+        return list(known[1])
+    found = _scan_pcfs(misc_vpk)
+    if found:
+        _PCF_LISTS[misc_vpk] = (stamp, found)
+    return list(found)
+
+
+def _scan_pcfs(misc_vpk: str) -> List[str]:
     paks = open_vpks([misc_vpk])
     if not paks:
         return []

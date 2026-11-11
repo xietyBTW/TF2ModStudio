@@ -121,9 +121,10 @@ class SetParamTests(unittest.TestCase):
         self.s = _session({'sys': _system(
             operators=[_mod('Movement Basic', {'drag': 0.25})])})
 
-    def test_write_reaches_the_service_and_returns_systems(self):
+    def test_write_reaches_the_service_and_returns_the_system(self):
+        # В ответе только правленая система: весь файл странице не нужен
         res = self.s.particles.set_particle_param('sys', 'drag', 0.5)
-        self.assertIn('systems', res)
+        self.assertEqual(list(res['changed']), ['sys'])
         self.assertEqual(self.s.particles.pcf.writes,
                          [('sys', 'operators', 0, 'drag', 0.5)])
 
@@ -194,7 +195,7 @@ class ExpertModeTests(unittest.TestCase):
 
     def test_edit_writes_through_the_service(self):
         res = self.s.particles.set_particle_attr('sys', 'operators', 0, 'drag', 0.9)
-        self.assertIn('systems', res)
+        self.assertEqual(list(res['changed']), ['sys'])
         self.assertEqual(
             self.s.particles.pcf.systems_json()['sys']['operators'][0]['attrs']['drag']['v'],
             0.9)
@@ -554,10 +555,10 @@ class EffectCatalogTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest import mock
 
-        from src.app.particles_editor import ParticlesEditor
+        from src.app.particle_effects_catalog import EffectCatalog
         from src.services.particle_editor_service import ParticleEditorService
 
-        editor = ParticlesEditor(SimpleNamespace(tf2_paths=lambda: {'root': 'C:/tf2'}))
+        editor = EffectCatalog(SimpleNamespace(tf2_paths=lambda: {'root': 'C:/tf2'}))
         editor._unusual_effects = lambda lang: [
             {'system': 'stamp_spin', 'name': 'Коллекционные марки', 'category': 'other'}]
         with mock.patch.object(ParticleEditorService, 'system_index',

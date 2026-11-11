@@ -31,11 +31,31 @@ def part_mask(material: str = '', part: int = 0) -> Dict[str, object]:
 
 @endpoint
 def part_shape(material: str = '', part: int = 0,
-               layer: Optional[int] = None) -> Dict[str, object]:
+               layer: Optional[int] = None,
+               whole: bool = False) -> Dict[str, object]:
     """Развёртка одной части - для окна посадки картинки.
-    `layer` - какую из её картинок правят; None - кладут новую"""
+    `layer` - какую из её картинок правят; None - кладут новую.
+    `whole` - основа без всех картинок части: окно рисует стопку само"""
     from src.app.session import session
-    return session().parts.part_shape(material, part, layer)
+    return session().parts.part_shape(material, part, layer, bool(whole))
+
+
+@endpoint
+def image_frames(path: str = '') -> Dict[str, object]:
+    """Кадры анимированной картинки для окна посадки: браузер их из гифки не
+    достаёт. Не анимация - пустые списки"""
+    import hashlib
+    import os
+
+    from src.app.session import session
+    from src.services import texture_compose_service
+
+    if not path or not os.path.isfile(path):
+        return {'frames': [], 'delays': []}
+    frames, delays = texture_compose_service.export_frames(
+        path, os.path.join(session()._work_dir(), 'frames'),
+        'layer_' + hashlib.sha1(path.encode('utf-8')).hexdigest()[:10])
+    return {'frames': frames, 'delays': delays}
 
 
 @endpoint
@@ -78,6 +98,15 @@ def set_part_texture(material: str = '', part: int = 0,
     """
     from src.app.session import session
     return session().parts.set_part_texture(material, part, path, options, layer)
+
+
+@endpoint
+def set_part_layers(material: str = '', part: int = 0,
+                    layers: Optional[List[Dict[str, object]]] = None) -> Dict[str, object]:
+    """Вся стопка картинок части снизу вверх, одним шагом: так её сдаёт окно
+    посадки. Пустой список снимает все картинки части"""
+    from src.app.session import session
+    return session().parts.set_part_layers(material, part, layers)
 
 
 @endpoint

@@ -6,9 +6,7 @@
  * маскирует склейка), а не рамку: положенное вне маски при сборке исчезает, и
  * рамка обещала бы то, чего не будет
  *
- * Расчёт повторяет `texture_compose_service.place_image`: тот же порядок
- * (размер -> поворот -> место) и тот же знак угла. Разойтись им нельзя - человек
- * настраивает по одному изображению, а в мод уйдёт другое.
+ * Холст и расчёт посадки - в place-draw.js, колонка слоёв - в place-layers.js
  */
 
 import * as api from './api.js';
@@ -17,6 +15,10 @@ import { applyView } from './preview.js';
 import { chooseFile } from './util.js';
 import { hintParts, refreshParts } from './parts.js';
 import { P } from './parts-state.js';
+import { showLayers } from './place-layers.js';
+import { HANDLE_GAP, HANDLE_R, boxOf, drawPlace, gripAt, localPoint, placeRect, placeView,
+         resizeBy, shownImage } from './place-draw.js';
+import { t } from './i18n.js';
 
 const placeDlg = document.getElementById('placedlg');
 
@@ -42,378 +44,64 @@ export async function pasteImageTo(part) {
   return persist(part, clip.path, clip.options, null);
 }
 
-/**
- * Куда и какого размера ляжет картинка - в пикселях холста развёртки
- *
- * Холст повторяет ПРОПОРЦИИ текстуры (W × H), а не квадрат: у тела шпиона
- * она 1024×512, и на квадрате развёртка сжималась вдвое по ширине, а
- * «целиком» вписывалось не так, как это потом делала склейка в пикселях.
- */
-function placeRect(image, box, spec, W, H) {
-  const bw = Math.max(1, (box[2] - box[0]) * W);
-  const bh = Math.max(1, (box[3] - box[1]) * H);
-  let w = bw;
-  let h = bh;
-  if (spec.fit !== 'stretch') {
-    const k = spec.fit === 'cover'
-      ? Math.max(bw / image.width, bh / image.height)
-      : Math.min(bw / image.width, bh / image.height);
-    w = image.width * k;
-    h = image.height * k;
-  }
-  w *= spec.scale;
-  // По высоте - свой множитель: за угол рамки тянут целиком, за сторону -
-  // только по её оси. Старые работы второго не знают: там он равен первому
-  h *= (spec.scale_y === undefined ? spec.scale : spec.scale_y);
-  // Развёртка считает v снизу, холст - сверху: место части переворачивается
-  const cx = box[0] * W + bw / 2 + spec.offset[0] * bw;
-  const cy = (1 - box[3]) * H + bh / 2 + spec.offset[1] * bh;
-  return { x: cx, y: cy, w, h };
+/** Запись слоя для окна: копия, чтобы правки до «Готово» не трогали ответ */
+function layerSpec(raw) {
+  return { ...raw,
+           scale_y: raw.scale_y === undefined ? raw.scale : raw.scale_y,
+           offset: [raw.offset[0], raw.offset[1]],
+           flip_x: !!raw.flip_x, flip_y: !!raw.flip_y };
 }
 
+const freshSpec = (path) => ({ path, fit: 'contain', angle: 0, scale: 1, scale_y: 1,
+                               offset: [0, 0], flip_x: false, flip_y: false });
+
 /**
- * Как холст показывает развёртку: целиком или вплотную к правимому куску
+ * Посадка скопированной картинки: размер В ДОЛЯХ ТЕКСТУРЫ -> масштаб части
  *
- * Всё рисование остаётся в координатах ТЕКСТУРЫ (0..size), приближение -
- * одно преобразование холста поверх. Иначе масштаб пришлось бы вносить в
- * каждую формулу, и посадка картинки разъехалась бы с тем, что считает Python
- *
- * Приближаем РОВНО к габариту части - тому самому, в который вписана картинка.
- * «Плотный» габарит без 4% площади с краёв не годится: картинка ложится в
- * ПОЛНЫЙ, и у праздничного огнетопора в вид не попадало бы до половины
- * треугольников части
- *
- * Автоматика не угадает, какой островок нужен человеку, поэтому она только
- * ставит СТАРТОВЫЙ вид, а дальше он приближает колесом.
+ * Тот же расчёт, что `part_images.absolute_size`: холст в пропорциях
+ * текстуры, поэтому доля холста и доля текстуры - одно и то же
  */
-function placeView(state, W, H) {
-  if (!state.zoom) return { k: 1, dx: 0, dy: 0 };
-  const b = state.bbox;
-  const w = Math.max(1, (b[2] - b[0]) * W);
-  const h = Math.max(1, (b[3] - b[1]) * H);
-  // Запас по краям: деталь, прижатая к самой рамке, читается хуже, а картинку
-  // нередко двигают чуть за край куска. Меньше единицы не опускаемся - окно
-  // называется «приблизить», отдалять оно не должно
-  const fit = Math.max(1, Math.min(W / w, H / h) * 0.86);
-  const k = fit * (state.zoomK || 1);
-  const focus = state.focus
-    || [b[0] * W + w / 2, (1 - b[3]) * H + h / 2];
-  return { k, dx: W / 2 - k * focus[0], dy: H / 2 - k * focus[1] };
+function specFromClip(c, image, box, W, H) {
+  const spec = { ...freshSpec(c.path), fit: c.options.fit || 'contain',
+                 angle: c.options.angle || 0,
+                 flip_x: !!c.options.flip_x, flip_y: !!c.options.flip_y };
+  const size = c.options.size_uv;
+  if (!size || !image) return spec;
+  const unit = placeRect(image, box, spec, W, H);
+  spec.scale = Math.max(0.05, Math.min(20, size[0] * W / unit.w));
+  spec.scale_y = Math.max(0.05, Math.min(20, size[1] * H / unit.h));
+  return spec;
 }
 
 /**
- * Внешний контур развёртки: рёбра, у которых нет пары
+ * Окно картинок части: стопка слоёв слева, холст, посадка правимого справа
  *
- * Развёртка приезжает ТРЕУГОЛЬНИКАМИ, и обвести каждый - значит нарисовать
- * сетку: у детали из полутора тысяч треугольников за ней не видно ни картинки,
- * ни собственных краёв. Внутреннее ребро принадлежит двум треугольникам сразу,
- * граничное - одному: пары взаимно уничтожаются, остаётся контур. Островов у
- * куска бывает несколько - контуров тогда столько же, и это правда о нём.
+ * Вся стопка живёт ЗДЕСЬ до «Готово»: добавить, заменить, убрать,
+ * переставить, выбрать другой слой - правки окна, холст показывает их сразу,
+ * а Python склеивает текстуру один раз в конце, одним шагом отмены. Раньше
+ * каждое такое действие было своей склейкой и переоткрытием окна
+ *
+ * `shape` - ответ `part_shape(whole)`: развёртка части, основа без её
+ * картинок и сами картинки. `selected` - какой слой правим (отрицательный -
+ * с конца), `add` - путь картинки, которая ложится поверх при открытии
+ * (брошенная на модель или выбранная файлом). Отвечает новой стопкой или
+ * null - ничего не менялось либо нажали «Отмена»
  */
-function outlineOf(polygons) {
-  const edges = new Map();
-  for (const tri of polygons) {
-    for (let i = 0; i < 3; i++) {
-      const from = tri[i];
-      const to = tri[(i + 1) % 3];
-      const a = from[0] + ',' + from[1];
-      const b = to[0] + ',' + to[1];
-      const key = a < b ? a + '|' + b : b + '|' + a;
-      if (edges.has(key)) edges.delete(key);
-      else edges.set(key, [from, to]);
-    }
-  }
-  return [...edges.values()];
-}
-
-function drawPlace(state) {
-  const cv = document.getElementById('place-canvas');
-  const g = cv.getContext('2d');
-  const W = cv.width;
-  const H = cv.height;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, W, H);
-
-  const view = placeView(state, W, H);
-  g.setTransform(view.k, 0, 0, view.k, view.dx, view.dy);
-
-  if (state.base && !state.bare) g.drawImage(state.base, 0, 0, W, H);
-
-  const shown = (state.frames && state.frames.length)
-    ? state.frames[state.frame % state.frames.length]
-    : state.image;
-  const rect = shown ? placeRect(shown, state.bbox, state.spec, W, H) : null;
-
-  const drawPicture = () => {
-    g.save();
-    g.translate(rect.x, rect.y);
-    g.rotate(state.spec.angle * Math.PI / 180);
-    // Отражение - по осям самой картинки, до поворота: так же его делает
-    // склейка (place_image), иначе окно и мод разошлись бы
-    g.scale(state.spec.flip_x ? -1 : 1, state.spec.flip_y ? -1 : 1);
-    g.drawImage(shown, -rect.w / 2, -rect.h / 2, rect.w, rect.h);
-    g.restore();
-  };
-
-  /**
-   * Обрезка по маске части - тому же набору треугольников, по которому
-   * маскирует склейка
-   *
-   * Обход у всех треугольников разворачиваем В ОДНУ сторону. Холст заливает
-   * путь по правилу nonzero: пара треугольников, лежащих друг на друге с
-   * противоположным обходом, даёт число оборотов 0 - то есть ДЫРУ. А в TF2
-   * зеркальные половины модели делят одну развёртку сплошь: у праздничного
-   * огнетопора таких треугольников 253 из 1249, у другой его части ровно
-   * половина (88 из 176). Отсюда и было «свою текстуру видно только местами»:
-   * картинка пропадала там, где две половины кладутся на одно место
-   *
-   * Склейка этим не болела и не болеет - она заливает каждый треугольник
-   * отдельно (PIL), поэтому в моде картинка лежала правильно, а врал показ.
-   */
-  const clipToPart = () => {
-    g.beginPath();
-    for (const tri of state.polygons) {
-      const [a, b, c] = tri;
-      // Знак площади считаем в координатах РАЗВЁРТКИ; холст переворачивает v,
-      // и знак вместе с ним, поэтому порядок выбираем по «< 0»
-      const area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
-      const [p, q, r] = area < 0 ? [a, b, c] : [a, c, b];
-      g.moveTo(p[0] * W, (1 - p[1]) * H);
-      g.lineTo(q[0] * W, (1 - q[1]) * H);
-      g.lineTo(r[0] * W, (1 - r[1]) * H);
-      g.closePath();
-    }
-    g.clip();
-  };
-
-  // Без игровой текстуры картинку показываем ЦЕЛИКОМ, а не её обрезок: тогда
-  // видно, что именно кладёшь. Призраком - то, что при сборке отрежется, в
-  // полную силу - то, что доживёт. Иначе выбор «без игровой» прятал бы больше,
-  // чем показывал
-  if (shown && state.bare) {
-    g.save();
-    g.globalAlpha = 0.28;
-    drawPicture();
-    g.restore();
-  }
-  if (shown) {
-    g.save();
-    clipToPart();
-    drawPicture();
-    g.restore();
-  }
-
-  // Всё, что вне детали, притемняем: пёстрая текстура вокруг спорила с
-  // картинкой, и было не видно, куда она ляжет. Тёмный слой рисуем на
-  // отдельном холсте и вырезаем из него деталь
-  const veil = state.veil || (state.veil = document.createElement('canvas'));
-  veil.width = W;
-  veil.height = H;
-  const v = veil.getContext('2d');
-  v.setTransform(1, 0, 0, 1, 0, 0);
-  v.fillStyle = 'rgba(10, 9, 8, 0.55)';
-  v.fillRect(0, 0, W, H);
-  v.setTransform(view.k, 0, 0, view.k, view.dx, view.dy);
-  v.globalCompositeOperation = 'destination-out';
-  v.beginPath();
-  for (const [a, b, c] of state.polygons) {
-    v.moveTo(a[0] * W, (1 - a[1]) * H);
-    v.lineTo(b[0] * W, (1 - b[1]) * H);
-    v.lineTo(c[0] * W, (1 - c[1]) * H);
-    v.closePath();
-  }
-  v.fill();
-  g.save();
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.drawImage(veil, 0, 0);
-  g.restore();
-
-  // Контур маски поверх всего: без него не видно, докуда картинка доживёт.
-  // Толщину делим на масштаб - иначе при приближении он превращается в брус
-  g.strokeStyle = '#cc5522';
-  g.lineWidth = 1 / view.k;
-  g.beginPath();
-  if (!state.mesh) {
-    // Считаем один раз: треугольники за время окна не меняются
-    if (!state.edges) state.edges = outlineOf(state.polygons);
-    for (const [from, to] of state.edges) {
-      g.moveTo(from[0] * W, (1 - from[1]) * H);
-      g.lineTo(to[0] * W, (1 - to[1]) * H);
-    }
-  } else {
-    for (const tri of state.polygons) {
-      g.moveTo(tri[0][0] * W, (1 - tri[0][1]) * H);
-      g.lineTo(tri[1][0] * W, (1 - tri[1][1]) * H);
-      g.lineTo(tri[2][0] * W, (1 - tri[2][1]) * H);
-      g.closePath();
-    }
-  }
-  g.stroke();
-
-  if (rect) drawHandle(g, rect, state.spec.angle, view.k);
-  g.setTransform(1, 0, 0, 1, 0, 0);
-}
-
-//: Маркер поворота: отступ от края картинки и радиус - в пикселях ХОЛСТА
-//: (деление на масштаб вида гасит приближение, поэтому размер постоянный).
-//: Холст (длинная сторона 512) показывается примерно в 330 CSS-пикселях, то
-//: есть всё это ещё и сжимается на треть - отсюда числа крупнее, чем кажется
-//: нужным
-const HANDLE_GAP = 38;
-const HANDLE_R = 10;
-//: Сторона квадратика на рамке и радиус попадания по нему. Попадание крупнее
-//: самого квадратика: целиться в семь пикселей мышью - работа, а не правка
-const GRIP = 9;
-const GRIP_HIT = 14;
-
-//: Ручки рамки: углы и середины сторон. Знаки говорят, какой край тянут, и
-//: они же дают точку, которая при этом остаётся на месте (противоположная)
-const GRIPS = [[-1, -1], [1, -1], [1, 1], [-1, 1],
-               [0, -1], [1, 0], [0, 1], [-1, 0]];
-
-/** Ручка под курсором в системе картинки. null - курсор не на ручке */
-function gripAt(rect, lx, ly, k) {
-  const reach = GRIP_HIT / k;
-  let best = null;
-  for (const [sx, sy] of GRIPS) {
-    const gap = Math.hypot(lx - sx * rect.w / 2, ly - sy * rect.h / 2);
-    if (gap <= reach && (!best || gap < best.gap)) best = { sx, sy, gap };
-  }
-  return best;
-}
-
-/** Рамка картинки и маркер поворота над ней - привычная ручка, а не циферблат */
-function drawHandle(g, rect, angle, k) {
-  const gap = HANDLE_GAP / k;
-  const radius = HANDLE_R / k;
-  g.save();
-  g.translate(rect.x, rect.y);
-  g.rotate(angle * Math.PI / 180);
-  g.strokeStyle = '#cc5522';
-  g.lineWidth = 1.5 / k;
-  g.setLineDash([7 / k, 5 / k]);
-  g.strokeRect(-rect.w / 2, -rect.h / 2, rect.w, rect.h);
-  g.setLineDash([]);
-  g.beginPath();
-  g.moveTo(0, -rect.h / 2);
-  g.lineTo(0, -rect.h / 2 - gap);
-  g.stroke();
-  // Заливка акцентом, обводка белым, а не наоборот: маркер висит над самой
-  // картинкой, и белый кружок терялся на светлых наклейках
-  g.beginPath();
-  g.arc(0, -rect.h / 2 - gap, radius, 0, Math.PI * 2);
-  g.fillStyle = '#cc5522';
-  g.fill();
-  g.strokeStyle = '#fff';
-  g.lineWidth = 2 / k;
-  g.stroke();
-
-  // Ручки размера - там же, где их ищет рука: по углам и серединам сторон.
-  // Белая заливка с акцентной обводкой: они лежат на самой картинке, и
-  // сплошной акцент на оранжевой наклейке пропадал бы
-  const side = GRIP / k;
-  g.lineWidth = 1.5 / k;
-  for (const [sx, sy] of GRIPS) {
-    g.beginPath();
-    g.rect(sx * rect.w / 2 - side / 2, sy * rect.h / 2 - side / 2, side, side);
-    g.fillStyle = '#fff';
-    g.fill();
-    g.strokeStyle = '#cc5522';
-    g.stroke();
-  }
-  g.restore();
-}
-
-/** Точка холста в системе КАРТИНКИ: центр в нуле, поворот снят */
-function localPoint(state, rect, clientX, clientY, cv) {
-  const view = placeView(state, cv.width, cv.height);
-  const r = cv.getBoundingClientRect();
-  const tex = [((clientX - r.left) / r.width * cv.width - view.dx) / view.k,
-               ((clientY - r.top) / r.height * cv.height - view.dy) / view.k];
-  const rad = -state.spec.angle * Math.PI / 180;
-  const dx = tex[0] - rect.x;
-  const dy = tex[1] - rect.y;
-  return [dx * Math.cos(rad) - dy * Math.sin(rad),
-          dx * Math.sin(rad) + dy * Math.cos(rad), view.k];
-}
-
-
-/**
- * Тянет рамку за ручку
- *
- * Противоположный край стоит на месте - так это работает в редакторах
- * изображений: тянешь правый край, левый не шевелится. Значит меняется не
- * только размер, но и центр, а центр здесь живёт в сдвиге (`offset`), в долях
- * места части
- *
- * Протянул край ЗА противоположный - картинка отражается по этой оси, как в
- * Photoshop: отдельной кнопки «отразить» нет, это то же движение руки
- *
- * Угол тянет обе оси разом, сохраняя пропорции: чаще всего наклейку просто
- * увеличивают. Сторона тянет свою - ею картинку и вытягивают под деталь.
- */
-function resizeBy(state, drag, event, cv) {
-  const { sx, sy } = drag.grip;
-  // Считаем в системе рамки НА МОМЕНТ НАЖАТИЯ: она не должна ехать вслед за
-  // собственным изменением, иначе тяга разгоняется сама по себе
-  const [lx, ly] = localPoint(state, drag.rect, event.clientX, event.clientY, cv);
-  // Размер со ЗНАКОМ, от неподвижного края: меньше нуля - край протащили за
-  // противоположный
-  let sw = sx ? sx * lx + drag.w0 / 2 : drag.w0;
-  let sh = sy ? sy * ly + drag.h0 / 2 : drag.h0;
-  if (sx && sy) {
-    const k = Math.hypot(sw, sh) / Math.hypot(drag.w0, drag.h0);
-    sw = (sw < 0 ? -1 : 1) * drag.w0 * k;
-    sh = (sh < 0 ? -1 : 1) * drag.h0 * k;
-  }
-  const w = Math.max(4, Math.abs(sw));
-  const h = Math.max(4, Math.abs(sh));
-  const dirX = sw < 0 ? -1 : 1;
-  const dirY = sh < 0 ? -1 : 1;
-
-  const clamp = (value) => Math.max(0.05, Math.min(20, value));
-  state.spec.scale = clamp(drag.scale0 * w / drag.w0);
-  state.spec.scale_y = clamp(drag.scaleY0 * h / drag.h0);
-  state.spec.flip_x = drag.flipX0 !== (dirX < 0);
-  state.spec.flip_y = drag.flipY0 !== (dirY < 0);
-
-  // Новый центр - посередине между неподвижным краем и тем, что тянут
-  const shiftX = sx ? -sx * drag.w0 / 2 + sx * dirX * w / 2 : 0;
-  const shiftY = sy ? -sy * drag.h0 / 2 + sy * dirY * h / 2 : 0;
-  const rad = state.spec.angle * Math.PI / 180;
-  const worldX = shiftX * Math.cos(rad) - shiftY * Math.sin(rad);
-  const worldY = shiftX * Math.sin(rad) + shiftY * Math.cos(rad);
-  const bw = Math.max(1, (state.bbox[2] - state.bbox[0]) * cv.width);
-  const bh = Math.max(1, (state.bbox[3] - state.bbox[1]) * cv.height);
-  state.spec.offset = [drag.off0[0] + worldX / bw, drag.off0[1] + worldY / bh];
-  drawPlace(state);
-}
-
-/**
- * Окно посадки одной картинки части
- *
- * `shape` - ответ `api.partShape`: развёртка части, основа (всё, что на
- * материале уже лежит, кроме этой картинки) и список картинок части.
- * Список стоит слева, щелчок по другой картинке, «+ Добавить», «Заменить…»
- * и «Убрать» - тоже ответы окна, только оно при них не закрывается: цикл
- * в `editPartLayers` сохраняет посадку, делает дело и открывает окно на
- * нужном слое заново
- *
- * Отвечает {act, spec, changed[, layer, file]}: act - ok, cancel, layer,
- * add, replace или drop; spec - посадка на момент ответа; changed - правили
- * ли её.
- */
-export async function askPlacement(shape, imageUrl, spec, layers = null) {
+export async function askLayers(shape, selected = -1, add = null) {
   const state = {
     polygons: shape.polygons || [],
-    bbox: shape.bbox || [0, 0, 1, 1],
-    spec: { fit: spec.fit, angle: spec.angle, scale: spec.scale,
-            scale_y: spec.scale_y === undefined ? spec.scale : spec.scale_y,
-            offset: [spec.offset[0], spec.offset[1]],
-            flip_x: !!spec.flip_x, flip_y: !!spec.flip_y },
+    partBox: shape.part_bbox || shape.bbox || [0, 0, 1, 1],
     base: shape.base ? await loadImage(api.fileUrl(shape.base, true)) : null,
-    image: await loadImage(imageUrl),
+    layers: await Promise.all((shape.images || []).map(async (raw) => ({
+      spec: layerSpec(raw), image: await loadImage(api.fileUrl(raw.path)) }))),
+    sel: -1,
+    ticket: 0,
   };
+  const initial = JSON.stringify(state.layers.map((l) => l.spec));
+  if (add) {
+    state.layers.push({ spec: freshSpec(add), image: await loadImage(api.fileUrl(add)) });
+  }
+  if (!state.layers.length) return null;
 
   const cv = document.getElementById('place-canvas');
   // Холст - в пропорциях основы: склейка считает «целиком»/«заполнить» в
@@ -443,24 +131,14 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
   state.zoom = true;
   state.zoomK = 1;
   state.focus = null;
-  bare.checked = false;
-  mesh.checked = false;
-  zoom.checked = true;
-
-  // Кадры анимации приходят от Python отдельными картинками: браузер их из
-  // гифки не достаёт - отсоединённый <img> её не крутит, а drawImage берёт
-  // всегда первый кадр. Разбирает их тот же PIL, что и склейка, поэтому
-  // предпросмотр показывает ровно то, что уйдёт в мод
-  state.frame = 0;
-  if ((shape.frames || []).length > 1) {
-    state.frames = await Promise.all(
-      shape.frames.map((f) => loadImage(api.fileUrl(f))));
-    const wait = Math.max(30, (shape.delays || [])[0] || 100);
-    state.animate = setInterval(() => {
-      state.frame += 1;
-      drawPlace(state);
-    }, wait);
-  }
+  //: Переключатель показа - кнопка-значок: залитая значит «включено»
+  const press = (btn, on) => {
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  };
+  press(bare, false);
+  press(mesh, false);
+  press(zoom, true);
 
   //: Числа в полях - то же самое, что показывает рамка. Тянут её мышью, а
   //: поля обязаны идти следом: иначе они врут о том, что сейчас на холсте.
@@ -482,10 +160,10 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
     drawPlace(state);
   };
 
-  document.getElementById('place-part').textContent =
-    `часть ${shape.part + 1} · развёртка ${state.polygons.length} тр.`;
-  sync();
-  const initial = JSON.stringify(state.spec);
+  // Номер - тем же видом, что на чипе в полосе частей: «03», а не «3»
+  const chip = document.getElementById('place-part');
+  chip.textContent = String(shape.part + 1).padStart(2, '0');
+  chip.title = t('Треугольников в развёртке: {}').replace('{}', state.polygons.length);
 
   return new Promise((resolve) => {
     let done = false;
@@ -494,20 +172,120 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
       el.addEventListener(type, fn, opts);
       off.push(() => el.removeEventListener(type, fn, opts));
     };
-
-    // `close` - закрыть ли окно: смена слоя и действия над списком оставляют
-    // его открытым, чтобы оно не мигало между шагами
-    const settle = (value, close = true) => {
-      if (done) return;
-      done = true;
+    const stopAnimation = () => {
       if (state.animate) clearInterval(state.animate);
-      off.forEach((f) => f());
-      if (close) placeDlg.close();
-      resolve({ ...value, spec: state.spec,
-                changed: JSON.stringify(state.spec) !== initial });
+      state.animate = null;
     };
 
-    showLayers(layers, on, settle);
+    const settle = (ok) => {
+      if (done) return;
+      done = true;
+      stopAnimation();
+      off.forEach((f) => f());
+      placeDlg.close();
+      const stack = state.layers.map((l) => l.spec);
+      resolve(ok && JSON.stringify(stack) !== initial ? stack : null);
+    };
+
+    /**
+     * Делает слой `n` правимым: рамка, поля и живой кадр - его
+     *
+     * Кадры анимации Python раскладывает по запросу: браузер их из гифки не
+     * достаёт - отсоединённый <img> её не крутит, а drawImage берёт всегда
+     * первый. Разбирает их тот же PIL, что и склейка
+     */
+    const select = async (n) => {
+      stopAnimation();
+      // Номер вызова: ответ о кадрах, пришедший после следующего выбора,
+      // устарел, иначе запускались два таймера и второй никто не гасил
+      const ticket = ++state.ticket;
+      const layer = state.layers[n];
+      // Другой габарит - другое место на текстуре: вид прошлого слоя туда
+      // не смотрит
+      const box = boxOf(state, layer.spec);
+      if (state.bbox && String(state.bbox) !== String(box)) {
+        state.zoomK = 1;
+        state.focus = null;
+      }
+      state.sel = n;
+      state.spec = layer.spec;
+      state.image = layer.image;
+      state.bbox = box;
+      state.frame = 0;
+      state.frames = null;
+      renderList();
+      sync();
+      if (!layer.frames) {
+        const path = layer.spec.path;
+        const res = await api.imageFrames(path);
+        const frames = await Promise.all((res.frames || []).map((f) => loadImage(api.fileUrl(f))));
+        // Пока ждали, картинку слоя могли заменить: кадры прежней ему чужие
+        if (layer.spec.path !== path) return;
+        layer.frames = frames;
+        layer.delay = Math.max(30, (res.delays || [])[0] || 100);
+      }
+      if (done || ticket !== state.ticket || layer.frames.length < 2) return;
+      stopAnimation();
+      state.frames = layer.frames;
+      state.animate = setInterval(() => {
+        state.frame += 1;
+        drawPlace(state);
+      }, layer.delay);
+    };
+
+    const renderList = () => showLayers(state, on, {
+      pick: (n) => { if (n !== state.sel) select(n); },
+      move: (from, to) => {
+        if (done) return;
+        state.layers.splice(to, 0, ...state.layers.splice(from, 1));
+        select(to);
+      },
+      // Действия на строке выбранного слоя: объявлены ниже, к щелчку уже есть
+      replace: () => withFile(true)(),
+      copy: () => copy(),
+      drop: () => dropLayer(),
+    });
+
+    /**
+     * Пока картинка грузится, «Готово» ждёт: иначе в Python ушла бы стопка
+     * без неё, и слой пропал бы молча
+     */
+    const okButton = document.getElementById('place-ok');
+    const busy = async (work) => {
+      okButton.disabled = true;
+      try { await work(); } finally { okButton.disabled = false; }
+    };
+
+    /** Картинка из файла - новым слоем поверх или на место правимого */
+    const placeFile = (file, replace) => busy(async () => {
+      let path;
+      try {
+        path = await api.upload(file);
+      } catch (err) {
+        hintParts(`Не удалось: ${err.message}`);
+        return;
+      }
+      const image = await loadImage(api.fileUrl(path));
+      if (done) return;
+      if (replace) {
+        // Посадка остаётся: заменяют картинку, а место под неё уже выбрано
+        Object.assign(state.layers[state.sel], { image, frames: null });
+        state.spec.path = path;
+        select(state.sel);
+      } else {
+        state.layers.push({ spec: freshSpec(path), image });
+        select(state.layers.length - 1);
+      }
+    });
+
+    const paste = () => busy(async () => {
+      if (!clip) return;
+      const image = await loadImage(api.fileUrl(clip.path));
+      if (done) return;
+      state.layers.push({ spec: specFromClip(clip, image, state.partBox, cv.width, cv.height),
+                          image });
+      select(state.layers.length - 1);
+    });
 
     // Тянем картинку мышью: сдвиг считаем в долях места части - в тех же
     // единицах, в которых его понимает склейка.
@@ -515,9 +293,7 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
     // всё остальное двигает. Так это устроено в любом редакторе картинок, и
     // отдельного циферблата для поворота не нужно
     const rectNow = () => {
-      const shown = (state.frames && state.frames.length)
-        ? state.frames[state.frame % state.frames.length]
-        : state.image;
+      const shown = shownImage(state);
       return shown ? placeRect(shown, state.bbox, state.spec, cv.width, cv.height) : null;
     };
 
@@ -577,11 +353,20 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
       syncNumbers();
     });
     on(cv, 'pointerup', (e) => { cv.releasePointerCapture(e.pointerId); drag = null; });
-    // Колесо приближает ВИД, а не картинку: размер картинки правится своим
-    // ползунком, а вот подойти к нужному островку иначе нечем. Приближаем к
-    // курсору, как в картах, - тогда панорамирование не нужно вовсе
+    // Колесо приближает ВИД: подойти к нужному островку иначе нечем.
+    // Приближаем к курсору, как в картах, - тогда панорамирование не нужно
+    // вовсе. С Ctrl колесо меняет размер картинки, пропорционально
     on(cv, 'wheel', (e) => {
       e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.deltaY < 0 ? 1.06 : 1 / 1.06;
+        const clamp = (v) => Math.max(0.05, Math.min(20, v * k));
+        state.spec.scale = clamp(state.spec.scale);
+        state.spec.scale_y = clamp(state.spec.scale_y);
+        drawPlace(state);
+        syncNumbers();
+        return;
+      }
       if (!state.zoom) return;
       const W = cv.width;
       const H = cv.height;
@@ -603,26 +388,27 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
       const fit = e.target.closest('[data-fit]');
       if (!fit) return;
       state.spec.fit = fit.dataset.fit;
+      // Строка слоя пишет, как он вписан
+      renderList();
       sync();
     });
 
     // Копировать - картинку и её посадку с размером на ТЕКСТУРЕ; вставить -
     // новым слоем на эту же часть (на другую - кнопкой на её чипе)
-    const copyButton = document.getElementById('place-copy');
     const pasteButton = document.getElementById('place-paste');
     pasteButton.disabled = !clip;
     const copy = () => {
       const rect = rectNow();
-      if (!rect || !spec.path) return;
-      remember({ path: spec.path, name: String(spec.path).split(/[\\/]/).pop(),
+      const { path } = state.spec;
+      if (!rect || !path) return;
+      remember({ path, name: String(path).split(/[\\/]/).pop(),
                  options: { fit: state.spec.fit, angle: state.spec.angle,
                             flip_x: state.spec.flip_x, flip_y: state.spec.flip_y,
                             size_uv: [rect.w / cv.width, rect.h / cv.height] } });
       pasteButton.disabled = false;
       hintParts('Картинка скопирована. На другую часть - наведи на неё на модели и нажми Ctrl+V');
     };
-    on(copyButton, 'click', copy);
-    on(pasteButton, 'click', () => { if (clip) settle({ act: 'paste' }, false); });
+    on(pasteButton, 'click', paste);
 
     // Поворот стрелками: маркер мышкой - привычно, но не единственный способ
     // должен быть у того, кто мышью не работает
@@ -630,7 +416,7 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyC') { e.preventDefault(); copy(); return; }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV' && clip) {
         e.preventDefault();
-        settle({ act: 'paste' }, false);
+        paste();
         return;
       }
       const step = { ArrowLeft: -15, ArrowDown: -15, ArrowRight: 15, ArrowUp: 15 }[e.key];
@@ -669,204 +455,125 @@ export async function askPlacement(shape, imageUrl, spec, layers = null) {
     });
     byShift(shiftX, 0);
     byShift(shiftY, 1);
-    on(bare, 'change', () => { state.bare = bare.checked; drawPlace(state); });
-    on(mesh, 'change', () => {
-      state.mesh = mesh.checked;
+    on(bare, 'click', () => {
+      state.bare = !state.bare;
+      press(bare, state.bare);
       drawPlace(state);
     });
-    on(zoom, 'change', () => {
-      state.zoom = zoom.checked;
+    on(mesh, 'click', () => {
+      state.mesh = !state.mesh;
+      press(mesh, state.mesh);
+      drawPlace(state);
+    });
+    on(zoom, 'click', () => {
+      state.zoom = !state.zoom;
+      press(zoom, state.zoom);
       state.zoomK = 1;             // выключили и включили - вид снова стартовый
       state.focus = null;
       drawPlace(state);
     });
 
-    on(document.getElementById('place-reset'), 'click', () => {
-      state.spec = { fit: 'contain', angle: 0, scale: 1, scale_y: 1,
-                     offset: [0, 0], flip_x: false, flip_y: false };
-      state.zoomK = 1;
-      state.focus = null;
+    // Панель над холстом: то, что мышью делается жестом, который надо знать.
+    // Посадку меняем НА МЕСТЕ: запись слоя - та же, что лежит в стопке
+    const tool = (id, change) => on(document.getElementById(id), 'click', () => {
+      change(state.spec);
       sync();
     });
-    on(document.getElementById('place-ok'), 'click', () => settle({ act: 'ok' }));
-    on(document.getElementById('place-cancel'), 'click', () => settle({ act: 'cancel' }));
-    on(placeDlg, 'cancel', (e) => { e.preventDefault(); settle({ act: 'cancel' }); });
+    tool('place-rotl', (s) => { s.angle = ((s.angle - 90) % 360 + 360) % 360; });
+    tool('place-rotr', (s) => { s.angle = (s.angle + 90) % 360; });
+    tool('place-flipx', (s) => { s.flip_x = !s.flip_x; });
+    tool('place-flipy', (s) => { s.flip_y = !s.flip_y; });
+    tool('place-center', (s) => { s.offset = [0, 0]; });
+    tool('place-reset', (s) => {
+      Object.assign(s, freshSpec(s.path));
+      state.zoomK = 1;
+      state.focus = null;
+    });
 
+    // Файл спрашиваем до правки: отказ от выбора ничего не меняет
+    const withFile = (replace) => async () => {
+      const file = await chooseFile('image/*,.vtf');
+      if (file) placeFile(file, replace);
+    };
+    on(document.getElementById('place-add'), 'click', withFile(false));
+    const dropLayer = () => {
+      state.layers.splice(state.sel, 1);
+      // Сняли последнюю - править больше нечего, это и есть ответ
+      if (!state.layers.length) { settle(true); return; }
+      select(Math.min(state.sel, state.layers.length - 1));
+    };
+
+    // Файл, брошенный на холст, ложится новым слоем. Событие гасим здесь:
+    // иначе его поймала бы страница под окном и положила картинку на модель
+    const stage = document.getElementById('place-stage');
+    const isFile = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    on(stage, 'dragover', (e) => {
+      if (!isFile(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      stage.classList.add('is-drop');
+    });
+    on(stage, 'dragleave', (e) => {
+      if (!stage.contains(e.relatedTarget)) stage.classList.remove('is-drop');
+    });
+    on(stage, 'drop', (e) => {
+      if (!isFile(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      stage.classList.remove('is-drop');
+      const file = e.dataTransfer.files[0];
+      if (file) placeFile(file, false);
+    });
+
+    on(document.getElementById('place-ok'), 'click', () => settle(true));
+    on(document.getElementById('place-cancel'), 'click', () => settle(false));
+    on(placeDlg, 'cancel', (e) => { e.preventDefault(); settle(false); });
+
+    const n = state.layers.length;
+    select(add ? n - 1 : ((selected % n) + n) % n);
     if (!placeDlg.open) placeDlg.showModal();
   });
 }
 
-/**
- * Колонка картинок части
- *
- * Строки лежат так же, как картинки: верхняя - поверх. Щелчок выбирает
- * слой, а перетаскивание переставляет - порядок в списке и есть порядок
- * наложения. Тащим сами, без drag-and-drop браузера: тому нужен призрак и
- * долгое нажатие на тачпаде, а здесь строка едет за курсором сразу, соседи
- * уступают место плавно, и отпущенная доезжает до своей щели.
- */
-function showLayers(layers, on, settle) {
-  const panel = document.getElementById('place-layers');
-  panel.hidden = !layers;
-  if (!layers) return;
-  const list = document.getElementById('place-list');
-  list.innerHTML = '';
-  const count = layers.images.length;
-  document.getElementById('place-count').textContent = String(count);
-  //: Порядок показа -> номер слоя в стопке (стопка считается снизу вверх)
-  const shown = layers.images.map((_, i) => i).reverse();
-  const rows = shown.map((li, di) => {
-    const img = layers.images[li];
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'place__layer' + (li === layers.selected ? ' is-active' : '');
-    row.innerHTML = '<span class="place__grip" aria-hidden="true"></span>'
-      + '<span class="place__thumb"><img alt=""></span>'
-      + '<span class="place__meta"><span class="place__name mono"></span>'
-      + '<span class="place__pos"></span></span>';
-    row.querySelector('img').src = api.fileUrl(img.path);
-    const name = row.querySelector('.place__name');
-    name.textContent = String(img.path).split(/[\\/]/).pop();
-    name.title = name.textContent;
-    row.querySelector('.place__pos').textContent =
-      count === 1 ? '' : di === 0 ? 'поверх' : di === count - 1 ? 'внизу' : '';
-    return row;
-  });
-  list.append(...rows);
-
-  //: Длительность из темы: при выключенной анимации - ноль, и ждать нечего
-  const dur = parseFloat(getComputedStyle(document.documentElement)
-    .getPropertyValue('--dur')) || 0;
-  //: Шаг между строками - расстояние между их верхами, вместе с зазором
-  const pitch = () => (rows.length > 1
-    ? rows[1].offsetTop - rows[0].offsetTop : rows[0].offsetHeight);
-
-  let drag = null;
-  rows.forEach((row, di) => {
-    on(row, 'click', () => {
-      // После перетаскивания браузер шлёт и щелчок - он не выбор
-      if (row.dataset.dragged) { delete row.dataset.dragged; return; }
-      if (shown[di] !== layers.selected) settle({ act: 'layer', layer: shown[di] }, false);
-    });
-    on(row, 'pointerdown', (e) => {
-      if (e.button !== 0 || rows.length < 2) return;
-      drag = { di, y0: e.clientY, moved: false, target: di };
-      row.setPointerCapture(e.pointerId);
-    });
-    on(row, 'pointermove', (e) => {
-      if (!drag || drag.di !== di) return;
-      const dy = e.clientY - drag.y0;
-      // Порог: щелчок с дрожью руки - всё ещё щелчок
-      if (!drag.moved) {
-        if (Math.abs(dy) < 4) return;
-        drag.moved = true;
-        row.dataset.dragged = '1';
-        row.classList.add('is-dragging');
-        list.classList.add('is-sorting');
-      }
-      const h = pitch();
-      row.style.transform = `translateY(${dy}px) scale(1.02)`;
-      const target = Math.max(0, Math.min(rows.length - 1, Math.round(di + dy / h)));
-      if (target === drag.target) return;
-      drag.target = target;
-      // Соседи между старым и новым местом сдвигаются на одну строку
-      rows.forEach((other, oi) => {
-        if (other === row) return;
-        let shift = 0;
-        if (di < target && oi > di && oi <= target) shift = -h;
-        else if (di > target && oi >= target && oi < di) shift = h;
-        other.style.transform = shift ? `translateY(${shift}px)` : '';
-      });
-    });
-    const finish = (e) => {
-      if (!drag || drag.di !== di) return;
-      const { target, moved } = drag;
-      drag = null;
-      if (row.hasPointerCapture(e.pointerId)) row.releasePointerCapture(e.pointerId);
-      if (!moved) return;
-      // Довести строку до щели плавно - и только потом отдать ответ: список
-      // перестроится уже на том же месте, и глазу не за что зацепиться
-      row.classList.remove('is-dragging');
-      list.classList.remove('is-sorting');
-      row.classList.add('is-settling');
-      row.style.transform = `translateY(${(target - di) * pitch()}px)`;
-      setTimeout(() => {
-        if (target !== di) {
-          settle({ act: 'move', layer: shown[di], to: shown[target] }, false);
-          return;
-        }
-        rows.forEach((r) => { r.style.transform = ''; r.classList.remove('is-settling'); });
-      }, dur);
-    };
-    on(row, 'pointerup', finish);
-    on(row, 'pointercancel', finish);
-  });
-
-  // Файл спрашиваем ЗДЕСЬ, до ответа окна: отказ от выбора файла ничего не
-  // меняет, и окно остаётся жить как было
-  const withFile = (act) => async () => {
-    const file = await chooseFile('image/*,.vtf');
-    if (file) settle({ act, file }, false);
-  };
-  on(document.getElementById('place-add'), 'click', withFile('add'));
-  on(document.getElementById('place-replace'), 'click', withFile('replace'));
-  on(document.getElementById('place-drop'), 'click', () => settle({ act: 'drop' }, false));
-}
+let editing = false;
 
 /**
- * Редактор картинок части: окно посадки со списком слоёв слева
+ * Редактор картинок части: окно со стопкой слоёв
  *
- * Открывается на слое `layer` (отрицательный - с конца). Каждое действие в
- * списке - свой шаг: посадка правимого слоя сохраняется при любом уходе с
- * него, добавление кладёт картинку поверх и открывает её, замена ставит
- * файл на место слоя с его посадкой, «Убрать» снимает слой, перетаскивание
- * переставляет в стопке (выше в списке - поверх на модели). Всё это -
- * обычные правки предмета, Ctrl+Z их откатывает по одной. «Отмена» бросает
- * только несохранённую посадку текущего слоя.
+ * Открывается на слое `layer` (отрицательный - с конца). `add` - путь
+ * картинки, которая ложится поверх при открытии: брошенная на модель или
+ * выбранная файлом. Всё, что сделано в окне, уходит в Python одним вызовом
+ * по «Готово» - одна склейка и один шаг Ctrl+Z. «Отмена» бросает всё,
+ * включая только что брошенную картинку
  */
-export async function editPartLayers(part, layer = -1) {
-  let current = layer;
-  for (;;) {
-    const shape = await api.partShape(P.material, part, current);
-    if (shape.error) { hintParts(shape.error); break; }
-    const images = shape.images || [];
-    if (!images.length || !shape.image) break;       // снять больше нечего
-    current = shape.layer;
-
-    const res = await askPlacement(shape, api.fileUrl(shape.image.path), shape.image,
-                                   { images, selected: current });
-    if (res.act === 'cancel') return;
-    if (res.changed && res.act !== 'drop'
-        && !await persist(part, null, res.spec, current)) return;
-    if (res.act === 'ok') return;
-
-    if (res.act === 'layer') {
-      current = res.layer;
-    } else if (res.act === 'drop') {
-      if (!await persist(part, null, null, current)) return;
-      current = Math.min(current, images.length - 2);
-    } else if (res.act === 'add') {
-      if (!await persist(part, await api.upload(res.file), null, null)) return;
-      current = -1;                                   // новая - верхняя
-    } else if (res.act === 'paste') {
-      if (!await pasteImageTo(part)) return;
-      current = -1;                                   // вставленная - верхняя
-    } else if (res.act === 'replace') {
-      if (!await persist(part, await api.upload(res.file), res.spec, current)) return;
-    } else if (res.act === 'move') {
-      hintParts('Переставляю…');
-      const moved = await api.movePartTexture(P.material, part, res.layer, res.to);
-      if (moved.error) { hintParts(moved.error); return; }
-      applyView(moved);
-      await refreshParts();
-      hintParts('');
-      current = res.to;
-    }
+export async function editPartLayers(part, layer = -1, add = null) {
+  // Окно одно на всё приложение: второй вызов, пока первое открывается
+  // (двойной щелчок, второй бросок), повесил бы на те же кнопки вторую стопку
+  if (editing) return;
+  editing = true;
+  let stack;
+  try {
+    const shape = await api.partShape(P.material, part, null, true);
+    if (shape.error) { hintParts(shape.error); return; }
+    stack = await askLayers(shape, layer, add);
+  } finally {
+    editing = false;
   }
-  if (placeDlg.open) placeDlg.close();
+  if (!stack) return;
+  hintParts(stack.length ? 'Наложение на часть…' : 'Убираю…');
+  const res = await api.setPartLayers(P.material, part, stack);
+  if (res.error) { hintParts(res.error); return; }
+  applyView(res);
+  const fresh = await refreshParts();
+  // Куски, делящие развёртку, красятся вместе. Сказать об этом надо в тот
+  // момент, когда это произошло, а не только подсказкой на кнопке
+  const painted = ((fresh && fresh.parts) || []).find((p) => p.id === part);
+  hintParts(stack.length && painted && painted.shared.length
+    ? 'Эта часть делит развёртку с соседними - они покрасились вместе'
+    : '');
 }
 
-/** Одно действие над картинками части - и модель с полосой частей следом */
+/** Одно действие над картинками части вне окна - и модель с полосой следом */
 async function persist(part, path, options, layer) {
   hintParts(path ? 'Наложение на часть…' : 'Перекладываю…');
   const res = await api.setPartTexture(P.material, part, path, options, layer);

@@ -103,6 +103,52 @@
   background: var(--hairline);
 }
 
+/* В низком кадре колонка прокручивается, а не уходит за края */
+/* z-index: меню «…» живёт в колонке и должно лечь поверх панели настроек */
+#partspaint .ptools__bar { max-height: calc(100% - 24px); z-index: 1; }
+#partspaint .ptools__body { min-height: 0; overflow-y: auto; scrollbar-width: none; }
+/* Меню «…»: слева от колонки, низом вровень с ней */
+.pbar__menu {
+  position: absolute;
+  right: calc(100% + 6px);
+  bottom: 0;
+  z-index: 5;
+  min-width: 190px;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline-strong);
+  background: var(--overlay);
+}
+.pbar__menu[hidden] { display: none; }
+.pbar__menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.pbar__menu button:hover { background: var(--bg); }
+.pbar__menu .pbar__danger { color: var(--accent); }
+.pbar__menu .mono { color: var(--ink-mute); font-size: 11px; }
+.pbar__menusep { height: 1px; margin: 4px 0; background: var(--hairline); }
+/* Окантовка в настройках кисти: своим блоком под волосяной линией */
+.parts__edge {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.parts__edgerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
 /* Чем красят: два квадрата внахлёст, как в редакторах изображений. Второй
    виден только при переходе - иначе он обещал бы цвет, которым ничего не
    красится */
@@ -341,9 +387,6 @@
   gap: 4px;
   overflow-y: auto;
 }
-/* Чип с двумя-тремя действиями не влезает в треть - он занимает две */
-.parts__grid .tag.part--wide { grid-column: span 2; }
-
 /* Номер вместо «Часть 7 · 3%»: доля развёртки уехала в подсказку. Двухстрочные
    чипы были втрое шире любого другого тега в приложении */
 .parts .tag {
@@ -382,11 +425,12 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 4px;
+  width: 6px;
   background: var(--paint, var(--accent));
 }
-.parts__grid .tag.is-painted { padding-left: 9px; }
-.parts .tag.is-painted { border-color: var(--accent); color: var(--accent); }
+/* Покрашенную выдаёт её цвет слева, а не рамка: оранжевая рамка значит
+   «под курсором», и две части с ней не различить */
+.parts .tag.is-painted { color: var(--ink); }
 /* Отмечен для слияния. Инверсия, как у всего выбранного в этом интерфейсе, -
    и она не спорит с рамкой покраски: та про цвет, эта про выбор */
 .parts .tag.is-marked {
@@ -396,8 +440,25 @@
 }
 .parts .tag.is-hover { border-color: var(--ink); color: var(--ink); }
 .parts .tag--shared { border-style: dashed; }
-/* Крестик у покрашенной части виден всегда: искать его наведением - то же
-   самое, что прятать */
+/* Действия с частью - у правого края и только при наведении. Левая половина
+   остаётся для щелчка кистью: перекрашивая, в крестик не попасть */
+.part__acts {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px 0 2px;
+  background: var(--surface);
+}
+.part__acts > button { margin-left: 0; }
+.parts__grid .tag:hover .part__acts,
+.parts__grid .tag:focus-within .part__acts { display: flex; }
+/* Номер уступает кнопкам место, иначе они его закрывают */
+.parts__grid .tag:has(.part__acts):hover,
+.parts__grid .tag:has(.part__acts):focus-within { justify-content: flex-start; padding-left: 11px; }
 .parts__x {
   margin-left: 2px;
   border: none;

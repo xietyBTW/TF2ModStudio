@@ -1,6 +1,6 @@
 /*
  * Инструменты режима частей: колонка значков (картинка, кисть, пипетка,
- * ножницы, окантовка, материал), курсор инструмента и пипетка по кадру слева.
+ * ножницы, материал), курсор инструмента и пипетка по кадру слева.
  */
 
 import { t } from './i18n.js';
@@ -14,12 +14,12 @@ import { colorField } from './parts-palette.js';
 //: Как называется выбранный значок. Значок без слова запоминается со второго
 //: раза, а не с первого, поэтому имя стоит над его настройками
 const TOOL_NAMES = { image: 'Картинка', brush: 'Кисть', pick: 'Пипетка',
-                     cut: 'Нарезка', edge: 'Окантовка', material: 'Материал' };
+                     cut: 'Нарезка', material: 'Материал' };
 
 //: У кого есть значок-приставка к курсору. Курсору («положить картинку») и
 //: ножницам она не нужна: у первого дело и есть «показать», у вторых
 //: перекрестие само говорит про разрез
-const TOOL_BADGE = new Set(['brush', 'pick', 'edge', 'material']);
+const TOOL_BADGE = new Set(['brush', 'pick', 'material']);
 
 /**
  * Значок инструмента из разметки: одна копия рисунка на всё приложение
@@ -45,16 +45,19 @@ function toolIcon(name) {
  * Тёмный контур под светлым: курсор ходит и по белой текстуре, и по чёрной, и
  * однотонный на одной из них исчезает.
  */
+//: Стрелка курсора. Своя, а не значок из колонки: у картинки теперь значок
+//: «рамка с пейзажем», а курсору нужна именно стрелка
+const ARROW = '<path d="M3 1.8 3 13.2 6.1 10.3 8.1 14 9.9 13.1 8 9.5 12.2 9.3Z"/>';
+
 function toolCursor(name) {
   if (!TOOL_BADGE.has(name)) return '';
   const badge = toolIcon(name);
-  const arrow = toolIcon('image');
-  if (!badge || !arrow) return '';
+  if (!badge) return '';
   const art = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"'
     + ' viewBox="0 0 32 32" fill="none" stroke-linecap="round"'
     + ' stroke-linejoin="round">'
     + '<g transform="translate(-3.4 -2.2) scale(1.5)" fill="#fff" stroke="#000"'
-    + ' stroke-width=".9">' + arrow.innerHTML + '</g>'
+    + ' stroke-width=".9">' + ARROW + '</g>'
     + '<g transform="translate(16 15)">'
     + '<g stroke="#000" stroke-width="2.6" opacity=".55">' + badge.innerHTML + '</g>'
     + '<g stroke="#fff" stroke-width="1.2">' + badge.innerHTML + '</g></g></svg>';
@@ -83,7 +86,7 @@ function showToolCursor(name) {
 }
 
 /**
- * Какой инструмент выбран: кисть, пипетка, ножницы или окантовка
+ * Какой инструмент выбран: картинка, кисть, пипетка, ножницы или материал
  *
  * Настройки видны только у него: человек в момент времени делает что-то одно,
  * а показ всего разом давал четыре строки под моделью - с «Толщиной»,
@@ -246,7 +249,7 @@ export function showSample(hex, x, y) {
 document.getElementById('parts-drop').addEventListener('click',
   () => showToolGroup(P.tool === 'pick' ? null : 'pick'));
 
-document.querySelector('.ptools__bar').addEventListener('click', (e) => {
+document.querySelector('#partspaint .ptools__bar').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-tool]');
   if (btn) showToolGroup(btn.dataset.tool);
 });

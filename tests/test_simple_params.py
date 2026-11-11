@@ -105,14 +105,21 @@ def test_ensure_attr_creates_missing():
 
 def test_schema_sanity():
     """Каждая запись схемы согласована: kind ↔ количество refs"""
+    from src.services.simple_params import KINDS
+    from src.services.simple_params_schema import GROUPS
+
     for p in SIMPLE_PARAMS:
-        assert p.kind in ("value", "range", "color_pair"), p.key
-        if p.kind == "value":
-            assert len(p.refs) == 1, p.key
-        else:
-            assert len(p.refs) == 2, p.key
+        assert p.kind in KINDS, p.key
+        assert p.group in GROUPS, p.key
+        for variant in p.variants:
+            if p.slots == 2:
+                assert len(variant) == 2, p.key
+            else:
+                assert len(variant) >= 1, p.key
         for r in p.refs:
             assert (r.group is None) == (r.function_name == ""), p.key
+        if p.kind == "choice":
+            assert p.choices, p.key
 
 
 def test_system_attr_without_value_falls_back_to_default():

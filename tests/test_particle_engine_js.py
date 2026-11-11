@@ -1300,3 +1300,26 @@ def test_slow_emitter_births_in_the_past():
     """)
     assert res["born"] <= res["seenAt"] + 1e-6, res
     assert res["alive"] <= 8, res          # две вспышки по 0.1 с - по 3-4 кадра, не 90
+
+
+def test_live_refresh_keeps_particles_and_takes_new_rate():
+    """Живая правка ползунком: темп эмиттера и радиус системы меняются, а
+    частицы, время и счётчик эмиттера остаются - эффект не перезапускается"""
+    res = _run_js(_BARE + """
+      const s = bare({
+        emitters: [{functionName:'emit_continuously',
+                    attrs:{emission_rate:{t:'float',v:10}}}],
+        initializers: [{functionName:'Position Within Sphere Random', attrs:{}}, lifetime(100)],
+        operators: [{functionName:'Lifespan Decay', attrs:{}}]});
+      for (let i = 0; i < 30; i++) s.movement(1/30);
+      const before = s.particles.length, t = s.curTime;
+      s.def.emitters[0].attrs.emission_rate.v = 100;
+      s.def.attrs.radius.v = 9;
+      s.refreshFromDef();
+      const kept = s.particles.length, time = s.curTime, radius = s.constRadius;
+      for (let i = 0; i < 30; i++) s.movement(1/30);
+      return { before, kept, t, time, radius, after: s.particles.length };
+    """)
+    assert res["kept"] == res["before"] and res["time"] == res["t"], res
+    assert res["radius"] == 9, res
+    assert res["after"] - res["kept"] >= 90, res      # секунда на 100/с

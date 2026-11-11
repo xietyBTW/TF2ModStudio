@@ -6,7 +6,7 @@
 
 import * as api from './api.js';
 import { t } from './i18n.js';
-import { chooseFile } from './util.js';
+import { chooseFile, paintTrack } from './util.js';
 import { stopsEditor } from './lightwarp.js';
 import { el, button, card, fillCss, angleDial } from './sheen-ui.js';
 
@@ -181,7 +181,9 @@ export function createProps(pattern, schema, { changed, syncSwatch }) {
   function fieldRow(layer, f) {
     const row = el('div', 'sheenb__row');
     const ctl = el('div', 'sheenb__rowctl');
-    row.append(el('span', 'sheenb__lbl', f.label), ctl);
+    // Единица из подписи («Наклон, °») - после числа, как в частицах
+    const [, label, unit] = /^(.*?)(?:, (\S{1,3}))?$/.exec(f.label);
+    row.append(el('span', 'sheenb__lbl', f.view === 'range' ? label : f.label), ctl);
     if (f.view === 'angle') {
       ctl.append(angleDial(layer[f.key], (a) => { layer[f.key] = a; changed({ time: false }); }));
     } else if (f.view === 'choice') {
@@ -210,11 +212,14 @@ export function createProps(pattern, schema, { changed, syncSwatch }) {
         const v = Math.min(f.max, Math.max(f.min, Number(out.value) || 0));
         layer[f.key] = v;
         input.value = v;
+        paintTrack(input);
         show();
         changed({ time: false });
       });
       show();
+      paintTrack(input);
       ctl.append(input, out);
+      if (unit) ctl.append(el('span', 'sheenb__unit', unit));
     } else if (f.view === 'seed') {
       const again = button(t('Перемешать'), 'tag');
       again.addEventListener('click', () => {

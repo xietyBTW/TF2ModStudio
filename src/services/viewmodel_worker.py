@@ -30,7 +30,7 @@ from src.services.base_worker import Signal
 from src.data import viewmodel_anims
 from src.data.weapons import WEAPON_MDL_PATHS
 from src.services import model_decompile_service as mds
-from src.services import qc_skin_parser, smd_service
+from src.services import qc_skin_parser, scene_textures, smd_service
 from src.services import viewmodel_animation, viewmodel_scene
 from src.services import weapon_anim_catalog as anim_catalog
 from src.services.base_worker import BaseWorker
@@ -107,11 +107,15 @@ class ViewmodelPreviewWorker(BaseWorker):
         team: str = "red",
         decor_smd: str = "",
         decor_prefix: str = "deco:",
+        mod_vpk_path: str = "",
         lang: str = 'en',
         parent=None,
     ):
         super().__init__(parent)
         self.weapon_key = weapon_key
+        #: Чужой мод из VPK, чей меш в руке: текстуры его материалов лежат в
+        #: нём, а не в игре - без него модель в руке была белой
+        self.mod_vpk_path = mod_vpk_path or ""
         #: Гирлянда поверх оружия (см. festive_decor). Текстуры ей даёт
         #: вьювер своим слоем, здесь нужна только геометрия
         self.decor_smd = decor_smd or ""
@@ -151,13 +155,16 @@ class ViewmodelPreviewWorker(BaseWorker):
         #: Модель в руке: сам предмет либо то, что держат вместо надетого
         #: (дудка знамени при рюкзаке в каталоге) - заполняется в run()
         self._hand_key = weapon_key
+        self._hides_hands = False
         self._p = self._PROGRESS.get(lang, self._PROGRESS['en'])
         self._preview_dir: Optional[str] = None
 
     # Точка входа
 
     def run(self) -> None:
-        reader = GameVpkReader([self.textures_vpk_path, self.misc_vpk_path])
+        # Мод - первым: как и в игре, его файлы перекрывают игровые
+        reader = GameVpkReader(scene_textures.archives(
+            self.mod_vpk_path, self.textures_vpk_path, self.misc_vpk_path))
         try:
             self._preview_dir = tempfile.mkdtemp(prefix="tf2sg_fp_")
 
@@ -175,6 +182,7 @@ class ViewmodelPreviewWorker(BaseWorker):
             # лица не виден, показываем дудку с её анимациями
             info = viewmodel_anims.anim_info(self.weapon_key, self.tf2_root)
             self._hand_key = (info.held if info and info.held else self.weapon_key)
+            self._hides_hands = bool(info and dict(info.hides).get("hands"))
             if self._hand_key != self.weapon_key:
                 logger.info(f"[fp] {self.weapon_key} надевается, в руке {self._hand_key}")
 
@@ -496,18 +504,21 @@ class ViewmodelPreviewWorker(BaseWorker):
 
         В модели рук лежит не только рука: у солдата там же РАКЕТА для
         перезарядки. В покое её быть не должно, а в самой перезарядке - должна,
-        поэтому список зависит от того, что проигрываем
+        поэтому список зависит от того, что проигрываем. Перчатки, которые
+        прячут кулаки, прячут и кисть класса
         """
-        if self.action in RELOAD_ACTIONS:
+        hidden = set(viewmodel_anims.ARMS_HAND_MATERIALS) if self._hides_hands else set()
+        if self.action not in RELOAD_ACTIONS:
+            hidden |= viewmodel_anims.ARMS_PROP_MATERIALS
+        if not hidden:
             return None
         from src.services.smd_to_obj_service import SmdToObjService
         found = SmdToObjService.scan_material_names([arms_smd, *extra])
-        props = {n for n in found
-                 if n.lower() in viewmodel_anims.ARMS_PROP_MATERIALS}
-        if not props:
+        skip = {n for n in found if n.lower() in hidden}
+        if not skip:
             return None
-        logger.info(f"[fp] реквизит рук скрыт вне перезарядки: {sorted(props)}")
-        return found - props
+        logger.info(f"[fp] скрыто в модели рук: {sorted(skip)}")
+        return found - skip
 
     def _emit_scene(self, reader, scene, weapon_dir: str, arms_dir: str,
                     carrier_dir: str = "") -> None:
@@ -517,6 +528,10 @@ class ViewmodelPreviewWorker(BaseWorker):
         # сам миниган - в своей. Ищем по обеим, порядок значения не имеет
         weapon_cd = _cdmaterials(weapon_dir) + (
             _cdmaterials(carrier_dir) if carrier_dir else [])
+        # Меш из мода ищет текстуры в своих папках: они записаны в QC рядом с
+        # его разбором, а у стокового оружия их нет
+        if self.custom_smd_path:
+            weapon_cd += _cdmaterials(os.path.dirname(self.custom_smd_path))
         arms_cd = _cdmaterials(arms_dir)
         # Экран модели (циферблат Звона смерти): его картинки - vgui-материалы
         # из materials/vgui, а не из $cdmaterials модели. У модели вида
@@ -531,16 +546,8 @@ class ViewmodelPreviewWorker(BaseWorker):
         from src.services.festive_decor import PREFIX
         weapon_names = [n for n in weapon_names if not n.startswith(PREFIX)]
 
-        textures: dict = {}
-        hints: dict = {}
-        for names, cdmaterials in ((weapon_names, weapon_cd),
-                                   (arms_names, arms_cd)):
-            if not names:
-                continue
-            textures.update({name: png for name, png
-                             in resolver.texture_map(names, cdmaterials).items()
-                             if png})
-            hints.update(resolver.render_map(names, cdmaterials))
+        textures, hints = scene_textures.resolve(
+            resolver, ((weapon_names, weapon_cd), (arms_names, arms_cd)))
         hints.update(screen)
         textures.update(self._blue_arms(resolver, arms_names, arms_cd, arms_dir))
 

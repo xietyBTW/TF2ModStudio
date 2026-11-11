@@ -24,97 +24,6 @@ class MergeVPKService:
     """Сервис для объединения VPK файлов"""
     
     @staticmethod
-    def check_duplicate_weapons(vpk_files: List[Path]) -> Dict[str, List[str]]:
-        """
-        Проверяет наличие дубликатов оружий в VPK файлах
-        
-        Args:
-            vpk_files: Список путей к VPK файлам
-            
-        Returns:
-            Словарь {weapon_name: [vpk_file1, vpk_file2, ...]} с оружиями, найденными в нескольких VPK
-        """
-        if not VPK_AVAILABLE:
-            return {}
-        
-        # Словарь для хранения оружий и VPK файлов, в которых они найдены
-        weapon_to_vpk: Dict[str, List[str]] = {}
-        
-        for vpk_file in vpk_files:
-            if not vpk_file.exists():
-                continue
-            
-            try:
-                vpk_archive = vpk.open(str(vpk_file))
-                
-                # Проходим по всем файлам в VPK
-                for file_path in vpk_archive:
-                    # Ищем файлы моделей (.mdl)
-                    if file_path.lower().endswith('.mdl'):
-                        # Извлекаем имя оружия из пути
-                        weapon_name = MergeVPKService._extract_weapon_name(file_path)
-                        if weapon_name:
-                            if weapon_name not in weapon_to_vpk:
-                                weapon_to_vpk[weapon_name] = []
-                            if vpk_file.name not in weapon_to_vpk[weapon_name]:
-                                weapon_to_vpk[weapon_name].append(vpk_file.name)
-                
-            except Exception as e:
-                logger.warning(f"Ошибка при проверке {vpk_file.name}: {e}", exc_info=True)
-                continue
-        
-        # Фильтруем только оружия, найденные в нескольких VPK
-        duplicates = {weapon: vpk_list for weapon, vpk_list in weapon_to_vpk.items() if len(vpk_list) > 1}
-        
-        return duplicates
-    
-    @staticmethod
-    def _extract_weapon_name(file_path: str) -> str:
-        """
-        Извлекает имя оружия из пути к MDL файлу
-        
-        Примеры:
-            models/weapons/c_models/c_scattergun/c_scattergun.mdl -> c_scattergun
-            models/workshop_partner/weapons/c_models/c_scattergun.mdl -> c_scattergun
-            materials/models/weapons/c_models/c_scattergun.mdl -> c_scattergun
-        
-        Args:
-            file_path: Путь к MDL файлу
-            
-        Returns:
-            Имя оружия или None
-        """
-        # Нормализуем путь
-        path = file_path.replace('\\', '/').lower()
-        
-        # Убираем расширение .mdl
-        if not path.endswith('.mdl'):
-            return None
-        
-        path = path[:-4]  # Убираем .mdl
-        
-        # Разбиваем путь на части
-        parts = path.split('/')
-        
-        # Ищем имя файла (обычно последняя часть пути)
-        if not parts:
-            return None
-        
-        filename = parts[-1]
-        
-        # Имя оружия обычно начинается с c_ или v_
-        if filename.startswith('c_') or filename.startswith('v_'):
-            return filename
-        
-        # Если это не так, пытаемся найти оружие в пути
-        # Ищем части пути, которые могут быть именами оружий
-        for part in reversed(parts):
-            if part.startswith('c_') or part.startswith('v_'):
-                return part
-        
-        return None
-    
-    @staticmethod
     def merge_vpk_files(
         vpk_files: List[Path],
         output_filename: str,
@@ -256,7 +165,9 @@ class MergeVPKService:
         Объединяет содержимое source_dir в target_dir
         
         Если папки с одинаковыми именами существуют, они объединяются рекурсивно.
-        Если файлы с одинаковыми именами существуют, они не перезаписываются (оставляем оба)
+        Файл, который уже положил мод выше в списке, остаётся его: игра читает
+        файл только по точному пути, и копия под другим именем была бы мусором
+        в VPK (см. merge_plan.conflicts - там же это видно человеку)
         
         Args:
             source_dir: Исходная директория
@@ -279,20 +190,9 @@ class MergeVPKService:
                 source_file = Path(root) / file_name
                 target_file = target_root / file_name
                 
-                # Если файл уже существует, создаем уникальное имя
                 if target_file.exists():
-                    # Добавляем суффикс к имени файла
-                    stem = target_file.stem
-                    suffix = target_file.suffix
-                    counter = 1
-                    
-                    while target_file.exists():
-                        new_name = f"{stem}_{counter}{suffix}"
-                        target_file = target_root / new_name
-                        counter += 1
-                    
-                    logger.debug(f"Файл {rel_root / file_name} уже существует, переименован в {target_file.name}")
-                
+                    logger.debug(f"{rel_root / file_name}: остаётся из мода выше в списке")
+                    continue
                 # Копируем файл
                 copy_file_safe(source_file, target_file)
     

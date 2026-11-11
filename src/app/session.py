@@ -259,6 +259,10 @@ class AppSession:
         # проверяется, в руках и в движении
         m.weapon.connect(
             lambda key, smd: self._put('mod_weapon', key=key, ready=bool(smd)))
+        # Мод неба: грани берутся из состояния (mod_sky) - перечитать показ
+        m.sky.connect(lambda _faces: self._put('materials', materials={}))
+        # Синие карточки стали синей стороной красных - перечитать альбом
+        m.links.connect(lambda: self._put('materials', materials={}))
         m.failed.connect(self._fail)
 
         # Скайбокс: шесть граней кубмапы.
@@ -280,9 +284,12 @@ class AppSession:
 
         cx = cy = cz = 0.0
         scale = 1.0
+        # Пусто - модели нет (мод из одних текстур скайбокса, спрея): кадр
+        # покажет это сам, мерить нечего
         try:
-            with open(obj_path, 'r', encoding='utf-8') as f:
-                cx, cy, cz, scale = compute_obj_bounds(f.read())
+            if obj_path:
+                with open(obj_path, 'r', encoding='utf-8') as f:
+                    cx, cy, cz, scale = compute_obj_bounds(f.read())
         except OSError as exc:
             logger.warning(f"не прочитать OBJ для габаритов: {exc}")
 
@@ -298,6 +305,7 @@ class AppSession:
             except Exception:      # noqa: BLE001 - кадр важнее доделки
                 logger.exception("доделка после загрузки модели не удалась")
         self._put('model_ready', obj=obj_path, texture=texture,
+                  unused=not obj_path and self.preview.custom_vpk_unused,
                   bounds={'cx': cx, 'cy': cy, 'cz': cz, 'scale': scale})
 
     def _fail(self, error: str) -> None:
@@ -680,10 +688,11 @@ class AppSession:
         # Чужой мод из VPK - тоже оружие, просто опознанное по путям внутри
         # файла. Показываем его тем же видом: скелет и анимации игровые, меш
         # из мода
-        custom_smd, keep = '', False
+        custom_smd, keep, mod_vpk = '', False, ''
         if not key and self.preview.custom_vpk_mode:
             key = self.preview.custom_vpk_weapon or ''
             custom_smd, keep = self.preview.custom_vpk_smd or '', True
+            mod_vpk = self._vpk_mod_path or ''
         elif self.preview.custom_smd_path:
             # Своя модель (SMD либо импорт OBJ/GLB с запечённой подгонкой)
             # едет в руку тем же слиянием, что и в мод: одна кость - жёсткий
@@ -719,7 +728,8 @@ class AppSession:
                             paths['root'], action=action, lang=lang,
                             custom_smd=custom_smd, keep_materials=keep,
                             decor_smd=decor_smd,
-                            decor_prefix=decor['decor_prefix'])
+                            decor_prefix=decor['decor_prefix'],
+                            mod_vpk=mod_vpk)
         return {'started': True, 'action': action, 'rig': _viewmodel_rig()}
 
     def leave_first_person(self) -> Dict[str, Any]:
@@ -791,8 +801,9 @@ class AppSession:
         if 'error' in paths:
             return paths
         if getattr(self, '_mode', '') != 'hat':
-            from src.app import weapon_wear
-            args = weapon_wear.scene_args(self, paths['root'])
+            from src.app import mod_hat, weapon_wear
+            args = (mod_hat.scene_args(self, paths['root'], lang) if mod_hat.is_hat(self.preview)
+                    else weapon_wear.scene_args(self, paths['root']))
             if 'error' in args:
                 return args
             self.viewmodel.stop()
@@ -818,7 +829,7 @@ class AppSession:
                              lang=lang, hidden_bodygroups=self._hat_hides(item))
         return {'started': True}
 
-    def _hat_catalog_item(self, tf2_root: str, lang: str):
+    def _hat_catalog_item(self, tf2_root: str, lang: str, keys=None):
         """
         Строка каталога показанной шапки (HatItem) либо None
 
@@ -831,7 +842,7 @@ class AppSession:
         def norm(p) -> str:
             return str(p or '').replace('\\', '/').lower()
 
-        keys = {norm(self._hat_key), norm(self.preview.weapon_key)} - {''}
+        keys = {norm(k) for k in (keys or (self._hat_key, self.preview.weapon_key))} - {''}
         for h in parse_hats(tf2_root, lang):
             own = {norm(h.mdl_path), *map(norm, (h.per_class_models or {}).values())}
             for st in h.styles or ():
@@ -1134,9 +1145,13 @@ class AppSession:
     # War Paint - src/app/paintkit_editor.py (self.paintkits)
 
 
-    def load_vpk_mod(self, path: str = '', lang: str = 'ru') -> Dict[str, Any]:
+    def load_vpk_mod(self, path: str = '', lang: str = 'ru',
+                     model: str = '') -> Dict[str, Any]:
         """
         Показывает чужой мод из VPK: его модель и его текстуры
+
+        `model` - какую из моделей мода показать (путь MDL внутри VPK), её
+        выбирает человек, когда моделей несколько; пусто - само оружие
 
         Предмет при этом не меняется: мод накладывается поверх текущего выбора,
         и его путь уходит в сборку как источник (``custom_vpk_source_path``) -
@@ -1151,7 +1166,22 @@ class AppSession:
         if 'error' in paths:
             return paths
 
+        # До сбросов: мод, которого не показать, не должен стирать то, что
+        # сейчас на экране
+        from src.services import vpk_mod_models
+        try:
+            import vpk as vpklib
+            why = vpk_mod_models.why_not_shown(list(vpklib.open(path)), lang)
+        except Exception:                                    # noqa: BLE001
+            why = ''          # битый VPK объяснит воркер
+        if why:
+            return {'error': why}
+
         self.controller.stop()
+        # Сцена прошлого предмета («На персонаже», руки) прислала бы кадр уже
+        # поверх нового мода
+        self.taunt.stop()
+        self.viewmodel.stop()
         self.decor.forget()
         self._vpk_mod_path = path
         # Показанный мод - это и есть предмет: приложение так же переключает
@@ -1161,7 +1191,8 @@ class AppSession:
         self.preview.forget_user_edits()
         self._restore_work()
         self._edits_reset()
-        self.vpk_mod.load(path, paths['misc_vpk'], paths['textures_vpk'], lang=lang)
+        self.vpk_mod.load(path, paths['misc_vpk'], paths['textures_vpk'], lang=lang,
+                          model=str(model or ''))
         logger.info(f"мод из VPK: {path}")
         return {'started': True, 'path': path}
 
@@ -1301,7 +1332,7 @@ class AppSession:
         with self._lock:
             was_smd, obj, was_fit = p.custom_smd_path, p.custom_obj_path, p.custom_fit
             was_pano = p.textures.skybox_pano()
-            was_decor = dict(p.decor_models)
+            was_decor = self.decor.shapes()
             was_parts = dict(p.part_models)
             painted = set(p.part_textures) | set(p.part_colors)
             p.forget_user_edits()
@@ -1442,7 +1473,7 @@ class AppSession:
         from src.services import work_keeper
         with self._lock:
             had_custom = bool(self.preview.custom_smd_path)
-            was_decor = dict(self.preview.decor_models)
+            was_decor = self.decor.shapes()
             work_keeper.forget(self.preview, self._work_key())
             # Стили шапки - тот же предмет: оставить их правки значило бы
             # собрать в мод то, что человек только что попросил забыть
@@ -1467,7 +1498,7 @@ class AppSession:
     def restore_work(self, lang: str = 'ru') -> Dict[str, Any]:
         """Возвращает отложенную работу над открытым предметом"""
         # Замок берёт сам `_restore_work` - он же зовётся при открытии предмета
-        was_decor = dict(self.preview.decor_models)
+        was_decor = self.decor.shapes()
         if not self._restore_work(asked=True):
             return {'error': 'Сохранённых правок у этого предмета нет'}
         # В работе была своя модель - в кадре должна стоять она, а не игровая
@@ -1645,9 +1676,13 @@ class AppSession:
         t = self.preview.textures
         mode = (self.preview.current_object or ('', '', ''))[0]
         is_hands = bool(mode) and mode in HAND_MODE_KEYS
+        shown = self._painted(self.preview.visible_textures())
 
         return {
-            'textures': self._painted(self.preview.visible_textures()),
+            'textures': shown,
+            # Где на карточке не игровой оригинал - там меню предлагает
+            # экспортировать и его
+            'own_cards': self.tools.changed_cards(shown),
             # Меши красятся ПОЛНЫМ набором: карточки отфильтрованы, а служебная
             # геометрия без текстуры осталась бы серой
             'scene': self._painted(self.preview.scene_textures()),
@@ -1721,6 +1756,12 @@ class AppSession:
             'can_bake_festive': not self.preview.custom_vpk_mode,
             # Виды гирлянд со своей моделью: «Убрать свою модель» спросит, что
             'decor_models': sorted(self.preview.decor_models),
+            # Мод неба без модели: {грань: карточка} - кадр собирает кубмапу
+            'mod_sky': (dict(self.preview.custom_vpk_sky)
+                        if self.preview.custom_vpk_mode else {}),
+            # Обтянута ли показанная гирлянда: подсказка «висит как на
+            # стоковой» тогда уже неправда
+            'decor_wrapped': bool(self.preview.decor_wrapped.get(self.decor.kind)),
             # Есть ли что делить на части. Кнопка иначе висела бы доступной у
             # скайбокса, спрея и просто до того, как модель приехала, - и
             # обещала бы действие, которого нет
@@ -2062,26 +2103,49 @@ class AppSession:
         """
         def warm() -> None:
             try:
+                from src.config.app_config import AppConfig
+                from src.data import viewmodel_anims
+                from src.data.hats_parser import parse_hats
+                from src.services import game_texture_index
+                from src.services.particle_editor_service import ParticleEditorService
                 from src.services.tf2_paths import TF2Paths
                 from src.services.vtf_preview_service import open_vpks
 
                 paths = self.tf2_paths()
-                if 'error' in paths:
-                    return
-                open_vpks([paths['misc_vpk'], paths['textures_vpk'],
-                           *TF2Paths.resolve_hl2_vpks(paths['root']),
-                           *self.sounds.sound_vpks(paths['tf_dir'])])
+                lang = AppConfig.load_config().get('language') or 'ru'
+            except Exception as exc:                      # noqa: BLE001
+                logger.debug(f"прогрев не начался: {exc}")
+                return
+            if 'error' in paths:
+                return
+            root = paths['root']
+            steps = [
+                lambda: open_vpks([paths['misc_vpk'], paths['textures_vpk'],
+                                   *TF2Paths.resolve_hl2_vpks(root),
+                                   *self.sounds.sound_vpks(paths['tf_dir'])]),
                 # Банки краски - разбор items_game на секунду, первому
                 # щелчку по «Краске» ждать его незачем
-                from src.config.app_config import AppConfig
-                self.paints(AppConfig.load_config().get('language') or 'ru')
+                lambda: self.paints(lang),
                 # Индекс моделей из items_game: по нему у каждого оружия
                 # спрашивают гирлянды, и первый выбор предмета не должен
                 # ждать разбора восьми мегабайт
-                from src.data import viewmodel_anims
-                viewmodel_anims.anim_index(paths['root'])
-            except Exception as exc:                      # noqa: BLE001
-                logger.debug(f"прогрев архивов не удался: {exc}")
+                lambda: viewmodel_anims.anim_index(root),
+                # Каталоги разделов: без них первый вход в звуки ждал 0,7 с,
+                # в шапки и частицы - по 0,15
+                lambda: self.sounds.sounds(lang=lang),
+                lambda: parse_hats(root, lang),
+                lambda: ParticleEditorService.list_game_pcfs(root),
+                # Таблица «текстура -> модели» для модов без модели. Из кэша
+                # мгновенно, после обновления игры - пара секунд. Последней:
+                # нужна реже всего
+                lambda: game_texture_index.load(paths['misc_vpk']),
+            ]
+            # Шаги не зависят друг от друга: упавший не отменяет остальные
+            for step in steps:
+                try:
+                    step()
+                except Exception as exc:                  # noqa: BLE001
+                    logger.debug(f"прогрев: шаг не удался: {exc}")
 
         threading.Thread(target=warm, name='vpk-warm', daemon=True).start()
 

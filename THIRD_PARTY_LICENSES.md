@@ -80,9 +80,6 @@ Also shipped inside the built app:
 
 The WebView2 runtime itself is not shipped; Windows provides it.
 
-Optional: `vtf2img` (MIT) converts extracted textures to PNG, TGA or JPG when it is
-installed.
-
 The interface no longer uses Qt; PySide6 is not a dependency of the project.
 
 ## JavaScript libraries

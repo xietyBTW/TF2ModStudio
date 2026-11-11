@@ -97,11 +97,27 @@ PCF_KINDS = [
     ('powerups', 'game', ''), ('doomsday', 'game', ''), ('passtime', 'game', ''),
     ('rankup', 'game', ''), ('training', 'game', ''), ('vgui', 'game', ''),
     ('stamp', 'game', ''), ('npc_fx', 'game', ''),
-    ('unusual', 'unusual', ''), ('item_fx', 'unusual', ''), ('killstreak', 'unusual', ''),
+    ('unusual', 'unusual', ''), ('killstreak', 'unusual', ''),
     ('level_fx', 'world', ''), ('cinefx', 'world', ''), ('water', 'world', ''),
     ('smoke', 'world', ''), ('harbor', 'world', ''), ('rain', 'world', ''),
     ('stormfront', 'world', ''), ('urban', 'world', ''), ('cig_smoke', 'world', ''),
 ]
+
+
+#: Система item_fx.pcf без другого источника: вид по её имени, первое
+#: вхождение побеждает. Остальное - эффекты предметов (бутерброд, хлебные
+#: перчатки), их место рядом с оружием
+ITEM_FX_NAMES = [
+    ('superrare', 'unusual'), ('superare', 'unusual'), ('unusual', 'unusual'),
+    ('halloween', 'halloween'), ('pumpkin', 'halloween'), ('taunt', 'taunt'),
+]
+
+
+def item_fx_kind(system: str) -> str:
+    """Токен системы item_fx.pcf, о которой ничего не сказали код и скрипты"""
+    low = system.lower()
+    kind = next((k for word, k in ITEM_FX_NAMES if word in low), 'weapon')
+    return f'{kind}:'
 
 
 def weapon_stem(file_stem: str, scripts: Set[str]) -> str:
@@ -248,6 +264,13 @@ def main(sdk_game: str) -> None:
     # (там его зовут по имени класса), а файл говорит «огнемёт»
     for name, pcf in files.items():
         base = pcf.rsplit('/', 1)[-1]
+        if 'item_fx' in base:
+            # item_fx - общий файл эффектов предметов, необычные в нём лишь
+            # часть: «Запасной бак» по имени файла становился анюжуалом.
+            # Источник уже известен - файл ничего не добавляет
+            if name not in sources:
+                add(name, item_fx_kind(name))
+            continue
         for word, kind, label in PCF_KINDS:
             if word in base:
                 add(name, f'{kind}:{label if label in scripts else ""}')

@@ -97,33 +97,23 @@ def build(weapon_key: str, kind: str, misc_vpk: str, textures_vpk: str,
           custom_smd: str = '') -> Optional[Decor]:
     """Достаёт гирлянду и готовит её к показу. None - гирлянды нет
 
-    `custom_smd` - своя модель гирлянды: её треугольники садятся на скелет
+    `custom_smd` - своя геометрия гирлянды (своя модель или обтянутая под
+    свою модель оружия, decor_autofit): её треугольники садятся на скелет
     стоковой (кости по имени, остальное - на главную), QC остаётся стоковым.
     Материалы - свои, у каких в игре нет текстуры, те серые до покраски
 
     Raises:
         model_decompile_service.DecompileError: нет Crowbar или он упал
     """
-    from src.services import model_decompile_service as mds
-    from src.services import qc_skin_parser, smd_service
     from src.services.game_vpk_reader import GameVpkReader
     from src.services.smd_to_obj_service import MeshPart, SmdToObjService
 
-    mdl = kinds(weapon_key, tf2_root).get(kind)
-    if not mdl:
-        return None
-    stem = os.path.splitext(os.path.basename(mdl))[0]
     stop = cancelled or (lambda: False)
-
-    found = mds.ensure_decompiled(stem, misc_vpk, [mdl], cancelled=stop,
-                                  on_progress=on_progress)
-    if found is None or stop():
+    stock = _stock(weapon_key, kind, misc_vpk, tf2_root, stop, on_progress)
+    if stock is None or stop():
         return None
-    smd = smd_service.find_reference_smd(found.directory, stem)
-    model = qc_skin_parser.load_model(found.directory)
-    if not smd or model is None:
-        logger.warning(f"[гирлянда] {stem}: нет меша или QC в {found.directory}")
-        return None
+    smd, model = stock
+    stem = os.path.splitext(os.path.basename(smd))[0]
 
     out_dir = tempfile.mkdtemp(prefix="tf2sg_decor_")
     if custom_smd:
@@ -146,6 +136,49 @@ def build(weapon_key: str, kind: str, misc_vpk: str, textures_vpk: str,
     return Decor(kind=kind, weapon_key=weapon_key, obj_path=obj,
                  smd_path=smd, materials=materials, hints=hints,
                  groups=bend_groups(smd, card(kind, "")), source=custom_smd)
+
+
+def _stock(weapon_key: str, kind: str, misc_vpk: str, tf2_root: str,
+           cancelled: Callable[[], bool], on_progress: Optional[Callable] = None):
+    """(SMD, QcModel) стоковой гирлянды из кэша разбора; None - её нет
+
+    Raises:
+        model_decompile_service.DecompileError: нет Crowbar или он упал
+    """
+    from src.services import model_decompile_service as mds
+    from src.services import qc_skin_parser, smd_service
+
+    mdl = kinds(weapon_key, tf2_root).get(kind)
+    if not mdl:
+        return None
+    stem = os.path.splitext(os.path.basename(mdl))[0]
+    found = mds.ensure_decompiled(stem, misc_vpk, [mdl], cancelled=cancelled,
+                                  on_progress=on_progress)
+    if found is None:
+        return None
+    smd = smd_service.find_reference_smd(found.directory, stem)
+    model = qc_skin_parser.load_model(found.directory)
+    if not smd or model is None:
+        logger.warning(f"[гирлянда] {stem}: нет меша или QC в {found.directory}")
+        return None
+    return smd, model
+
+
+def garland_source(weapon_key: str, kind: str, misc_vpk: str, tf2_root: str,
+                   own: str = '') -> str:
+    """SMD гирлянды до всех правок формы: стоковая или своя модель (`own`)
+    на её скелете. Пусто - гирлянды нет
+
+    Raises:
+        model_decompile_service.DecompileError: нет Crowbar или он упал
+    """
+    stock = _stock(weapon_key, kind, misc_vpk, tf2_root, lambda: False)
+    if stock is None:
+        return ''
+    if not own:
+        return stock[0]
+    out = os.path.join(tempfile.mkdtemp(prefix="tf2sg_decor_"), "custom.smd")
+    return own_on_stock(own, stock[0], out)
 
 
 def own_on_stock(custom_smd: str, stock_smd: str, out_path: str) -> str:
@@ -201,12 +234,12 @@ RIGID_SIZE = 4.0
 RIGID_TOUCH = 0.25
 
 
-def falloff(t: float) -> float:
-    """Вес движения на доле радиуса t: 1 в центре, плавно к 0 на краю"""
-    if t >= 1.0:
-        return 0.0
-    u = 1.0 - t * t
-    return u * u
+def falloff(t):
+    """Вес движения на доле радиуса t (число или массив): 1 в центре,
+    плавно к 0 на краю"""
+    import numpy as np
+    u = 1.0 - np.square(t)
+    return np.where(np.asarray(t) < 1.0, u * u, 0.0)
 
 
 def rigid_groups(points: List[tuple], triangles: int) -> List[int]:
@@ -267,35 +300,34 @@ def rigid_groups(points: List[tuple], triangles: int) -> List[int]:
 
 
 def apply_bends(points: List[list], groups: List[int], bends: List[dict]) -> None:
-    """Изгибы по порядку - на месте. Оси - те же, что у `bends` (SMD)"""
-    for bend in bends or ():
-        c = [float(v) for v in bend.get('c') or (0, 0, 0)]
-        d = [float(v) for v in bend.get('d') or (0, 0, 0)]
+    """Изгибы по порядку - на месте. Оси - те же, что у `bends` (SMD)
+
+    Массивами: автоподгонка пишет сотню изгибов на тысячи вершин
+    """
+    import numpy as np
+
+    if not bends or not points:
+        return
+    pts = np.array(points, np.float64)
+    g = np.asarray(groups, np.int64)
+    rigid = g >= 0
+    _ids, member = np.unique(g[rigid], return_inverse=True)
+    count = np.bincount(member).astype(np.float64)
+    for bend in bends:
+        # Лишние числа старый разбор не читал - и здесь мимо
+        c = np.array([float(v) for v in bend.get('c') or (0, 0, 0)][:3])
+        d = np.array([float(v) for v in bend.get('d') or (0, 0, 0)][:3])
         r = float(bend.get('r') or 0)
         if r <= 0:
             continue
-        sums: Dict[int, list] = {}
-        for pt, g in zip(points, groups):
-            if g >= 0:
-                acc = sums.setdefault(g, [0.0, 0.0, 0.0, 0])
-                acc[0] += pt[0]
-                acc[1] += pt[1]
-                acc[2] += pt[2]
-                acc[3] += 1
-        weight_of: Dict[int, float] = {}
-        for g, (x, y, z, n) in sums.items():
-            dist = ((x / n - c[0]) ** 2 + (y / n - c[1]) ** 2 + (z / n - c[2]) ** 2) ** 0.5
-            weight_of[g] = falloff(dist / r)
-        for pt, g in zip(points, groups):
-            if g >= 0:
-                w = weight_of[g]
-            else:
-                dist = ((pt[0] - c[0]) ** 2 + (pt[1] - c[1]) ** 2 + (pt[2] - c[2]) ** 2) ** 0.5
-                w = falloff(dist / r)
-            if w:
-                pt[0] += w * d[0]
-                pt[1] += w * d[1]
-                pt[2] += w * d[2]
+        t = np.linalg.norm(pts - c, axis=1) / r
+        if len(count):
+            centers = np.stack([np.bincount(member, weights=pts[rigid, k]) / count
+                                for k in range(3)], axis=1)
+            t[rigid] = (np.linalg.norm(centers - c, axis=1) / r)[member]
+        pts += falloff(t)[:, None] * d
+    for pt, new in zip(points, pts.tolist()):
+        pt[0], pt[1], pt[2] = new
 
 
 def _smd_triangles(text: str) -> tuple:

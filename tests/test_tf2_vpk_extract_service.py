@@ -1,6 +1,4 @@
-import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -136,33 +134,29 @@ class TF2VpkExtractServiceTests(unittest.TestCase):
                     result = TF2VPKExtractService.extract_vmt_file(str(vpk_path), "materials/models", "c_test", str(base))
                     self.assertIsNone(result)
 
-    def test_convert_vtf_to_image_missing_vtf2img(self):
+    def test_convert_broken_vtf_gives_none(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             vtf_path = base / "c_test.vtf"
             vtf_path.write_bytes(b"vtf")
-            with patch.dict(sys.modules, {"vtf2img": None}):
-                result = TF2VPKExtractService._convert_vtf_to_image(str(vtf_path), str(base), "PNG")
-                self.assertIsNone(result)
+            result = TF2VPKExtractService._convert_vtf_to_image(str(vtf_path), str(base), "PNG")
+            self.assertIsNone(result)
 
-    def test_convert_vtf_to_image_success(self):
+    def test_convert_real_vtf_keeps_alpha(self):
+        """Без сторонних пакетов: VTFLib из tools. Альфа (маски игры) цела"""
+        from PIL import Image
+        from src.services import vtf_writer
+
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             vtf_path = base / "c_test.vtf"
-            vtf_path.write_bytes(b"vtf")
-
-            class FakeParser:
-                def __init__(self, path):
-                    self.path = path
-
-                def get_image(self):
-                    from PIL import Image
-                    return Image.new("RGBA", (4, 4), (255, 0, 0, 128))
-
-            fake_module = types.SimpleNamespace(Parser=FakeParser)
-            with patch.dict(sys.modules, {"vtf2img": fake_module}):
-                result = TF2VPKExtractService._convert_vtf_to_image(str(vtf_path), str(base), "PNG")
-                self.assertTrue(Path(result).exists())
+            vtf_writer.write_vtf(Image.new("RGBA", (8, 8), (255, 0, 0, 128)),
+                                 vtf_path, "RGBA8888")
+            png = TF2VPKExtractService._convert_vtf_to_image(str(vtf_path), str(base), "PNG")
+            jpg = TF2VPKExtractService._convert_vtf_to_image(str(vtf_path), str(base), "JPG")
+            self.assertEqual(Path(png).name, "c_test.png")
+            self.assertEqual(Image.open(png).getpixel((0, 0)), (255, 0, 0, 128))
+            self.assertEqual(Image.open(jpg).mode, "RGB")
 
 
 if __name__ == "__main__":

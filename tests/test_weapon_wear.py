@@ -56,7 +56,7 @@ def test_worn_weapon_keeps_the_stock_loadout_like_a_hat():
 
 def test_scene_args_know_the_class_and_the_custom_model():
     host = SimpleNamespace(_mode="soldier_c_rocketboots_soldier", preview=SimpleNamespace(
-        custom_smd_path="my.smd", custom_keep_materials=True))
+        custom_smd_path="my.smd", custom_keep_materials=True, custom_vpk_mode=False))
     with patch("src.services.extract_model_service.ExtractModelService._build_paths_to_try",
                lambda *a: ["models/workshop/weapons/c_models/c_rocketboots_soldier.mdl"]):
         args = weapon_wear.scene_args(host, "")

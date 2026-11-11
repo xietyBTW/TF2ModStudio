@@ -109,6 +109,28 @@ class PatternTests(unittest.TestCase):
             self.assertEqual(sp.materialize(root, ""), 1)
             self.assertTrue((root / "materials" / "tf2sg" / "sheen" / "pulse_26.vtf").is_file())
 
+    def test_already_built_mod_keeps_its_masks_without_the_library(self):
+        # Объединение и пересборка упаковывают уже собранный мод: маска своего
+        # узора лежит в нём, а самого узора в библиотеке может не быть
+        # (удалён, собран на другой копии) - упаковка падала «not found»
+        ref = "vgui/replay/thumbnails/tf2sg/sheen/uf417f2e4_he3685c6f_a63r_76"
+        cube = "vgui/replay/thumbnails/tf2sg/sheen/flat"
+        text = (STOCK.replace("Effects/AnimatedSheen/animatedsheen0", ref)
+                .replace('"$sheenPassEnabled" "1"',
+                         f'"$sheenPassEnabled" "1"\n\t"$sheenmap" "{cube}"'))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vmt = root / "materials" / "models" / "a.vmt"
+            vmt.parent.mkdir(parents=True)
+            vmt.write_text(text, encoding="utf-8")
+            for path in (ref, cube):
+                target = root / "materials" / (path + ".vtf")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"VTF")
+            with mock.patch("src.services.sheen_library.content_hash", return_value=""):
+                self.assertEqual(sp.materialize(root, "console", namespace="merged"), 0)
+            self.assertEqual(vmt.read_text(encoding="utf-8"), text)
+
 
 class EffectPatternTests(unittest.TestCase):
     def sheen(self, text=STOCK, **vals):

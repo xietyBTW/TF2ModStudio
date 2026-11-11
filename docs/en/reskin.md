@@ -12,7 +12,7 @@ You need two things.
 
 **An image.** PNG, JPG, TGA, BMP, WEBP and GIF all work, and so does a ready VTF. The size doesn't have to match anything: the app scales the image to the resolution you pick before building. If you plan to use transparency, keep the alpha channel in the file.
 
-If you don't know how the texture is laid out yet, pick the weapon first and use **Tools → Export UV template (PNG)**. You get a picture of the model's UV layout to paint over. **Tools → Extract original texture** saves the game's own texture, which is often an even better starting point.
+If you don't know how the texture is laid out yet, pick the weapon first and use **Tools → Export UV template (PNG)**. You get a picture of the model's UV layout to paint over. **Tools → Export original texture** saves the game's own texture, which is often an even better starting point.
 
 ## 1. Pick the item
 

@@ -59,7 +59,7 @@ Keep in mind:
 
 ### The app window is blank or does not open
 
-The interface runs in Microsoft Edge WebView2. Without it the window falls back to the old Internet Explorer engine, which can't run the interface, and stays blank. Install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft and start the app again.
+The interface runs in Microsoft Edge WebView2. Some stripped-down Windows builds remove it. Then the app says so in a message, offers the download page and opens in your browser instead, so you can keep working. To get the normal window back, install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft and start the app again. In the browser the app closes about a minute after you close its tab.
 
 If the window opens but the catalog stays empty, close the app and start it again. The page already retries loading a few times by itself, so this is rare. If a line starting with `JS:` appears where the list should be, that's an error in the app: please [report it](#reporting-a-bug) together with `tf2sg.log` from `%LOCALAPPDATA%\Tf2SkinGenerator`.
 

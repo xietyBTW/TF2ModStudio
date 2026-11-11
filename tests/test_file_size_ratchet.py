@@ -34,7 +34,7 @@ DATA = {
 #: Сколько строк сейчас у файлов длиннее LIMIT. Число можно только уменьшать
 BASELINE = {
     "src/app/session.py": 2188,
-    "src/app/parts_editor.py": 1864,
+    "src/app/parts_editor.py": 1749,
     "src/app/particles_editor.py": 1433,
     "src/services/vpk_service.py": 1360,
     "src/services/preview_3d_worker.py": 1289,

@@ -304,7 +304,15 @@ def materialize(vpkroot_dir: Path, folder: Optional[str] = None,
 
         gamut = []                              # гамма своего узора в этом VMT
 
+        def ready(ref: str) -> bool:
+            # Мод уже собран (объединение, пересборка чужого VPK): маска
+            # лежит по ссылке, и узор в библиотеке для неё не нужен - его
+            # могли удалить, или мод собран на другой копии приложения
+            return (materials / (ref.replace('\\', '/') + ".vtf")).is_file()
+
         def move(m):
+            if ready(m.group(2)):
+                return m.group(0)
             ref = m.group(2).replace('\\', '/').lower()
             short = ref[ref.index('tf2sg/sheen/'):]
             own = parse_custom(short)
@@ -331,6 +339,8 @@ def materialize(vpkroot_dir: Path, folder: Optional[str] = None,
             return m.group(1) + (f"{folder}/{short}" if folder else short)
 
         def cube(m):
+            if ready(m.group(2)):
+                return m.group(0)
             wanted.add(FLAT_CUBE)
             return m.group(1) + (f"{folder}/{FLAT_CUBE}" if folder else FLAT_CUBE)
 

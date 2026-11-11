@@ -88,7 +88,7 @@
       <div class="menu__list" id="tools" hidden>
         <button class="menu__item" data-for="model" data-tool="model">Извлечь модель (SMD)</button>
         <button class="menu__item" data-for="model" data-tool="uv">Экспорт UV-шаблона (PNG)</button>
-        <button class="menu__item" data-for="model" data-tool="texture">Извлечь оригинальную текстуру</button>
+        <button class="menu__item" data-for="model" data-tool="texture">Экспортировать оригинальную текстуру</button>
         <button class="menu__item" data-for="model" data-tool="merge">Собрать несколько VPK в один</button>
         <!-- Работа с самим файлом эффекта. Справочник нужен, чтобы собрать
              набор параметров снаружи и вставить его кнопкой «Вставить» -->
@@ -171,12 +171,24 @@
     <div class="catalog__filters" id="f-source" hidden>
       <span class="label label--inline">Источник</span>
     </div>
+    <!-- Разделы необычных: косметика, насмешки, оружие… -->
+    <div class="catalog__filters" id="f-fxcat" hidden>
+      <span class="label label--inline">Раздел</span>
+    </div>
 
     <!-- Фильтр категорий косметики: те же три, что в панели шапок приложения.
          Значение хранится в общем конфиге, поэтому окно и веб показывают
          одинаковый список -->
     <div class="catalog__filters" id="f-hat" hidden>
       <span class="label label--inline">Скрыть</span>
+    </div>
+
+    <!-- Шапки игры или библиотека модов: мод-шапка открывается на этой
+         странице, и искать её в разделе оружия незачем -->
+    <div class="catalog__filters" id="f-hatsrc" hidden>
+      <span class="label label--inline">Показать</span>
+      <button class="underlined is-active" data-src="">Шапки игры</button>
+      <button class="underlined" data-src="mods">Моды и работы</button>
     </div>
 
     <!-- Сколько нашлось. У косметики список из 1822 позиций, и без числа
@@ -394,13 +406,14 @@
                    части то красил, то открывал выбор файла, и понять, что
                    сейчас будет, было неоткуда -->
               <button class="ptools__btn" type="button" data-tool="image"
-                      title="Положить картинку на часть" aria-label="Картинка">
+                      title="Картинка на часть (I)" aria-label="Картинка">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M3 1.8 3 13.2 6.1 10.3 8.1 14 9.9 13.1 8 9.5 12.2 9.3Z"/>
+                  <path d="M2.5 3.5h11v9h-11z"/><path d="M2.5 11 6 7.5l3 3 2-2 2.5 2.5"/>
+                  <circle cx="10.5" cy="6" r="1"/>
                 </svg>
               </button>
               <button class="ptools__btn" type="button" data-tool="brush"
-                      title="Красить части выбранным цветом" aria-label="Кисть">
+                      title="Кисть: красить части цветом (B)" aria-label="Кисть">
                 <!-- Ручка, обойма и пучок щетины: черта с треугольником
                      читается пером или иглой. Только контуром: этот же
                      рисунок стоит значком у курсора, а там заливки нет -->
@@ -415,24 +428,18 @@
                    выключателя у одного режима расходятся, и один из них молча
                    проигрывает -->
               <button class="ptools__btn" type="button" data-tool="cut"
-                      title="Щёлкать по кускам модели, чтобы дробить их мельче"
+                      title="Ножницы: дробить куски мельче (C)"
                       aria-label="Нарезка">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <circle cx="4" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/>
                   <path d="M4.9 10.6 11 2.5"/><path d="M11.1 10.6 5 2.5"/>
                 </svg>
               </button>
-              <button class="ptools__btn" type="button" data-tool="edge"
-                      title="Обвести края покрашенных частей" aria-label="Окантовка">
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2.5 2.5h11v11h-11z"/><path d="M5.5 5.5h5v5h-5z"/>
-                </svg>
-              </button>
               <!-- Свой материал части: в игре это отдельный материал модели со
                    своим VMT. Значок - шар с бликом, как образец материала в
                    редакторах -->
               <button class="ptools__btn" type="button" data-tool="material"
-                      title="Отдать части в свой материал: свой VMT, карты и флаги"
+                      title="Материал: свой VMT, карты и флаги для частей (M)"
                       aria-label="Материал">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <circle cx="8" cy="8" r="5.5"/>
@@ -453,22 +460,17 @@
                 <i class="ptools__fg" id="parts-swatch-fg"></i>
               </button>
 
+
               <span class="ptools__sep"></span>
 
-              <button class="ptools__btn" type="button" id="parts-random"
-                      title="Случайно" aria-label="Случайно">
+              <!-- Действия над всей работой - в меню: нажимают их редко, и
+                   снятие всей покраски не должно стоять вплотную к кисти -->
+              <button class="ptools__btn" type="button" id="parts-more" aria-haspopup="menu"
+                      title="Ещё" aria-label="Ещё">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2.5 2.5h11v11h-11z"/>
-                  <circle class="ptools__pip" cx="5.5" cy="5.5" r=".9"/>
-                  <circle class="ptools__pip" cx="8" cy="8" r=".9"/>
-                  <circle class="ptools__pip" cx="10.5" cy="10.5" r=".9"/>
-                </svg>
-              </button>
-              <button class="ptools__btn" type="button" id="parts-clear"
-                      title="Убрать всё" aria-label="Убрать всё">
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M6.5 13.5 2.5 9.5 9 3l4 4z"/>
-                  <path d="M13.5 13.5H6.5"/><path d="M5.75 6.25 9.75 10.25"/>
+                  <circle class="ptools__pip" cx="3.5" cy="8" r="1"/>
+                  <circle class="ptools__pip" cx="8" cy="8" r="1"/>
+                  <circle class="ptools__pip" cx="12.5" cy="8" r="1"/>
                 </svg>
               </button>
               <button class="ptools__btn" type="button" id="parts-done"
@@ -477,6 +479,13 @@
                   <path d="M3 8.5 6.5 12 13 4"/>
                 </svg>
               </button>
+            </div>
+            <div class="pbar__menu" id="parts-menu" role="menu" hidden>
+              <button type="button" role="menuitem" id="parts-undo">Отменить<span class="mono">Ctrl+Z</span></button>
+              <button type="button" role="menuitem" id="parts-redo">Вернуть<span class="mono">Ctrl+Y</span></button>
+              <span class="pbar__menusep" aria-hidden="true"></span>
+              <button type="button" role="menuitem" id="parts-random">Случайные цвета</button>
+              <button type="button" role="menuitem" class="pbar__danger" id="parts-clear">Снять всю покраску</button>
             </div>
           </div>
 
@@ -509,6 +518,20 @@
               <label class="check">
                 <input type="checkbox" id="part-exact" checked><span>Точный цвет</span>
               </label>
+              <!-- Окантовка едет вместе с мазком (paintSpec), поэтому она здесь,
+                   а не отдельным значком: щёлкать ею по модели нечего -->
+              <div class="parts__edge">
+                <div class="parts__edgerow">
+                  <button class="textbtn textbtn--sm" type="button" id="parts-edge"
+                          title="Обвести края покрашенных частей">Окантовка</button>
+                  <input class="parts__color" type="color" id="part-edge-color"
+                         value="#141210" title="Цвет окантовки" hidden>
+                </div>
+                <label class="parts__strength" id="part-edge-box" hidden>
+                  Толщина
+                  <input type="range" id="part-edge-width" min="1" max="30" value="6">
+                </label>
+              </div>
             </div>
 
             <!-- Нарезка -->
@@ -560,18 +583,6 @@
                      title="Разрезать все куски по островам развёртки разом">
                 Нарезать по островам
                 <input type="range" id="part-detail" min="0" max="100" value="0">
-              </label>
-            </div>
-
-            <!-- Окантовка -->
-            <div class="parts__group" data-group="edge" hidden>
-              <button class="textbtn textbtn--sm" id="parts-edge"
-                      title="Обвести края покрашенных частей">Обводить</button>
-              <input class="parts__color" type="color" id="part-edge-color"
-                     value="#141210" title="Цвет окантовки" hidden>
-              <label class="parts__strength" id="part-edge-box" hidden>
-                Толщина
-                <input type="range" id="part-edge-width" min="1" max="30" value="6">
               </label>
             </div>
 
@@ -1161,6 +1172,25 @@
   </form>
 </dialog>
 
+<!-- Объединение модов в один VPK (merge-dialog.js строит список) -->
+<dialog class="ask mergepick" id="mergedlg">
+  <form method="dialog" class="ask__body">
+    <p class="label ask__title">Собрать несколько модов в один</p>
+    <p class="ask__text">Отметьте моды из папки экспорта. Если два мода меняют одно и то же, останется версия того, что выше в списке. Порядок меняется стрелками.</p>
+    <div class="mergepick__list" role="list"></div>
+    <div class="mergepick__conflicts" aria-live="polite"></div>
+    <label class="mergepick__name">
+      <span class="label">Имя файла</span>
+      <input class="ask__input mergepick__file" type="text" value="merged_mod.vpk" spellcheck="false">
+    </label>
+    <div class="ask__acts">
+      <span class="mergepick__count"></span>
+      <button class="textbtn ask__cancel" type="button">Отмена</button>
+      <button class="btn--primary ask__ok" type="button">Объединить</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Карты материала
      Не диалог ради диалога: карту нельзя завести редактором VMT - приложение
      само генерит VTF с нужным под тип карты форматом и дописывает путь
@@ -1216,130 +1246,147 @@
 </dialog>
 
 <dialog class="ask place" id="placedlg">
-  <!-- Окно устроено как редактор: слева слои, в середине холст, справа
-       свойства выбранного слоя. Панели разделены волосяными линиями, как и
-       всё остальное в приложении, ни одна не «плавает» по пустому месту -->
+  <!-- Две зоны: холст забирает всё место, справа одна колонка - слои сверху,
+       посадка выбранного под ними. Как в Figma и Photoshop: третья колонка
+       отнимала ширину у холста ради полей, которые нужны редко -->
   <div class="place__frame">
     <header class="place__head">
-      <p class="label ask__title">Посадка картинки</p>
-      <span class="mono dlg__mat" id="place-part"></span>
+      <p class="label ask__title">Картинки на части</p>
+      <span class="mono place__chip" id="place-part"></span>
+      <!-- Переключатели окна, а не настройки предмета: значками, чтобы не
+           занимать строку под холстом -->
+      <span class="label label--inline place__showlabel">Показ</span>
+      <div class="place__show">
+        <button class="ptools__btn is-active" type="button" id="place-zoom" aria-pressed="true"
+                title="Приблизить к части" aria-label="Приблизить к части">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M5 7h4M7 5v4"/></svg>
+        </button>
+        <button class="ptools__btn" type="button" id="place-bare" aria-pressed="false"
+                title="Без игровой текстуры" aria-label="Без игровой текстуры">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2z"/><path d="M2 14 14 2"/></svg>
+        </button>
+        <button class="ptools__btn" type="button" id="place-mesh" aria-pressed="false"
+                title="Сетка треугольников вместо контура" aria-label="Сетка треугольников">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM2 14 14 2M2 8l6-6M8 14l6-6"/></svg>
+        </button>
+      </div>
     </header>
 
     <div class="place__panes">
-      <!-- Слои - стопкой, как лежат: верхняя строка поверх. Отсюда же
-           добавляют, заменяют и убирают, второй дороги к слоям нет -->
-      <aside class="place__layers" id="place-layers" hidden>
+      <!-- Холст показывает НАСТОЯЩУЮ развёртку части (треугольники, по
+           которым маскирует склейка), а не рамку. Файл можно бросить прямо на
+           него - ляжет новым слоем -->
+      <section class="place__stage" id="place-stage">
+        <!-- То, что мышью делается жестом, который надо знать: поворот на
+             прямой угол, отражение, возврат в центр -->
+        <div class="place__tools">
+          <button class="ptools__btn" type="button" id="place-rotl"
+                  title="Повернуть на -90°" aria-label="Повернуть на -90°">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6a5 5 0 1 1 1 5.5"/><path d="M3 2.5V6h3.5"/></svg>
+          </button>
+          <button class="ptools__btn" type="button" id="place-rotr"
+                  title="Повернуть на 90°" aria-label="Повернуть на 90°">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 6a5 5 0 1 0-1 5.5"/><path d="M13 2.5V6H9.5"/></svg>
+          </button>
+          <span class="place__toolsep" aria-hidden="true"></span>
+          <button class="ptools__btn" type="button" id="place-flipx"
+                  title="Отразить по горизонтали" aria-label="Отразить по горизонтали">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M6 4 2 8l4 4zM10 4l4 4-4 4z"/></svg>
+          </button>
+          <button class="ptools__btn" type="button" id="place-flipy"
+                  title="Отразить по вертикали" aria-label="Отразить по вертикали">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M4 6l4-4 4 4zM4 10l4 4 4-4z"/></svg>
+          </button>
+          <span class="place__toolsep" aria-hidden="true"></span>
+          <button class="ptools__btn" type="button" id="place-center"
+                  title="По центру части" aria-label="По центру части">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3M11 8h3M8 2v3M8 11v3"/><circle cx="8" cy="8" r="2"/></svg>
+          </button>
+          <button class="ptools__btn" type="button" id="place-reset"
+                  title="Сбросить посадку: целиком, без поворота и сдвига" aria-label="Сбросить посадку">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5a6 6 0 1 1-1.4 5.5"/><path d="M2 2.5v3.5h3.5"/></svg>
+          </button>
+        </div>
+        <canvas class="place__canvas" id="place-canvas" width="512" height="512"
+                tabindex="0"></canvas>
+        <div class="place__hint">
+          <span class="mono place__zoomk" id="place-zoomk"></span>
+          <span>Колесо - ближе, Ctrl+колесо - размер, стрелки - поворот</span>
+        </div>
+        <div class="place__dropzone" aria-hidden="true">Отпустите - ляжет новым слоем</div>
+      </section>
+
+      <aside class="place__side">
+        <!-- Слои - стопкой, как лежат: верхняя строка поверх. Действия над
+             слоем - на его строке, а не общим рядом под списком -->
         <div class="place__panehead">
           <p class="label">Слои</p>
           <span class="mono place__count" id="place-count"></span>
+          <!-- Копия переносит картинку С РАЗМЕРОМ на текстуре: вставленная на
+               другую деталь выходит того же размера, а не «того же масштаба» -->
+          <button class="ptools__btn" type="button" id="place-paste" disabled
+                  title="Вставить скопированную поверх (Ctrl+V)" aria-label="Вставить скопированную">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h8v11H4z"/><path d="M6 2h4v2H6z"/></svg>
+          </button>
+          <button class="ptools__btn" type="button" id="place-add"
+                  title="Ещё одна картинка поверх" aria-label="Добавить картинку">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
         </div>
-        <p class="place__order">Верхний лежит поверх остальных. Тяни строку, чтобы переставить</p>
         <div class="place__list" id="place-list"></div>
-        <button class="place__add" type="button" id="place-add"
-                title="Ещё одна картинка поверх">+ Добавить</button>
-        <!-- Копия переносит картинку С РАЗМЕРОМ на текстуре: вставленная на
-             другую деталь выходит того же размера, а не «того же масштаба» -->
-        <div class="place__layeracts">
-          <button class="textbtn textbtn--sm" type="button" id="place-copy"
-                  title="Скопировать картинку с посадкой (Ctrl+C)">Копировать</button>
-          <button class="textbtn textbtn--sm" type="button" id="place-paste" disabled
-                  title="Вставить скопированную картинку поверх (Ctrl+V)">Вставить</button>
-        </div>
-        <div class="place__layeracts">
-          <button class="textbtn textbtn--sm" type="button" id="place-replace"
-                  title="Другой файл на место этой картинки, посадка останется">Заменить…</button>
-          <button class="textbtn textbtn--sm" type="button" id="place-drop"
-                  title="Снять эту картинку с части">Убрать</button>
-        </div>
-      </aside>
 
-      <!-- Холст показывает НАСТОЯЩУЮ развёртку части (треугольники, по
-           которым маскирует склейка), а не рамку. Под ним - что показывать:
-           это переключатели окна, а не настройки предмета -->
-      <section class="place__stage">
-        <div class="place__box">
-          <canvas class="place__canvas" id="place-canvas" width="512" height="512"
-                  tabindex="0"></canvas>
-        </div>
-        <!-- Галки, а не кнопки: это независимые «да/нет», и ряд кнопок, где
-             одна залита, а две обведены, читался как выбор одного из трёх -->
-        <div class="place__view">
-          <span class="label label--inline">Показ</span>
-          <label class="check place__toggle"
-                 title="Приблизить холст к куску: класть картинку, глядя на всю текстуру, - целиться в спичку с другого конца комнаты">
-            <input type="checkbox" id="place-zoom" checked><span>Приблизить</span>
-          </label>
-          <label class="check place__toggle"
-                 title="Спрятать игровую текстуру: на пёстрой не видно границ своей картинки">
-            <input type="checkbox" id="place-bare"><span>Без игровой</span>
-          </label>
-          <label class="check place__toggle"
-                 title="Показать сетку треугольников детали вместо её контура - на мелкой детали видно, куда именно ляжет картинка">
-            <input type="checkbox" id="place-mesh"><span>Сетка</span>
-          </label>
-          <span class="place__keys">Тяни мышью · размер - за квадратики, за край дальше противоположного - отражение · поворот - за маркер или стрелками · колесо - ближе</span>
-        </div>
-      </section>
-
-      <!-- Свойства посадки - числами, как в любом редакторе: то же, что
-           делает мышь на холсте, только точно -->
-      <aside class="place__props">
         <div class="place__prop">
           <p class="label">Вписать</p>
-          <div class="seg">
-            <button type="button" data-fit="contain" title="Целиком в место части, с сохранением пропорций">Целиком</button>
-            <button type="button" data-fit="cover" title="Заполнить место части, края уйдут под маску">Заполнить</button>
-            <button type="button" data-fit="stretch" title="Растянуть по месту части, пропорции не сохраняются">Растянуть</button>
+          <div class="seg place__fit">
+            <button type="button" data-fit="contain" title="Целиком в место части, с сохранением пропорций">
+              <svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1 1h16v12H1z"/><path d="M5 3h8v8H5z" stroke-dasharray="2 1.5"/></svg>Целиком</button>
+            <button type="button" data-fit="cover" title="Заполнить место части, края уйдут под маску">
+              <svg viewBox="0 0 18 14" aria-hidden="true"><path d="M3 3h12v8H3z"/><path d="M0 0h18v14H0z" stroke-dasharray="2 1.5"/></svg>Заполнить</button>
+            <button type="button" data-fit="stretch" title="Растянуть по месту части, пропорции не сохраняются">
+              <svg viewBox="0 0 18 14" aria-hidden="true"><path d="M1 1h16v12H1z"/><path d="M5 7h8M5 7l2-2M5 7l2 2M13 7l-2-2M13 7l-2 2"/></svg>Растянуть</button>
           </div>
         </div>
-        <div class="place__prop">
-          <p class="label">Размер, %</p>
+
+        <!-- Числа - для точного значения; мышью на холсте то же самое, поэтому
+             по умолчанию свёрнуты и колонку не занимают -->
+        <details class="place__precise">
+          <summary class="label">Точные значения</summary>
           <div class="place__fields">
             <label class="place__field">
-              <span>Ширина</span>
+              <span>Ширина, %</span>
               <input class="input input--num" id="place-w" type="number"
                      min="-2000" max="2000" step="5" value="100"
                      title="Минус - отражение по ширине">
             </label>
             <label class="place__field">
-              <span>Высота</span>
+              <span>Высота, %</span>
               <input class="input input--num" id="place-h" type="number"
                      min="-2000" max="2000" step="5" value="100"
                      title="Минус - отражение по высоте">
             </label>
-          </div>
-        </div>
-        <div class="place__prop">
-          <p class="label">Поворот, °</p>
-          <div class="place__fields">
             <label class="place__field">
-              <span>Угол</span>
+              <span>Угол, °</span>
               <input class="input input--num" id="place-a" type="number"
                      min="-360" max="720" step="15" value="0">
             </label>
-          </div>
-        </div>
-        <div class="place__prop">
-          <p class="label">Сдвиг, % места</p>
-          <div class="place__fields">
+            <span></span>
             <label class="place__field">
-              <span>Вправо</span>
+              <span>Вправо, %</span>
               <input class="input input--num" id="place-x" type="number"
                      min="-500" max="500" step="5" value="0">
             </label>
             <label class="place__field">
-              <span>Вниз</span>
+              <span>Вниз, %</span>
               <input class="input input--num" id="place-y" type="number"
                      min="-500" max="500" step="5" value="0">
             </label>
           </div>
-        </div>
-        <button class="textbtn textbtn--sm place__reset" type="button" id="place-reset"
-                title="Вернуть посадку к исходной: целиком, без поворота и сдвига">Сбросить посадку</button>
+        </details>
       </aside>
     </div>
 
     <footer class="place__foot">
+      <span class="place__status">В текстуру ляжет по «Готово»</span>
       <button class="textbtn" type="button" id="place-cancel">Отмена</button>
       <button class="btn--primary" type="button" id="place-ok">Готово</button>
     </footer>
@@ -1416,6 +1463,7 @@
       <button class="underlined" type="button" role="tab">Кастомизация</button>
       <button class="underlined" type="button" role="tab">Работа и сборка</button>
       <button class="underlined" type="button" role="tab">Обслуживание</button>
+      <button class="underlined" type="button" role="tab">О программе</button>
     </div>
 
     <!-- Секции по смыслу, а не по виду контрола: галочки интерфейса, сборки и
@@ -1463,7 +1511,7 @@
         <span class="field__note" id="cfg-bypass-tip"></span>
       </div>
       <div class="field">
-        <label class="field__label" for="cfg-format">Формат извлечения</label>
+        <label class="field__label" for="cfg-format">Формат экспорта текстур</label>
         <div class="select"><select id="cfg-format"></select></div>
       </div>
     </div>
@@ -1556,18 +1604,12 @@
         <button class="textbtn" id="cfg-drafts" type="button">Удалить черновики…</button>
         <span class="mono" id="cfg-drafts-size"></span>
       </div>
-      <!-- Версия и обновление: сюда заходят посмотреть, а не сохранить -->
-      <div class="cfg__maint">
-        <button class="textbtn" id="cfg-update" type="button">Проверить обновления</button>
-        <span class="mono" id="cfg-version"></span>
-      </div>
       <!-- Главный тур идёт сам только при первом старте, а вернуться к нему
            хочется, например, показывая приложение другому человеку -->
       <div class="cfg__maint">
         <button class="textbtn" id="cfg-tour" type="button">Пройти обучение заново</button>
       </div>
     </div>
-    <p class="field__note cfg__update-note" id="cfg-update-note" hidden></p>
     <!-- Отладка - к обслуживанию: обычному человеку эти галочки не нужны, и
          среди настроек интерфейса они только мешали -->
     <div class="cfg__checks">
@@ -1575,13 +1617,47 @@
       <label class="check"><input type="checkbox" id="cfg-debug"><span>Отладочный режим</span></label>
     </div>
     </section>
+
+    <!-- Адреса ссылок приходят из links.json на GitHub (app_links.py): ссылка
+         обмена Steam меняется, а выпущенные версии остаются -->
+    <section class="cfg__sec" role="tabpanel">
+    <div class="field">
+      <span class="field__label">Версия</span>
+      <div class="cfg__maint">
+        <span class="mono" id="cfg-version"></span>
+        <button class="textbtn" id="cfg-update" type="button">Проверить обновления</button>
+      </div>
+      <span class="field__note" id="cfg-update-note" hidden></span>
+    </div>
+    <div class="field">
+      <span class="field__label">Связаться с автором</span>
+      <!-- Ник рядом со ссылкой: без общего сервера Discord даёт только
+           добавить в друзья, а искать там будут по нику -->
+      <div class="cfg__maint">
+        <a class="textbtn cfg__link" id="cfg-discord" target="_blank" rel="noreferrer">Discord</a>
+        <span class="mono" id="cfg-discord-name"></span>
+        <button class="textbtn" id="cfg-discord-copy" type="button">Скопировать ник</button>
+      </div>
+      <div class="cfg__maint">
+        <a class="textbtn cfg__link" id="cfg-steam" target="_blank" rel="noreferrer">Профиль Steam</a>
+      </div>
+    </div>
+    <div class="field">
+      <span class="field__label">Нашли ошибку?</span>
+      <span class="field__note">Скопируйте сведения и пришлите автору вместе с тем, что делали и что пошло не так.</span>
+      <div class="cfg__maint">
+        <button class="textbtn" id="cfg-report" type="button">Скопировать сведения</button>
+        <button class="textbtn" id="cfg-logdir" type="button">Открыть журнал</button>
+        <a class="textbtn cfg__link" id="cfg-issues" target="_blank" rel="noreferrer">Написать на GitHub</a>
+      </div>
+    </div>
+    <div class="cfg__maint">
+      <a class="textbtn cfg__link" id="cfg-support" target="_blank" rel="noreferrer">Поддержать автора</a>
+    </div>
+    </section>
     </div>
 
     <div class="ask__acts">
-      <!-- Ссылка автора прижата влево: это не действие над настройками, и
-           спорить по весу с «Сохранить» ей незачем -->
-      <a class="textbtn cfg__support" id="cfg-support" href="#" target="_blank"
-         rel="noreferrer">Поддержать автора</a>
       <button class="textbtn" type="button" id="cfg-cancel">Отмена</button>
       <button class="btn--primary" type="button" id="cfg-save">Сохранить</button>
     </div>

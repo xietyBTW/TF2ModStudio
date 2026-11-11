@@ -27,7 +27,7 @@ The app does the tedious part on its own. It finds the model and textures in the
 
 - 64-bit Windows 10 or 11.
 - Team Fortress 2 installed through Steam. The app reads the game's archives and uses `studiomdl.exe` and `vpk.exe` from the game's `bin` folder, so without the game it can't build anything.
-- Microsoft Edge WebView2 Runtime, which draws the interface. Windows 11 includes it, and on Windows 10 it usually arrives with Windows or Office updates. If the app window stays blank, see [troubleshooting](docs/en/troubleshooting.md#the-app-window-is-blank-or-does-not-open).
+- Microsoft Edge WebView2 Runtime, which draws the interface. Windows 11 includes it, and on Windows 10 it usually arrives with Windows or Office updates. If it's missing, the installer offers to download it from Microsoft, and the app itself opens in your browser until it's installed. See [troubleshooting](docs/en/troubleshooting.md#the-app-window-is-blank-or-does-not-open).
 
 ## Installation
 

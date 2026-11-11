@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from src.app.edit_history import EditHistory
+from src.app.particle_effects_catalog import EffectCatalog
+from src.app.particle_simple_panel import SimplePanel
 from src.shared.logging_config import get_logger
 from src.shared.paths import export_dir
-from src.shared.text_search import plain
 
 if TYPE_CHECKING:
     from src.app.session import AppSession
@@ -129,214 +130,10 @@ class ParticlesEditor:
         #: Открытый эффект: после правок движку уходят его текстуры, а не
         #: все текстуры файла (у item_fx это 8,5 МБ на каждый Ctrl+Z)
         self._shown = ''
-
-
-    #: Сколько эффектов отдаём под поиском: систем в игре десять тысяч
-    EFFECTS_PAGE = 200
-
-    def particle_effects(self, query: str = '', source: str = '',
-                         lang: str = 'ru') -> Dict[str, Any]:
-        """Эффекты игры по имени и по тому, чем они вызываются: {ready, items, facets}
-
-        Без запроса и без источника - необычные эффекты с именами из игры
-        (то, что ищут чаще всего). С источником - все системы этого вида
-        (оружие, постройки, игрок…), подписанные предметом: «Огнемёт»,
-        «Турель». С запросом - поиск по всем 10 тысячам систем 134 файлов,
-        включая имена предметов: «огнемёт» находит его вспышку и пламя.
-        `ready` - собран ли индекс систем, до того ищем только по именам
-        """
-        from src.data import particle_sources as ps
-
-        rows, ready = self._effect_rows(lang)
-        source = (source or '').strip().lower()
-        words = [plain(w) for w in (query or '').split() if plain(w)]
-
-        by_name = {row['system']: row for row in rows}
-        counts: Dict[str, int] = {}
-        #: Корни на показ, в порядке первого совпадения: {корень: [дети]}
-        found: Dict[str, List[Dict[str, Any]]] = {}
-        matched: set = set()
-        for row in rows:
-            if words and not all(w in row['blob'] for w in words):
-                continue
-            if source and source not in row['kinds']:
-                continue
-            # Без запроса и источника - каталог: только необычные
-            if not words and not source and not row['name']:
-                continue
-            matched.add(row['system'])
-            # Дочерняя встаёт под свой корень: у эффекта из тридцати систем
-            # человеку нужна одна строка, а не тридцать
-            top = row['root'] or row['system']
-            kids = found.setdefault(top, [])
-            if row['root'] and by_name.get(top) is not None:
-                kids.append(row)
-        # Счётчики - по корням и по всей игре под запросом, а не по
-        # показанному: из каталога необычных иначе нельзя было бы уйти в
-        # «Оружие»
-        for top in {r['root'] or r['system'] for r in rows
-                    if not words or all(w in r['blob'] for w in words)}:
-            for kind in self._root_kinds(by_name, top):
-                counts[kind] = counts.get(kind, 0) + 1
-
-        items: List[Dict[str, Any]] = []
-        for top, kids in found.items():
-            root = by_name.get(top)
-            if root is None:
-                continue
-            # Совпал только корень - показываем всех его детей, чтобы было
-            # что развернуть, совпали дети - только их.
-            # `open` - раскрыть сразу: нашли только детей, а не корень;
-            # когда совпал и корень, сотня раскрытых огнемётов - шум
-            hit = bool(kids) and top not in matched
-            if not kids and top in matched:
-                kids = [by_name[k] for k in self._children.get(top, ())
-                        if k in by_name]
-            items.append({**root, 'kids': sorted(kids, key=lambda it: it['system'].lower()),
-                          'matched': top in matched, 'open': hit})
-
-        if words:
-            # Совпавшие целиком или с начала - выше: «crit» это crit_text,
-            # а не bullet_tracer01_crit. Корень наследует лучший ранг детей
-            def rank_one(it: Dict[str, Any]) -> int:
-                if any(w in it['keys'] for w in words):
-                    return 0
-                if any(k.startswith(w) for k in it['keys'] for w in words):
-                    return 1
-                return 2
-
-            def rank(it: Dict[str, Any]) -> int:
-                own = rank_one(it) if it['matched'] else 3
-                return min([own, *(rank_one(k) for k in it['kids'])])
-            items.sort(key=rank)
-        elif source:
-            # Под источником - по предмету, потом по имени: все вспышки
-            # огнемёта рядом
-            items.sort(key=lambda it: (' '.join(it['labels']).lower() or '\uffff',
-                                       it['system'].lower()))
-        facets = [{'key': kind, 'name': name, 'count': counts.get(kind, 0)}
-                  for kind, name in ps.KIND_NAMES.items()
-                  if counts.get(kind) or kind == source]
-        hidden = ('blob', 'keys', 'root', 'matched')
-        strip = lambda it: {k: v for k, v in it.items() if k not in hidden}  # noqa: E731
-        # Каталог отдаём весь (645 строк - его листают), список источника -
-        # до восьмисот, поиск - первые двести: дальше уточняют запрос
-        page = (items if not words and not source
-                else items[:self.EFFECTS_PAGE * (1 if words else 4)])
-        return {'ready': ready,
-                'items': [{**strip(it), 'kids': [strip(k) for k in it['kids']]}
-                          for it in page],
-                'total': len(items), 'facets': facets}
-
-    def _root_kinds(self, by_name: Dict[str, dict], top: str) -> set:
-        """Виды корня вместе с детьми: огнемёт зовёт эффект, у которого
-        сам корень - «правила игры», а пламя - дети"""
-        kinds = set(by_name[top]['kinds']) if top in by_name else set()
-        for kid in self._children.get(top, ()):
-            if kid in by_name:
-                kinds.update(by_name[kid]['kinds'])
-        return kinds
-
-    def _effect_rows(self, lang: str):
-        """Все эффекты игры со словами для поиска - один раз на язык
-
-        Строка стоит подписей на двух языках и десятка словарных обращений;
-        на десять тысяч систем это полсекунды, и делать это на каждую
-        букву запроса нельзя. Пока индекс систем строится, строк только
-        необычные - и кэш не ставится, чтобы дождаться остальных
-        """
-        from src.data import particle_sources as ps
-        from src.data.hats_parser import parse_localization
-        from src.data.unusual_effects import CATEGORY_NAMES
-        from src.services.particle_editor_service import ParticleEditorService
-
-        paths = self._host.tf2_paths()
-        if 'error' in paths:
-            return [], False
-        index = ParticleEditorService.system_index(paths['root'])
-        roots = ParticleEditorService.system_roots(paths['root'])
-        cache = getattr(self, '_effect_cache', None)
-        if cache and cache[0] == (lang, len(index)):
-            return cache[1], bool(index)
-        #: {корень: [дети]} - для разворачивания и счётчиков
-        self._children: Dict[str, List[str]] = {}
-        for kid, top in roots.items():
-            self._children.setdefault(top, []).append(kid)
-
-        # Имя в items_game и в PCF бывает разного регистра (stamp_spin против
-        # Stamp_spin в stamp_spin.pcf), а игра сравнивает без регистра. Берём
-        # написание файла: иначе у эффекта не находился файл, и он не
-        # открывался, а система файла шла второй строкой без имени
-        spelled = {system.lower(): system for system in index}
-
-        def as_in_file(effects: List[dict]) -> List[dict]:
-            return [{**fx, 'system': spelled.get(fx['system'].lower(), fx['system'])}
-                    for fx in effects]
-
-        unusuals = as_in_file(self._unusual_effects(lang))
-        by_system = {fx['system']: fx for fx in unusuals}
-        names = {fx['system']: fx['name'] for fx in unusuals if fx['name']}
-        english = ({} if lang == 'en' else
-                   {fx['system']: fx['name']
-                    for fx in as_in_file(self._unusual_effects('en'))})
-        loc = parse_localization(paths['root'],
-                                 'russian' if lang == 'ru' else 'english')
-        loc_en = loc if lang == 'en' else parse_localization(paths['root'], 'english')
-        order = {'cosmetic': 0, 'taunt': 1, 'weapon': 2, 'killstreak': 3,
-                 'other': 4}
-        # Необычные - первыми и по категориям (так идёт каталог), остальные
-        # системы - в порядке индекса
-        pairs = [(fx['system'], index.get(fx['system'], ''))
-                 for fx in sorted(unusuals, key=lambda fx: order.get(fx['category'], 9))]
-        pairs += [(system, file) for system, file in index.items()
-                  if system not in by_system]
-
-        rows: List[Dict[str, Any]] = []
-        for system, file in pairs:
-            fx = by_system.get(system)
-            name = fx['name'] if fx else ''
-            labels = [l for l in ps.labels_of(system, file, loc, names, lang)
-                      if l != name]
-            labels_en = ps.labels_of(system, file, loc_en, english, 'en')
-            rows.append({
-                'system': system, 'file': file, 'name': name,
-                # Эффект с именем из игры - сам себе корень, даже если в
-                # файле он чей-то ребёнок: superrare_burning2 лежит под
-                # superrare_test, а ищут его
-                'root': '' if name else roots.get(system, ''),
-                'category': fx['category'] if fx else '',
-                'category_name': CATEGORY_NAMES[fx['category']] if fx else '',
-                'kinds': ps.kinds_of(system, file),
-                'labels': labels,
-                'blob': ' '.join(plain(t) for t in
-                                 (system, name, english.get(system, ''),
-                                  *labels, *labels_en)),
-                'keys': [plain(t) for t in (system, name, *labels) if t],
-            })
-        if index:
-            self._effect_cache = ((lang, len(index)), rows)
-        return rows, bool(index)
-
-    def _unusual_effects(self, lang: str) -> List[dict]:
-        """Таблица необычных эффектов с именами на языке интерфейса"""
-        from src.data import unusual_effects
-        from src.data.hats_parser import parse_localization
-        from src.data.weapon_model_index import get_items_game_path
-
-        cache = getattr(self, '_unusual_cache', None)
-        if cache is None:
-            cache = self._unusual_cache = {}
-        if lang not in cache:
-            paths = self._host.tf2_paths()
-            items_game = get_items_game_path(paths['root'])
-            try:
-                text = open(items_game, encoding='utf-8', errors='replace').read()
-            except OSError:
-                text = ''
-            loc = parse_localization(paths['root'],
-                                     'russian' if lang == 'ru' else 'english')
-            cache[lang] = unusual_effects.parse(text, loc)
-        return cache[lang]
+        #: Список эффектов игры слева - свой модуль, файл тут ни при чём
+        self.effects = EffectCatalog(host)
+        #: Крутилки простого режима поверх открытого PCF
+        self.simple = SimplePanel(self)
 
     def load_particles(self, source: str, system: str = '') -> Dict[str, Any]:
         """
@@ -427,98 +224,17 @@ class ParticlesEditor:
                 'names': names}
 
     def particle_params(self, system: str, lang: str = 'ru') -> List[dict]:
-        """
-        Крутилки простого режима для системы - то же, что в панели приложения
-
-        Схема одна на оба интерфейса (services/simple_params): подпись, границы
-        и адреса атрибутов описаны там, здесь только чтение значений. value=None
-        значит, что нужного модуля в системе нет - крутилку показывают
-        бледной заготовкой, а не прячут: первая правка модуль создаст
-        """
-        from src.data.translations import TRANSLATIONS
-        from src.services import simple_params as sp
-
-        systems = self.pcf.systems_json() if self.pcf else {}
-        sys_json = systems.get(system)
-        if sys_json is None:
-            return []
-
-        t = TRANSLATIONS.get(lang, TRANSLATIONS['en'])
-        out: List[dict] = []
-        for p in sp.SIMPLE_PARAMS:
-            value = sp.read_param(sys_json, p)
-            out.append({
-                'key': p.key,
-                'name': t.get(f'particles_sp_{p.key}', p.key),
-                'hint': t.get(f'particles_sp_{p.key}_tip', ''),
-                'kind': p.kind,
-                'value': list(value) if isinstance(value, tuple) else value,
-                'placeholder': (list(p.placeholder_value)
-                                if isinstance(p.placeholder_value, tuple)
-                                else p.placeholder_value),
-                # Мягкие границы - для ползунка, жёсткие - предел ручного
-                # ввода: в стоке встречаются emission_rate под миллион, и
-                # запрет на них молча испортил бы чужой эффект
-                'min': p.minimum, 'max': p.maximum,
-                'hard_min': p.minimum if p.hard_min is None else p.hard_min,
-                'hard_max': p.maximum if p.hard_max is None else p.hard_max,
-                'curve': p.curve,
-                'decimals': p.decimals,
-                'creatable': p.creatable,
-                'missing': [list(m) for m in sp.missing_modules(sys_json, p)],
-            })
-        return out
+        """Крутилки простого режима для системы (см. particle_simple_panel)"""
+        return self.simple.params(system, lang)
 
     def set_particle_param(self, system: str, key: str,
                            value: Any) -> Dict[str, Any]:
-        """
-        Пишет значение крутилки и отдаёт обновлённые системы
+        """Пишет значение крутилки и отдаёт обновлённые системы"""
+        return self.simple.set(system, key, value)
 
-        Системы возвращаются целиком: движок обновляет сцену через
-        updateSystems, а какие именно модули задел ensure_attr, странице знать
-        незачем. Материалы при этом НЕ пересобираются - их PNG уже в кадре
-        """
-        from src.services import simple_params as sp
-
-        if self.pcf is None:
-            return {'error': 'PCF не загружен'}
-        param = next((p for p in sp.SIMPLE_PARAMS if p.key == key), None)
-        if param is None:
-            return {'error': f'неизвестный параметр: {key}'}
-
-        systems = self.pcf.systems_json()
-        sys_json = systems.get(system)
-        if sys_json is None:
-            return {'error': f'система не найдена: {system}'}
-
-        # Правка заготовки И ЕСТЬ включение параметра: модуля под ним в
-        # системе ещё нет, и создаём мы его сами - как панель приложения.
-        # Отдельной кнопки «Включить» нет ни там, ни здесь
-        if sp.read_param(sys_json, param) is None:
-            # creatable=False - модуль создавать нельзя. У эмиттеров это не
-            # придирка: добавленный emit_instantaneously задваивает залп
-            if not param.creatable:
-                return {'error': 'в этой системе нет модуля для этого параметра'}
-            paths = self._host.tf2_paths()
-            root = '' if 'error' in paths else paths['root']
-            for group, fn in sp.missing_modules(sys_json, param):
-                if not self.pcf.add_module(system, group, fn, root):
-                    return {'error': f'не удалось создать модуль {fn}'}
-            sys_json = self.pcf.systems_json().get(system, sys_json)
-
-        calls = sp.write_calls(sys_json, param, value)
-        if not calls:
-            return {'error': 'в этой системе нужного модуля нет'}
-        for group, idx, attr, attr_type, v in calls:
-            self.pcf.ensure_attr(system, group, idx, attr, attr_type, v)
-
-        self._history_commit()
-        systems = self.pcf.systems_json()
-        return {'systems': systems,
-                'diff': self._particle_diff_all(systems),
-                # Подробно - только для правленой системы: экспертное дерево
-                # помечает изменённые строки, не перестраиваясь
-                'system_diff': self.particle_diff(system)}
+    def quick_particle_edit(self, system: str, kind: str, up: bool) -> Dict[str, Any]:
+        """Быстрая правка всего эффекта: масштаб, плотность, темп"""
+        return self.simple.quick(system, kind, up)
 
     def particle_system(self, system: str, lang: str = 'ru') -> Dict[str, Any]:
         """
@@ -533,8 +249,7 @@ class ParticlesEditor:
         from src.data import particle_docs
         from src.services.particle_editor_service import MODULE_GROUPS
 
-        systems = self.pcf.systems_json() if self.pcf else {}
-        sys_json = systems.get(system)
+        sys_json = self._one_system(system) if self.pcf else None
         if sys_json is None:
             return {}
 
@@ -603,32 +318,111 @@ class ParticlesEditor:
         out.update(extra)
         return out
 
-    def _particle_diff_all(self, systems: Dict[str, dict]) -> Dict[str, str]:
-        """{система: added|changed|same} против игры. Пусто - стока нет"""
-        from src.services.particle_editor_service import diff_systems
-
+    def _stock_systems(self) -> Optional[Dict[str, dict]]:
+        """systems_json игровой версии файла. None - сравнивать не с чем"""
+        # Уже разобран - игровой PCF второй раз не читаем
+        cached = getattr(self.pcf, '_stock_systems', None)
+        if cached is not None:
+            return cached
         paths = self._host.tf2_paths()
         if 'error' in paths or not hasattr(self.pcf, 'stock'):
-            return {}
+            return None
         stock = self.pcf.stock(paths['root'])
         if stock is None:
-            return {}
+            return None
         cached = getattr(self.pcf, '_stock_systems', None)
         if cached is None:
             cached = self.pcf._stock_systems = stock.systems_json()
-        return {name: entry['status']
-                for name, entry in diff_systems(systems, cached).items()}
+        return cached
+
+    def _one_system(self, system: str) -> Optional[dict]:
+        """Одна система в формате systems_json, без сборки всего файла"""
+        if hasattr(self.pcf, 'system_json'):
+            return self.pcf.system_json(system)
+        return self.pcf.systems_json().get(system)
+
+    def _particle_diff_all(self, systems: Dict[str, dict]) -> Dict[str, str]:
+        """{система: added|changed|same} против игры. Пусто - стока нет
+
+        Ответ запоминается вместе со снимком истории, к которому он относится:
+        правка одной системы (simple_diff) пересчитывает только её
+        """
+        from src.services.particle_editor_service import diff_systems
+
+        stock = self._stock_systems()
+        out = ({} if stock is None else
+               {name: entry['status'] for name, entry in diff_systems(systems, stock).items()})
+        self._statuses = (self._history_now(), out)
+        return out
+
+    def _history_now(self):
+        """Снимок истории, к которому относится состояние документа. None -
+        истории нет, и запоминать что-то по ней нельзя"""
+        if self.history.pos < 0:
+            return None
+        return self.history.at(self.history.pos)
+
+    def simple_diff(self, touched: List[str]) -> Dict[str, str]:
+        """Статусы «изменено» после правки систем `touched` (шаг истории уже
+        записан). Пересчитываются только они: остальные с прошлого раза не
+        менялись, если прошлый раз был ровно на предыдущем шаге истории.
+        Иначе - полный пересчёт
+        """
+        from src.services.particle_editor_service import diff_systems
+
+        known = getattr(self, '_statuses', None)
+        now = self._history_now()
+        # Правка ничего не поменяла - история не выросла, статусы те же
+        if known is not None and now is not None and known[0] is now:
+            return known[1]
+        prev = self.history.at(self.history.pos - 1) if now is not None else None
+        if known is None or now is None or known[0] is not prev or known[0] is None:
+            return self._particle_diff_all(self.pcf.systems_json())
+        stock = self._stock_systems()
+        out = dict(known[1])
+        if stock is not None:
+            for name in touched:
+                cur = self._one_system(name)
+                if cur is None:
+                    out.pop(name, None)
+                    continue
+                out[name] = diff_systems({name: cur}, stock)[name]['status']
+        self._statuses = (now, out)
+        return out
+
+    def edit_reply(self, system: str, touched: List[str],
+                   commit: bool = True) -> Dict[str, Any]:
+        """Ответ точечной правки атрибутов: шаг истории, изменённые системы
+        (`changed` - только они, страница вливает их в свои), статусы
+        «изменено» и подробности выбранной системы для экспертного дерева
+
+        Весь файл в JSON на каждое отпускание ползунка - это 2,3 МБ и 60 мс
+        на `item_fx`, а превью к тому моменту уже показывает новое значение
+        """
+        if commit:
+            self._history_commit()
+        changed = {}
+        for name in touched:
+            sys_json = self._one_system(name)
+            if sys_json is not None:
+                changed[name] = sys_json
+        return {'changed': changed,
+                'diff': self.simple_diff(touched),
+                'system_diff': self.particle_diff(system)}
 
     def particle_diff(self, system: str) -> Dict[str, Any]:
         """Чем система отличается от игры: атрибуты, модули, дочерние
 
         Пустой ответ (без `status`) - сравнивать не с чем: файл не из игры
-        и одноимённого в ней нет
+        и одноимённого в ней нет. Сравнивается одна система, а не весь файл
         """
-        paths = self._host.tf2_paths()
-        if 'error' in paths or not hasattr(self.pcf, 'stock_diff'):
+        from src.services.particle_editor_service import diff_systems
+
+        stock = self._stock_systems()
+        cur = self._one_system(system) if self.pcf is not None else None
+        if stock is None or cur is None:
             return {}
-        return self.pcf.stock_diff(paths['root']).get(system) or {}
+        return diff_systems({system: cur}, stock).get(system) or {}
 
     def revert_particle_system(self, system: str) -> Dict[str, Any]:
         """Система как в игре - атрибуты, модули, дочерние"""
@@ -934,13 +728,7 @@ class ParticlesEditor:
             return err
         if not self.pcf.set_attr(system, group, int(index), attr, value):
             return {'error': f'не удалось записать {attr}'}
-        self._history_commit()
-        systems = self.pcf.systems_json()
-        return {'systems': systems,
-                'diff': self._particle_diff_all(systems),
-                # Подробно - только для правленой системы: экспертное дерево
-                # помечает изменённые строки, не перестраиваясь
-                'system_diff': self.particle_diff(system)}
+        return self.edit_reply(system, [system])
 
     # Контрольные точки
     #

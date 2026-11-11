@@ -31,6 +31,7 @@ import threading
 from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from src.app import part_images
 from src.domain.preview import part_specs
 from src.shared.logging_config import get_logger
 
@@ -457,13 +458,15 @@ class PartsEditor:
             return None
 
     def part_shape(self, material: str = '', part: int = 0,
-                   layer: Optional[int] = None) -> Dict[str, Any]:
+                   layer: Optional[int] = None,
+                   whole: bool = False) -> Dict[str, Any]:
         """
         Развёртка одной части: по ней окно посадки рисует, куда ляжет картинка
 
         ``layer`` - какую из картинок части правят (отрицательный - с конца);
         None - кладут новую. Основа для окна - всё, что уже лежит на материале,
-        КРОМЕ правимого слоя: его окно рисует живьём
+        КРОМЕ правимого слоя: его окно рисует живьём. ``whole`` - без ВСЕХ
+        картинок части: окно держит стопку у себя и рисует её целиком
         """
         found = self._parts_model(material)
         if isinstance(found, dict):
@@ -480,11 +483,13 @@ class PartsEditor:
             idx: Optional[int] = None
             if layer is not None and stack and -len(stack) <= int(layer) < len(stack):
                 idx = int(layer) % len(stack)
+            skip = ((int(part), None) if whole
+                    else (int(part), idx) if idx is not None else None)
             # Под частью в своём материале лежит его текстура, а не исходного
             job = self._context_job(
-                model, obj_mat, card, skip=(int(part), idx) if idx is not None else None,
+                model, obj_mat, card, skip=skip,
                 under=self._owner_card(self._live_entries(model, obj_mat), one) or card)
-        spec = stack[idx] if idx is not None else None
+        spec = stack[idx] if idx is not None and not whole else None
         frames: List[str] = []
         delays: List[int] = []
         if spec:
@@ -500,6 +505,8 @@ class PartsEditor:
             # Габарит, в который вписана картинка: у наклейки, пережившей
             # разрез, это габарит ПРЕЖНЕЙ части (её якорь)
             'bbox': [round(v, 6) for v in ((spec and spec.get('anchor')) or one.uv_bbox)],
+            # Габарит самой части: в него вписан слой без своего якоря
+            'part_bbox': [round(v, 6) for v in one.uv_bbox],
             'polygons': [[[round(u, 6), round(v, 6)] for u, v in tri]
                          for tri in model.polygons(obj_mat, one.index)],
             'image': spec,
@@ -535,125 +542,13 @@ class PartsEditor:
 
     # Мазки
 
-    def set_part_texture(self, material: str = '', part: int = 0,
-                         path: Optional[str] = None,
-                         options: Optional[Dict[str, Any]] = None,
-                         layer: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Картинки одной части - слоями, снизу вверх
-
-        ``path`` - новая картинка: без ``layer`` ложится ПОВЕРХ уже лежащих,
-        с ним - заменяет названный слой. Без пути, но с ``options`` - правка
-        посадки уже положенной (``layer``, по умолчанию верхней). Без того и
-        другого - убрать названный слой либо все картинки части разом
-        """
-        found = self._parts_model(material)
-        if isinstance(found, dict):
-            return found
-        model, obj_mat, card = found
-
-        if path and not os.path.isfile(path):
-            return {'error': 'Файл не найден'}
-        given = self._given(model, obj_mat, int(part)) if path else ''
-        if given:
-            return {'error': f'Часть отдана материалу «{given}»: её красит его текстура'}
-
-        with self._lock:
-            chosen = self.preview.part_textures.setdefault(self._slot(card), {})
-            stack = list(chosen.get(int(part), []))
-            at = None if layer is None else int(layer)
-            if at is not None and not -len(stack) <= at < len(stack):
-                return {'error': 'Такой картинки на части нет'}
-            if path:
-                entry = part_specs.image_spec(
-                    {**self._absolute_size(options, path, model, obj_mat, card,
-                                           int(part)), 'path': path})
-                if at is None:
-                    stack.append(entry)
-                else:
-                    stack[at] = entry
-            elif options is not None:
-                if not stack:
-                    return {'error': 'На этой части нет картинки'}
-                idx = -1 if at is None else at
-                spec = dict(stack[idx])
-                # Якорь переживает правку посадки: он говорит, В ЧЁМ картинка
-                # живёт, а окно двигает её ВНУТРИ этого габарита
-                fresh = part_specs.image_spec({**options, 'path': spec['path']})
-                spec.update({k: v for k, v in fresh.items() if k not in ('path', 'anchor')})
-                stack[idx] = spec
-            elif at is None:
-                stack = []
-            else:
-                del stack[at]
-            if stack:
-                chosen[int(part)] = stack
-            else:
-                chosen.pop(int(part), None)
-            jobs = self._plans(model, obj_mat, card)
-        return self._commit(jobs)
-
-    def _absolute_size(self, options: Optional[Dict[str, Any]], path: str,
-                       model: Any, obj_mat: str, card: str, part: int) -> Dict[str, Any]:
-        """
-        Посадка с размером В ДОЛЯХ ТЕКСТУРЫ (`size_uv`) - в масштабы части
-
-        Так приходит вставка скопированной картинки: «того же размера» значит
-        того же на текстуре, а масштаб считается от габарита части - один и
-        тот же масштаб на другой детали дал бы другую картинку. Пересчёт здесь,
-        а не на странице: габарит части, размер текстуры и картинки знает
-        Python, и склейка вписывает ровно по этим числам (`place_image`)
-        """
-        opts = dict(options or {})
-        size = opts.pop('size_uv', None)
-        one = next((p for p in model.parts_of(obj_mat) if p.index == part), None)
-        shape = self._texture_shape(card)
-        if not size or one is None or not shape:
-            return opts
-        try:
-            from PIL import Image
-            with Image.open(path) as im:
-                iw, ih = max(1, im.width), max(1, im.height)
-        except (OSError, ValueError):
-            return opts
-        tex_w, tex_h = shape
-        u0, v0, u1, v1 = one.uv_bbox
-        bw = max(1e-6, (u1 - u0) * tex_w)
-        bh = max(1e-6, (v1 - v0) * tex_h)
-        fit = str(opts.get('fit') or 'contain')
-        if fit == 'stretch':
-            base_w, base_h = bw, bh
-        else:
-            k = (max if fit == 'cover' else min)(bw / iw, bh / ih)
-            base_w, base_h = iw * k, ih * k
-        opts['scale'] = float(size[0]) * tex_w / base_w
-        opts['scale_y'] = float(size[1]) * tex_h / base_h
-        opts['offset'] = [0.0, 0.0]            # на новой детали - по её центру
-        return opts
-
-    def move_part_texture(self, material: str = '', part: int = 0,
-                          layer: int = 0, to: int = 0) -> Dict[str, Any]:
-        """Переставляет картинку части в стопке: порядок и есть наложение"""
-        found = self._parts_model(material)
-        if isinstance(found, dict):
-            return found
-        model, obj_mat, card = found
-
-        with self._lock:
-            chosen = self.preview.part_textures.setdefault(self._slot(card), {})
-            stack = list(chosen.get(int(part), []))
-            n = len(stack)
-            src, dst = int(layer), int(to)
-            if not (-n <= src < n and -n <= dst < n):
-                return {'error': 'Такой картинки на части нет'}
-            src %= n
-            dst %= n
-            if src == dst:
-                return self._host.view_state()
-            stack.insert(dst, stack.pop(src))
-            chosen[int(part)] = stack
-            jobs = self._plans(model, obj_mat, card)
-        return self._commit(jobs)
+    # Картинки части (part_images.py)
+    set_part_texture = part_images.set_part_texture
+    set_part_layers = part_images.set_part_layers
+    move_part_texture = part_images.move_part_texture
+    _refuse = part_images.refuse
+    _put_stack = part_images.put_stack
+    _absolute_size = part_images.absolute_size
 
     def set_part_colors(self, material: str = '',
                         colors: Optional[Dict[str, Any]] = None,
@@ -1478,7 +1373,8 @@ class PartsEditor:
                 whole = next((tuple(p.uv_bbox) for p in model.parts_of(obj_mat)
                               if p.index == part), None)
             for n, spec in enumerate(stack):
-                if skip == (part, n):
+                # (часть, None) - все картинки части: окно рисует стопку само
+                if skip and skip[0] == part and skip[1] in (None, n):
                     continue
                 layers.append(Layer(
                     polygons=polys,

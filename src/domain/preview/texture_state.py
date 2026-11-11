@@ -112,6 +112,10 @@ class PreviewTextureState:
     #: Игровые оригиналы из VPK: {red_mat: png} по командам (ключи - RED-имена)
     vpk_red_tex_map: Dict[str, str] = field(default_factory=dict)
     vpk_blu_tex_map: Dict[str, str] = field(default_factory=dict)
+    #: Мод из VPK: {материал модели в нижнем регистре: карточка}. Карточки
+    #: мода названы по его VTF, а меши - по материалам; связь - VMT материала
+    #: (vpk_mod_models.mesh_links)
+    mod_mesh_cards: Dict[str, str] = field(default_factory=dict)
     #: Командная текстура одним кадром (кадры анимации): пути PNG
     red_frames: List[str] = field(default_factory=list)
     blu_frames: List[str] = field(default_factory=list)
@@ -295,6 +299,16 @@ class PreviewTextureState:
 
         return self.resolve_base(mat)
 
+    def original_card(self, mat: str) -> Optional[str]:
+        """Игровой оригинал того, что сейчас на карточке, без правок человека:
+        в стиле - оригинал стиля, у варианта - его игровой кадр"""
+        if self.skin_info and self.active_skin != 0 and not is_decor(mat):
+            game = self.style_game_tex.get(self.active_skin, {})
+            return _existing(game.get(mat)) or _existing(game.get(self.part_cards.get(mat, mat)))
+        if self.is_variant_material(mat):
+            return _existing(self.australium_frame)
+        return self.game_base(mat)
+
     def style_texture(self, style: int, mat: str) -> Optional[str]:
         """Текстура материала в стиле: правка человека, иначе оригинал стиля
 
@@ -411,14 +425,41 @@ class PreviewTextureState:
     def resolve_mesh(self, mat: str) -> Optional[str]:
         """
         Текстура для МЕША загруженного мода: правка пользователя, иначе
-        оригинал из мода
+        оригинал из мода, с учётом команды
 
-        Отдельно от resolve_card, потому что ключи здесь чужие: карточки
-        названы по VTF мода, а меши - по материалам модели. Сравнение без
-        учёта регистра - единственное, что их связывает
+        Карточка меша - по связи из VMT (mod_mesh_cards). Без неё остаётся
+        совпадение имён без учёта регистра
         """
-        return (_existing(_lookup_ci(self.textures.get(Team.RED, {}), mat))
+        card = self.mod_mesh_cards.get((mat or '').lower())
+        if card:
+            # В стиле - своя текстура стиля (оригиналы стиля ключуются
+            # материалом, правки - карточкой), иначе база: у стиля меняются
+            # не все столбцы, и меш без своей пустел
+            style = self.active_skin if self.skin_info else 0
+            styled = style and (self.style_texture(style, card)
+                                or self.style_texture(style, mat))
+            return styled or self.resolve_base(card)
+        return (_existing(_lookup_ci(self.textures.get(self.active_team, {}), mat))
+                or _existing(_lookup_ci(self.textures.get(Team.RED, {}), mat))
                 or _existing(_lookup_ci(self.vpk_red_tex_map, mat)))
+
+    def mod_uploads(self) -> Dict[str, str]:
+        """
+        Правки мода из VPK по его файлам: {карточка: путь}
+
+        Синяя правка парной карточки хранится под КРАСНОЙ (как у игрового
+        предмета), а в моде это другой VTF - отдаём её под именем синей
+        карточки. Синяя без своей правки остаётся текстурой мода
+        """
+        red = self.textures.get(Team.RED, {})
+        blu = self.textures.get(Team.BLU, {})
+        out = {m: p for m, p in red.items()
+               if m != SINGLE_TEX_KEY and not is_decor(m) and _existing(p)}
+        for red_card, blu_card in self.blu_name_map.items():
+            path = _existing(blu.get(red_card))
+            if path and path != red.get(red_card):
+                out[blu_card] = path
+        return out
 
     # Что уходит в сборку
 
@@ -605,6 +646,7 @@ class PreviewTextureState:
         self.vpk_blu_tex_map = {}
         self.blu_name_map = {}
         self.blu_twins = {}
+        self.mod_mesh_cards = {}
         self.active_team = Team.RED
         self.force_team = False
 

@@ -95,6 +95,7 @@ import * as THREE        from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
 import { ParticleSystemInstance, implementedModules } from './js/particles/engine.js';
+import { patchDefinition, refreshInstances, missingMaterials, adoptDefinitions } from './js/particles/definitions.js';
 import { modAttr, moduleFn, findModule, findOrigin, ORIGIN_OFFSET, toWorld, toLocal, effectScope,
          originScope, effectNames, shiftLive } from './js/particles/gizmo_scope.js';
 
@@ -1412,22 +1413,8 @@ window.addMaterials = function(more, asked) {
 };
 
 /** Материалы эффекта `root` (с дочерними), о которых движок ещё не знает */
-window.missingMaterials = function(root) {
-  const out = new Set();
-  const seen = new Set();
-  const stack = [root || currentRootName];
-  while (stack.length) {
-    const name = stack.pop();
-    if (seen.has(name)) continue;
-    seen.add(name);
-    const def = systemsJson[name];
-    if (!def) continue;
-    const mat = def.attrs && def.attrs.material && def.attrs.material.v;
-    if (mat && !(mat in materialsJson)) out.add(mat);
-    for (const child of def.children || []) stack.push(child.childName);
-  }
-  return [...out];
-};
+window.missingMaterials = (root) =>
+  missingMaterials(systemsJson, materialsJson, root || currentRootName);
 
 /** Обновление только определений систем (правка атрибутов): материалы и
     GPU-текстуры переиспользуются - без ремаршалинга PNG и роста VRAM */
@@ -1446,6 +1433,20 @@ window.updateSystems = function(systemsOnly, rootName, { soft = false } = {}) {
     console.log('updateSystems error:', e);
     window.showError(I18N[lang].error_load + ': ' + e.message);
   }
+};
+
+/** Живая правка ползунком (js/particles/definitions.js) */
+window.previewAttrs = function(system, edits) {
+  const def = systemsJson[system];
+  if (def) { patchDefinition(def, edits); refreshInstances(rootInstance, def); }
+};
+
+/** Точечная правка поверх остальных систем: тот же состав и soft - на месте */
+window.mergeSystems = (changed, rootName, opts = {}) => {
+  const next = { ...systemsJson, ...changed };
+  const same = rootName === currentRootName && effectNames(next, rootName) === effectNames(systemsJson, rootName);
+  if (!opts.soft || !same) return window.updateSystems(next, rootName, opts);
+  for (const def of adoptDefinitions(systemsJson, changed)) refreshInstances(rootInstance, def);
 };
 
 window.setRootSystem = function(name) {

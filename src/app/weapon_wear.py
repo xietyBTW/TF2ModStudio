@@ -44,4 +44,7 @@ def scene_args(host, tf2_root: str) -> Dict[str, Any]:
         # Своя модель - та же, что уйдёт в мод (как у вида от первого лица)
         'custom_smd': preview.custom_smd_path or '',
         'custom_keep': bool(preview.custom_keep_materials),
+        # Показанный мод: его файлы - первыми, как у вида от первого лица
+        'mod_vpk_path': (getattr(host, '_vpk_mod_path', '') or ''
+                         if preview.custom_vpk_mode else ''),
     }

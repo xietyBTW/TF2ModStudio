@@ -44,7 +44,7 @@ Next to it are the window buttons: minimize, maximize and close. The header also
 |---|---|
 | **Extract model (SMD)** | Decompiles the item's model and lists every file Crowbar produced: the reference mesh, LODs, physics, animations, the QC. The reference SMD is ticked by default because that's the geometry itself. The ticked files are copied into the export folder. Useful as a base for a [custom model](custom-models.md). |
 | **Export UV template (PNG)** | Draws the model's UV layout into a 1024 × 1024 PNG in the export folder so you can paint over it. Each material has its own layout and gets its own file. The templates also appear as extra cards in the album, next to the textures they belong to. |
-| **Extract original texture** | Saves the game's texture of the selected item into the export folder. For class bodies, which have a couple dozen textures, it first asks which ones to extract. The file format is set in **Settings → Extraction format**. |
+| **Export original texture** | Saves the game's texture of the selected item into the export folder. For class bodies, which have a couple dozen textures, it first asks which ones to extract. The file format is set in **Settings → Texture export format**. |
 | **Merge several VPKs into one** | Combines mods from the export folder into a single VPK. See [merging mods](works-and-mods.md#merging-several-mods-into-one). |
 | **Open export folder** | Opens the export folder in Explorer. Available in every section that has a title row, which is all of them except **Sounds**. |
 | **Open PCF from disk…**, **Save PCF…**, **Parameter reference (JSON)…**, **Reference for AI (with a task)…** | Particle section only. See [Particle editor](particles.md#tools-menu). |
@@ -150,7 +150,7 @@ These rows appear when the item has something to choose:
 |---|---|
 | **Style** | Skins baked into the model (clean and bloody versions and similar). **Default** is the base skin. |
 | **Model state** | States the game switches by itself, such as an intact and a broken bottle. Preview only, every state goes into the mod. |
-| **Version** | **Regular**, **Festive**, **Festivized**: shows the festive lights the game hangs on the weapon. With a custom model, **Fit the lights** appears so you can move them onto your geometry. See [festive lights](custom-models.md#festive-weapons-and-their-lights). |
+| **Version** | **Regular**, **Festive**, **Festivized**: shows the festive lights the game hangs on the weapon. With a custom model, **Fit the lights** appears so you can move them onto your geometry, and **Wrap the model** seats them on it automatically. See [festive lights](custom-models.md#festive-weapons-and-their-lights). |
 | **Cosmetic style** | Model styles of a cosmetic. Each style has its own geometry, and a dot marks the styles you edited. |
 | **Animation** | In **First person**: the animations of this weapon. |
 | **Weapons** | In **On the character**: which slot the class holds, which also sets the pose. |

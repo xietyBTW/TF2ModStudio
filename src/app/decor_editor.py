@@ -102,7 +102,7 @@ class DecorEditor:
                     textures[material] = dict(teams)
             fit = self._host.preview.decor_fit.get(kind)
             bends = self._host.preview.decor_bends.get(kind) or []
-            smd = self._host.preview.decor_models.get(kind) or ''
+            smd = self.geometry(kind)
             if textures or fit or bends or smd or kind == baked:
                 out.append({'kind': kind, 'mdl': mdl, 'smd': smd,
                             'fit': dict(fit) if fit else None,
@@ -114,6 +114,17 @@ class DecorEditor:
                             **({'bake': True, 'empty': list(models.values())}
                                if kind == baked else {})})
         return out
+
+    def geometry(self, kind: str) -> str:
+        """Своя геометрия гирлянды вида `kind`: обтянутая под свою модель
+        оружия, иначе своя модель гирлянды; пусто - стоковая"""
+        p = self._host.preview
+        return p.decor_wrapped.get(kind) or p.decor_models.get(kind) or ''
+
+    def shapes(self) -> Dict[str, str]:
+        """{вид: своя геометрия} - чтобы после отмены понять, что сменилось"""
+        p = self._host.preview
+        return {kind: self.geometry(kind) for kind in {*p.decor_wrapped, *p.decor_models}}
 
     def baked(self) -> str:
         """Вид гирлянды, вшитой в модель оружия, пусто - не вшита. У мода из
@@ -205,7 +216,7 @@ class DecorEditor:
             t.active_team = Team.RED
         if not kind:
             return self._host.view_state()
-        own = self._host.preview.decor_models.get(kind) or ''
+        own = self.geometry(kind)
         cached = self._decors.get(kind)
         if cached is not None and cached.weapon_key == key and cached.source == own:
             self._show_decor_cards(cached)
@@ -231,9 +242,9 @@ class DecorEditor:
 
     def reshow(self, was: Dict[str, str], lang: str) -> None:
         """Показанная гирлянда сменила модель (отмена, сброс, возврат работы) -
-        собрать её заново; `was` - decor_models до перемены"""
+        собрать её заново; `was` - shapes() до перемены"""
         kind = self.kind
-        if kind and was.get(kind) != self._host.preview.decor_models.get(kind):
+        if kind and was.get(kind, '') != self.geometry(kind):
             self.set_festive(kind, lang)
         self.show_baked(lang)
 
@@ -322,7 +333,7 @@ class DecorEditor:
         """Виды гирлянд, у которых есть правки: текстуры или подгонка"""
         from src.services import festive_decor
         kinds = (set(self._host.preview.decor_fit) | set(self._host.preview.decor_bends)
-                 | set(self._host.preview.decor_models))
+                 | set(self._host.preview.decor_models) | set(self._host.preview.decor_wrapped))
         kinds.update(festive_decor.parse_card(c)[0]
                      for c in self._host.preview.textures.decor_uploads())
         kinds.discard('')
@@ -450,6 +461,63 @@ class DecorEditor:
                 self._host.preview.decor_bends.pop(kind, None)
         self._host._autosave()
         return {'bends': self._host.preview.decor_bends.get(kind, [])}
+
+    def autofit(self, lang: str = 'ru') -> Dict[str, Any]:
+        """«Обтянуть модель»: показанная гирлянда садится на свою модель
+        оружия так, как сидела на стоковой (decor_autofit)
+
+        Итог - своя геометрия гирлянды (`decor_wrapped`), посчитанная всегда
+        от исходной: стоковой или своей модели гирлянды. Подгонка человека
+        остаётся, вершины считаются под неё; прежние изгибы снимаются - они
+        гнули прежнюю форму (вернуть - Ctrl+Z). Краска и части на месте:
+        треугольники те же. Считается секунду-две в потоке вызова, страница
+        ждёт ответа с подписью
+        """
+        import tempfile
+
+        from src.services import carrier_model, decor_autofit, festive_decor
+        from src.services.model_decompile_service import DecompileError
+
+        decor = self.shown()
+        if decor is None:
+            return {'error': 'Сначала включите праздничную версию'}
+        p = self._host.preview
+        kind = decor.kind
+        own = (p.custom_vpk_smd if p.custom_vpk_mode and p.custom_vpk_own_model
+               else p.custom_smd_path)
+        if not own or not os.path.isfile(own):
+            return {'error': 'Обтянуть можно только свою модель'}
+        paths = self._host.tf2_paths()
+        if 'error' in paths:
+            return paths
+        fit = p.decor_fit.get(kind)
+        source_model = p.decor_models.get(kind) or ''
+        out = os.path.join(tempfile.mkdtemp(prefix='tf2sg_wrapped_'), f'{kind}_wrapped.smd')
+        try:
+            stock = carrier_model.weapon_reference(decor.weapon_key, paths['misc_vpk'],
+                                                   paths['root'])
+            garland = festive_decor.garland_source(decor.weapon_key, kind, paths['misc_vpk'],
+                                                   paths['root'], source_model)
+            if not stock or not garland:
+                return {'error': 'Стоковая модель оружия не нашлась'}
+            decor_autofit.autofit(garland, stock, own, out, fit)
+        except decor_autofit.AutofitError as exc:
+            return {'error': str(exc)}
+        except (DecompileError, OSError, ValueError) as exc:
+            logger.warning(f"автоподгонка гирлянды: {exc}", exc_info=True)
+            return {'error': 'Гирлянду не удалось обтянуть'}
+        # Пока считали, человек мог сменить гирлянду, предмет, свою модель
+        # или подгонку - обтянуто под прежние
+        now = (p.custom_vpk_smd if p.custom_vpk_mode and p.custom_vpk_own_model
+               else p.custom_smd_path)
+        if (self.shown() is not decor or now != own or p.decor_fit.get(kind) != fit
+                or (p.decor_models.get(kind) or '') != source_model):
+            return self._host.view_state()
+        with self._host._lock:
+            p.decor_wrapped[kind] = out
+            p.decor_bends.pop(kind, None)
+        self._host._autosave()
+        return self.set_festive(kind, lang)
 
     def scene_args(self, key: str) -> Dict[str, str]:
         """Гирлянда для сцены в руках: SMD с правками и имена её мешей"""

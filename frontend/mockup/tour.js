@@ -56,7 +56,7 @@ let textureSet = false;
 document.addEventListener('texture:set', () => { textureSet = true; });
 const hasOwnTexture = () => textureSet || shown($('#keep'));
 //: Эффект открыт: у системы появились крутилки или дерево модулей
-const hasParams = () => Boolean($('#plist .params__row, #pexpert .expert__mod'));
+const hasParams = () => Boolean($('#plist .sp, #pexpert .expert__mod'));
 
 //: Добавил ли человек что-то в дерево эксперта: число узлов запоминается при
 //: входе на шаг (`enter`) и сравнивается с текущим. Дерево после правки
@@ -128,7 +128,7 @@ const TOURS = {
       { at: '#buildvpk', title: 'Сборка',
         text: 'Соберите мод и положите файл в папку tf/custom игры.' },
       { at: '#opentools', title: 'Инструменты',
-        text: 'Извлечь оригинальную текстуру, UV-шаблон и прочее.' },
+        text: 'Экспортировать оригинальную текстуру, UV-шаблон и прочее.' },
       { at: '#opencfg', title: 'Настройки',
         text: 'Путь к игре, язык и тема. Здесь же можно пройти обучение ещё раз.' },
       { title: 'Готово',
@@ -145,17 +145,15 @@ const TOURS = {
       { at: '#partspaint [data-tool="image"]', title: 'Картинка',
         text: 'Щёлкните по части, чтобы положить на неё картинку.' },
       { at: '#partspaint [data-tool="brush"]', title: 'Кисть',
-        text: 'Красит часть в выбранный цвет.' },
+        text: 'Красит часть в выбранный цвет. В настройках кисти там же окантовка.' },
       { at: '#parts-swatch', title: 'Цвет',
         text: 'Выбор цвета. Там же градиент и пипетка.' },
       { at: '#partspaint [data-tool="cut"]', title: 'Ножницы',
         text: 'Делят часть на части поменьше.' },
-      { at: '#partspaint [data-tool="edge"]', title: 'Окантовка',
-        text: 'Обводит края покрашенных частей.' },
       { at: '#partspaint [data-tool="material"]', title: 'Материал',
         text: 'Отдаёт части в свой материал: свой VMT, карты и флаги.' },
-      { at: '#parts-random', title: 'Кубик и ластик',
-        text: 'Случайная раскраска и сброс. Ctrl+Z отменяет.' },
+      { at: '#parts-more', title: 'Ещё',
+        text: 'Отмена, случайная раскраска и сброс.' },
       { at: '#parts-done', title: 'Готово',
         text: 'Выйти из режима частей.' },
     ],

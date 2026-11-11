@@ -5,8 +5,8 @@
   1. Открываем VPK пользователя.
   2. Сканируем: MDL файлы, VMT файлы ($basetexture), VTF файлы.
   3. Если MDL есть  -> извлекаем + декомпилируем -> SMD -> OBJ.
-  4. Если MDL нет   -> по имени VTF / $basetexture определяем ключ оружия
-                      -> берём оригинальную модель из игровых VPK.
+  4. Если MDL нет   -> модель игры, которая рисует текстуры мода
+                      (game_texture_index), из игровых VPK.
   5. Извлекаем основную текстуру из мода (по $basetexture).
      Игнорируем lightwarp, phongwarp, bumpmap и т.п.
      Если текстуры в моде нет - берём из игры.
@@ -15,7 +15,6 @@
 
 import glob
 import os
-import re
 import shutil
 import tempfile
 from typing import List, Optional
@@ -24,7 +23,7 @@ from src.services.base_worker import Signal
 
 from src.services.base_worker import BaseWorker
 from src.services.game_vpk_reader import GameVpkReader
-from src.services import smd_service
+from src.services import game_texture_index, smd_service, vpk_mod_cards, vpk_mod_models
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -36,35 +35,7 @@ from src.services.mod_textures import is_base_vtf, vmt_references  # noqa: E402,
 
 # Утилиты
 
-def _weapon_key_from_path(path: str) -> Optional[str]:
-    """
-    Пытается извлечь ключ оружия (c_xxxx) из пути к файлу.
-    Сверяет кандидатов с таблицей WEAPON_MDL_PATHS
-
-    Пример:
-      'materials/models/weapons/c_models/c_scattergun/c_scattergun.vtf'
-      -> 'c_scattergun'
-    """
-    from src.data.weapons import WEAPON_MDL_PATHS
-
-    candidates = re.findall(r"(c_[a-z0-9_]+)", path.lower())
-    # Перебираем с конца - ключ оружия обычно в самом конце пути
-    for part in reversed(candidates):
-        if part in WEAPON_MDL_PATHS:
-            return part
-    return None
-
-
-def _weapon_mdl(mdl_files: List[str], weapon_key: Optional[str]) -> str:
-    """Модель самого оружия среди моделей мода
-
-    Ключ одинаков у пушки и её гирлянды (c_ambassador_festivizer лежит в
-    папке c_ambassador) - пушку отличает имя файла, равное ключу
-    """
-    for mdl in mdl_files:
-        if weapon_key and os.path.splitext(os.path.basename(mdl))[0].lower() == weapon_key:
-            return mdl
-    return mdl_files[0]
+_weapon_key_from_path = vpk_mod_models.weapon_key
 
 
 # Воркер
@@ -83,6 +54,20 @@ class PreviewVpkModWorker(BaseWorker):
     #: анимации берутся у игрового оружия, геометрия - из мода. Приходит
     #: ПОСЛЕ ready: всё, что спрошено по модели раньше, перепрашивается
     weapon_found = Signal(str, str, bool)
+    #: {грань: карточка} - модели нет, а текстуры мода - небо: показать его
+    sky_ready = Signal(object)
+    #: Мод из одних текстур, а игра не рисует их ни на одной модели. Приходит
+    #: раньше ready
+    unused    = Signal()
+    #: (вид модели по vpk_mod_models.kind_of, её путь в игре, reference SMD
+    #: своей модели мода или пусто) - что мод заменяет. По виду страница
+    #: показывает мод там, где живёт заменённый предмет
+    replaced  = Signal(str, str, str)
+    #: ({материал модели: карточка}, {красная карточка: синяя}) - точная
+    #: связь мешей с карточками и командные пары по $texturegroup модели.
+    #: Синие карточки - не отдельные, а синяя сторона красных, как у
+    #: игрового предмета
+    links_ready = Signal(object, object)
     failed    = Signal(str)
     progress  = Signal(str)
 
@@ -93,6 +78,7 @@ class PreviewVpkModWorker(BaseWorker):
             'scanning':         'Анализ содержимого VPK...',
             'decompiling_mod':  'Декомпиляция MDL из мода...',
             'loading_original': 'Загрузка оригинальной модели из игры...',
+            'finding_model':    'Поиск модели, которую перекрашивает мод...',
             'extracting_tex':   'Извлечение текстуры...',
             'converting':       'Конвертация модели...',
             'decompiling_orig': 'Декомпиляция оригинальной модели...',
@@ -107,6 +93,7 @@ class PreviewVpkModWorker(BaseWorker):
             'scanning':         'Scanning VPK contents...',
             'decompiling_mod':  'Decompiling MDL from mod...',
             'loading_original': 'Loading original model from game...',
+            'finding_model':    'Finding the model the mod retextures...',
             'extracting_tex':   'Extracting texture...',
             'converting':       'Converting model...',
             'decompiling_orig': 'Decompiling original model...',
@@ -123,19 +110,31 @@ class PreviewVpkModWorker(BaseWorker):
         misc_vpk_path: str,
         textures_vpk_path: str,
         lang: str = 'en',
+        model: str = '',
         parent=None,
     ):
         super().__init__(parent)
+        #: Какую модель мода показать (путь MDL внутри VPK); пусто - само
+        #: оружие или первую
+        self.model = model or ''
         self.user_vpk_path     = user_vpk_path
         self.misc_vpk_path     = misc_vpk_path
         self.textures_vpk_path = textures_vpk_path
         self._preview_dir: Optional[str] = None
         self._model_materials: List[str] = []
+        self._cards: list = []
         self._vmt_texts: dict = {}
         self._refs = None
+        #: Показанная модель - косметика: ставится в позу игрока (cosmetic_pose)
+        self._on_player = False
         # Игровой tf2_textures_dir.vpk открываем один раз за прогон (fallback-пути)
         self._game_reader: Optional[GameVpkReader] = None
         self._p = self._PROGRESS.get(lang, self._PROGRESS['en'])
+
+    def _game_vtf(self, texture: str) -> Optional[bytes]:
+        """Байты игровой текстуры по пути из VMT (карты мода, что смотрят в игру)"""
+        self._game_textures_pak()
+        return self._game_reader.find_vtf_for_basetexture(texture)
 
     def _game_textures_pak(self):
         """Хэндл игрового tf2_textures_dir.vpk (открыт один раз, кэш). None если нет"""
@@ -165,15 +164,15 @@ class PreviewVpkModWorker(BaseWorker):
             # 1. Сканируем содержимое
             self.progress.emit(self._p['scanning'])
 
-            mdl_files: List[str] = []
             vmt_files: List[str] = []
             vtf_files: List[str] = []
 
+            # Пустые заглушки (родная гирлянда, когда своя вшита в оружие) -
+            # не модели: показать в них нечего
+            mdl_files = vpk_mod_models.real_models(pak)
             for filepath in pak:
                 fp_low = filepath.lower()
-                if fp_low.endswith(".mdl"):
-                    mdl_files.append(filepath)
-                elif fp_low.endswith(".vmt"):
+                if fp_low.endswith(".vmt"):
                     vmt_files.append(filepath)
                 elif fp_low.endswith(".vtf"):
                     vtf_files.append(filepath)
@@ -199,8 +198,13 @@ class PreviewVpkModWorker(BaseWorker):
             # прервать run() до их формирования, и в 2D оставалась лишь одна
             # карточка (от обычной фильтрации материалов модели)
             try:
-                cards = self._build_cards_from_pak(pak, vtf_files, vmt_files)
-                if cards:
+                cards = vpk_mod_cards.build(pak, vtf_files, vmt_files, self._vmt_texts,
+                                            self._refs, self._preview_dir, self._game_vtf)
+                vpk_mod_cards.tint(cards, self._vmt_texts, self.misc_vpk_path or '')
+                self._cards = cards
+                # Моделей несколько - карточки только выбранной, а какие её,
+                # станет ясно после разбора (vpk_mod_cards.own ниже)
+                if cards and len(mdl_files) <= 1:
                     logger.info(f"VPK мод: 2D-карточек подготовлено: {len(cards)}")
                     self.cards_ready.emit(cards)
             except Exception as exc:
@@ -223,26 +227,28 @@ class PreviewVpkModWorker(BaseWorker):
                 except Exception:
                     continue
 
-            # 3. Определяем ключ оружия
-            weapon_key: Optional[str] = None
-
-            # Приоритет: MDL -> basetexture -> VTF
-            for mdl_rel in mdl_files:
-                weapon_key = _weapon_key_from_path(mdl_rel)
-                if weapon_key:
-                    break
-
-            if not weapon_key and basetexture_path:
-                weapon_key = _weapon_key_from_path(basetexture_path)
-
-            if not weapon_key:
-                for vtf_rel in vtf_files:
-                    if is_base_vtf(vtf_rel, self._refs):
-                        weapon_key = _weapon_key_from_path(vtf_rel)
-                        if weapon_key:
-                            break
-
-            logger.info(f"Определён ключ оружия из VPK мода: {weapon_key!r}")
+            # 3. Что мод заменяет (vpk_mod_models.target): своя модель лежит по
+            # пути игровой, а мод из одних текстур перекрашивает модель игры,
+            # которая их рисует
+            if not mdl_files and vtf_files:
+                self.progress.emit(self._p['finding_model'])
+            mdl, from_mod = vpk_mod_models.target(mdl_files + vtf_files, self._vmt_texts,
+                                                  self.model, self.misc_vpk_path or '')
+            kind = vpk_mod_models.kind_of(mdl) if mdl else ''
+            # Шапку игра надевает на голову: в файле она лежит, как автору удобно
+            self._on_player = kind == 'cosmetic'
+            # Ключ - у показанной модели: в сборнике соседняя пушка (кунай)
+            # делала «оружием» гирлянду ракетомёта, а шапку - ножом
+            weapon_key = vpk_mod_models.weapon_key(mdl)
+            logger.info(f"VPK мод: показана {mdl or 'без модели'} ({kind or '-'}), "
+                        f"ключ оружия {weapon_key!r}")
+            # Только основные текстуры моделей: небо, спрей, частицы и
+            # интерфейс моделями не рисуются и всё равно работают
+            base = [v for v in vtf_files if is_base_vtf(v, self._refs)]
+            if (not mdl and base and self.misc_vpk_path
+                    and all('/models/' in '/' + v.replace('\\', '/').lower() for v in base)
+                    and game_texture_index.load(self.misc_vpk_path).get('users')):
+                self.unused.emit()
 
             if self.isInterruptionRequested():
                 return
@@ -250,29 +256,53 @@ class PreviewVpkModWorker(BaseWorker):
             # 4. Получаем OBJ
             obj_path: Optional[str] = None
             decomp_dir: Optional[str] = None
+            smd = None
 
             own_model = False
-            if mdl_files:
-                # Декомпилируем MDL из мода
+            if from_mod:
                 self.progress.emit(self._p['decompiling_mod'])
-                mdl = _weapon_mdl(mdl_files, weapon_key)
-                obj_path, decomp_dir = self._decompile_mdl_from_pak(pak, mdl, weapon_key)
+                name = vpk_mod_models.stem(mdl)
+                smd, decomp_dir = self._decompile_mdl_from_pak(pak, mdl, name)
+                obj_path = self._to_obj(smd) if smd else None
                 # Своя модель ОРУЖИЯ, а не одна гирлянда поверх стоковой пушки
-                stem = os.path.splitext(os.path.basename(mdl))[0].lower()
-                own_model = bool(obj_path) and stem == (weapon_key or stem)
+                own_model = bool(obj_path) and name == (weapon_key or name)
+            elif mdl:
+                self.progress.emit(self._p['loading_original'])
+                obj_path, decomp_dir = self._load_game_model(mdl)
 
-            if not obj_path and weapon_key and self.misc_vpk_path:
-                # Нет MDL в моде - берём оригинальную TF2 модель
+            if not obj_path and from_mod and weapon_key and self.misc_vpk_path:
+                # Модель мода не разобралась - хотя бы игровая того же оружия
                 self.progress.emit(self._p['loading_original'])
                 orig_obj, orig_decomp = self._load_original_model(weapon_key)
-                if not obj_path:
-                    obj_path = orig_obj
-                if not decomp_dir:
-                    decomp_dir = orig_decomp
+                obj_path = orig_obj
+                decomp_dir = decomp_dir or orig_decomp
+            if mdl:
+                self.replaced.emit(kind, mdl, smd if from_mod and obj_path else '')
 
-            if not obj_path:
+            if not obj_path and not vtf_files:
                 self.failed.emit(self._p['not_found'])
                 return
+            # Модели нет нигде (скайбокс, спрей, интерфейс): мод всё равно
+            # открывается - текстуры правятся в альбоме и уходят в сборку. Небо
+            # показывается кубмапой из тех же карточек
+            obj_path = obj_path or ''
+            if not obj_path:
+                sky = vpk_mod_models.sky_faces(self._cards)
+                if sky:
+                    self.sky_ready.emit(sky)
+
+            shown = self._cards
+            if len(mdl_files) > 1 and self._cards:
+                shown = vpk_mod_cards.own(decomp_dir, self._model_materials, self._cards,
+                                          self._vmt_texts)
+                logger.info(f"VPK мод: карточек выбранной модели {len(shown)} "
+                            f"из {len(self._cards)}")
+                self.cards_ready.emit(shown)
+            if shown and decomp_dir:
+                meshes, blue = vpk_mod_cards.links(decomp_dir, self._model_materials, shown,
+                                                   self._vmt_texts, self.misc_vpk_path or '')
+                logger.info(f"VPK мод: меши -> карточки {meshes}, команды {blue}")
+                self.links_ready.emit(meshes, blue)
 
             if self.isInterruptionRequested():
                 return
@@ -344,65 +374,6 @@ class PreviewVpkModWorker(BaseWorker):
 
     # 2D-карточки: все основные текстуры мода из открытого pak
 
-    def _build_cards_from_pak(self, pak, vtf_files: List[str], vmt_files: List[str]) -> list:
-        """Строит карточки для ВСЕХ основных VTF мода прямо из открытого pak
-
-        Служебные VTF (lightwarp/bump/normal/…) отброшены через is_base_vtf.
-        Имя карточки = стебель VTF; при коллизии добавляется папка. Превью -
-        первый кадр VTF. vmt_path привязывается по совпадению стебля
-        """
-        from src.services import vmt_parse
-        from src.services.mod_textures import texture_key
-
-        # VMT для текстуры: тот, чей $basetexture на неё смотрит (так её
-        # находит игра), иначе - по совпадению стебля
-        vmt_by_stem = {}
-        vmt_by_base = {}
-        for vmt_rel in vmt_files:
-            stem = os.path.splitext(os.path.basename(vmt_rel))[0].lower()
-            vmt_by_stem.setdefault(stem, vmt_rel)
-            base_tex = vmt_parse.parse(self._vmt_texts.get(vmt_rel, '')).path('$basetexture')
-            if base_tex:
-                vmt_by_base.setdefault(texture_key(base_tex), vmt_rel)
-        vtf_by_key = {texture_key(v): v for v in vtf_files}
-
-        base = sorted(v for v in vtf_files if is_base_vtf(v, self._refs))
-        # Подсчёт коллизий стеблей для дизамбигуации
-        stems = [os.path.splitext(os.path.basename(v))[0] for v in base]
-        counts: dict = {}
-        for s in stems:
-            counts[s] = counts.get(s, 0) + 1
-
-        cards = []
-        used: set = set()
-        for vtf_rel in base:
-            stem = os.path.splitext(os.path.basename(vtf_rel))[0]
-            folder = os.path.basename(os.path.dirname(vtf_rel))
-            name = stem if counts.get(stem, 0) <= 1 else f"{stem} [{folder}]"
-            while name in used:
-                name += "_"
-            used.add(name)
-
-            preview_png = None
-            try:
-                data = pak[vtf_rel].read()
-                preview_png = self._vtf_bytes_first_frame_png(data, name)
-            except Exception as exc:
-                logger.debug(f"VPK мод: превью VTF не удалось ({vtf_rel}): {exc}")
-
-            vmt_rel = vmt_by_base.get(texture_key(vtf_rel)) or vmt_by_stem.get(stem.lower())
-            cards.append({
-                'name': name,
-                'display_name': name,
-                'is_blue': stem.lower().endswith('_blue'),
-                'preview_png': preview_png,
-                'vmt_path': vmt_rel,
-                'maps': self._mod_maps(pak, name, self._vmt_texts.get(vmt_rel, ''), vtf_by_key),
-            })
-
-        # RED-материалы первыми, затем BLU (как в обычной раскладке карточек)
-        return [c for c in cards if not c['is_blue']] + [c for c in cards if c['is_blue']]
-
     def _build_skin_textures(self, pak, info: dict, vtf_files: List[str]) -> dict:
         """Для каждого стиля (skinfamilies) - превью существующих текстур по
         базовому материалу: {raw_skin_idx: {base_material: preview_png}}
@@ -441,7 +412,8 @@ class PreviewVpkModWorker(BaseWorker):
                     continue
                 try:
                     data = pak[vtf_rel].read()
-                    png = self._vtf_bytes_first_frame_png(data, f"skin{ridx}_{base_mat}")
+                    png = vpk_mod_cards.card_png(data, f"skin{ridx}_{base_mat}",
+                                                 self._preview_dir)
                     if png:
                         mp[base_mat] = png
                 except Exception:
@@ -449,43 +421,6 @@ class PreviewVpkModWorker(BaseWorker):
             if mp:
                 out[ridx] = mp
         return out
-
-    def _mod_maps(self, pak, card: str, vmt_text: str, vtf_by_key: dict) -> dict:
-        """Карты материала, что уже стоят в VMT мода, - с превью их текстуры
-        (диалог карт показывает их отмеченными)"""
-        from src.data.material_maps import detect_maps
-        from src.services.mod_textures import texture_key
-
-        maps = detect_maps(vmt_text)
-        for map_id, entry in maps.items():
-            texture = entry.get('texture')
-            if not texture:
-                continue
-            vtf_rel = vtf_by_key.get(texture_key(texture))
-            try:
-                # Своя текстура мода, иначе игровая (lightwarp модов часто
-                # смотрит на полоску самой игры)
-                if vtf_rel:
-                    data = pak[vtf_rel].read()
-                else:
-                    self._game_textures_pak()
-                    data = self._game_reader.find_vtf_for_basetexture(texture)
-                if data:
-                    entry['preview'] = self._vtf_bytes_first_frame_png(data, f"{card}__{map_id}")
-            except Exception as exc:
-                logger.debug(f"VPK мод: превью карты {map_id} не вышло ({texture}): {exc}")
-        return maps
-
-    def _vtf_bytes_first_frame_png(self, vtf_data: bytes, key: str) -> Optional[str]:
-        """Сохраняет первый кадр VTF в уникальный PNG (для превью карточки)
-
-        Тонкая обёртка над общим vtf_preview_service.vtf_bytes_to_png - лишь
-        санитайзит ключ в безопасное имя файла
-        """
-        from src.services import vtf_preview_service as _vps
-        safe = re.sub(r'[^A-Za-z0-9_.-]', '_', key)
-        return _vps.vtf_bytes_to_png(
-            vtf_data, os.path.join(self._preview_dir, f"_card_{safe}.png"), self._preview_dir)
 
     # MDL: декомпиляция из пользовательского VPK
 
@@ -500,7 +435,7 @@ class PreviewVpkModWorker(BaseWorker):
         и декомпилирует через Crowbar
 
         Returns:
-            (obj_path, decomp_dir) - оба None если что-то пошло не так
+            (reference SMD, decomp_dir) - оба None если что-то пошло не так
         """
         from src.services.model_build_service import ModelBuildService
         from src.services.tf2_paths import TF2Paths
@@ -548,20 +483,42 @@ class PreviewVpkModWorker(BaseWorker):
             if not smd_path:
                 logger.warning(f"Reference SMD не найден в {decomp_dir}")
                 return None, decomp_dir   # dir есть, SMD нет - всё равно вернём dir для текстуры
-
-            self.progress.emit(self._p['converting'])
-            obj_path = os.path.join(self._preview_dir, "model.obj")
-            from src.services.smd_to_obj_service import SmdToObjService
-            ok, mat_names = SmdToObjService.convert(smd_path, obj_path)
-            if ok:
-                self._model_materials = list(mat_names or [])
-            return (obj_path if ok else None), decomp_dir
+            return smd_path, decomp_dir
 
         except Exception as exc:
             logger.error(f"Ошибка декомпиляции MDL из мода: {exc}", exc_info=True)
             return None, None
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+
+    def _to_obj(self, smd: str) -> Optional[str]:
+        """OBJ превью из модели; имена её материалов запоминаются"""
+        from src.services.smd_to_obj_service import SmdToObjService
+
+        self.progress.emit(self._p['converting'])
+        obj_path = os.path.join(self._preview_dir, "model.obj")
+        ok, mat_names = SmdToObjService.convert(smd, obj_path, on_player=self._on_player)
+        if not ok:
+            return None
+        self._model_materials = list(mat_names or [])
+        return obj_path
+
+    def _load_game_model(self, mdl_path: str) -> tuple:
+        """(OBJ, папка разбора) игровой модели по пути в tf2_misc_dir.vpk"""
+        from src.services import model_decompile_service as mds
+
+        stem = vpk_mod_models.stem(mdl_path)
+        try:
+            found = mds.ensure_decompiled(stem, self.misc_vpk_path, [mdl_path],
+                                          cancelled=self.isInterruptionRequested)
+        except mds.DecompileError as exc:
+            logger.warning(f"VPK мод: игровая модель {mdl_path}: {exc}")
+            return None, None
+        if found is None:
+            return None, None
+        smd = smd_service.find_reference_smd(found.directory, stem)
+        logger.info(f"VPK мод без своей модели: показана игровая {mdl_path}")
+        return (self._to_obj(smd) if smd else None), found.directory
 
     # Оригинальная TF2 модель
 

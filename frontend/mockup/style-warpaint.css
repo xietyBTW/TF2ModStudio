@@ -87,6 +87,59 @@
 .classpick__bar { display: flex; align-items: center; gap: 16px; }
 .classpick__count { margin-left: auto; font-size: 11px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
 
+/* Объединение модов: строки с отметкой и порядком, под ними - пересечения.
+   Отмеченная строка - акцентная полоса слева, как выбранный пункт списка */
+.ask.mergepick { width: min(620px, 94vw); }
+.mergepick__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 42vh;
+  overflow: auto;
+  border-top: 1px solid var(--hairline);
+}
+.mergepick__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  transition: border-color var(--dur), background var(--dur);
+}
+.mergepick__row.is-active { border-left-color: var(--accent); background: var(--bg); }
+.mergepick__pick {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 8px;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  text-align: left;
+  cursor: pointer;
+}
+.mergepick__row.is-active .mergepick__pick { color: var(--ink); }
+.mergepick__mod { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mergepick__meta { font-size: 11px; color: var(--ink-mute); }
+.mergepick__items {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mergepick__move { padding: 0 6px; }
+.mergepick__move:disabled { opacity: .25; cursor: default; }
+.mergepick__conflicts { font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+.mergepick__conflicts.is-clear { color: var(--ink-mute); }
+.mergepick__warn { margin: 0 0 4px; color: var(--accent); }
+.mergepick__conflict { margin: 0; }
+.mergepick__conflict b { font-weight: 500; color: var(--ink); }
+.mergepick__name { display: flex; flex-direction: column; gap: 6px; }
+.mergepick__count { margin-right: auto; font-size: 11px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+
 /* War Paint: панель на месте альбома. Модель справа остаётся на виду - на ней
    идёт живой предпросмотр, поэтому это не модальное окно */
 /* Панель встаёт на место содержимого альбома в общем потоке, а не поверх:

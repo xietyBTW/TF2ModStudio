@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 from src.app.api import (
+    about,
     app_log,
     app_settings,
     app_update,
@@ -43,9 +44,9 @@ from src.app.api._common import ENDPOINTS, endpoint, logger  # noqa: F401 - ре
 
 # Имена модулей областей - в пространство пакета: новая функция появляется в
 # `api.` сама, вписывать её сюда не нужно. Подменять в тестах - в её модуле
-for _module in (app_log, app_settings, app_update, audio, building, catalog,
-                custom_model, hat_catalog, materials, model_parts, particles,
-                preview, saved_works, sheen, tools, war_paint):
+for _module in (about, app_log, app_settings, app_update, audio, building,
+                catalog, custom_model, hat_catalog, materials, model_parts,
+                particles, preview, saved_works, sheen, tools, war_paint):
     globals().update({k: v for k, v in vars(_module).items()
                       if not k.startswith('__')})
 del _module

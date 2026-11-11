@@ -130,14 +130,21 @@ class WeaponMdlTests(unittest.TestCase):
     """Гирлянда в той же папке, что пушка, не должна стать «оружием» мода"""
 
     def test_weapon_wins_over_its_garland(self):
-        from src.services.preview_vpk_mod_worker import _weapon_mdl
+        from src.services.vpk_mod_models import pick
         files = ['models/weapons/c_models/c_ambassador/c_ambassador_festivizer.mdl',
                  'models/weapons/c_models/c_ambassador/c_ambassador.mdl']
-        self.assertEqual(_weapon_mdl(files, 'c_ambassador'), files[1])
+        self.assertEqual(pick(files, '', 'c_ambassador'), files[1])
 
     def test_unknown_weapon_takes_the_first(self):
-        from src.services.preview_vpk_mod_worker import _weapon_mdl
-        self.assertEqual(_weapon_mdl(['models/psl/a.mdl'], None), 'models/psl/a.mdl')
+        from src.services.vpk_mod_models import pick
+        self.assertEqual(pick(['models/psl/a.mdl'], '', None), 'models/psl/a.mdl')
+
+    def test_the_picked_model_wins(self):
+        # Выбор человека главнее оружия: он хотел посмотреть именно гирлянду
+        from src.services.vpk_mod_models import pick
+        files = ['models/weapons/c_models/c_ambassador/c_ambassador_festivizer.mdl',
+                 'models/weapons/c_models/c_ambassador/c_ambassador.mdl']
+        self.assertEqual(pick(files, files[0].upper(), 'c_ambassador'), files[0])
 
 
 class ModMainCardTests(unittest.TestCase):

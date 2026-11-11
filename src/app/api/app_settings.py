@@ -90,6 +90,11 @@ _UI_STATE = {
     # Потолок размера своей картинки в редакторе частиц. Меньшие картинки
     # не растягиваются, не-степень двойки сервер округлит вниз сам
     'particle_tex_size': (256, 1024, 512),
+    # Вид простого режима частиц: бит 0 - пояснения под крутилками, биты 1-2
+    # - фильтр (0 все, 1 есть в системе, 2 изменённые). Толкует particles/params.js
+    'particle_simple_view': (0, 7, 0),
+    # Свёрнутые разделы простого режима - битовой маской по порядку разделов
+    'particle_simple_folded': (0, 255, 0),
     # Какие туры обучения пройдены - битовой маской. Биты заданы в одном
     # месте, frontend/mockup/tour.js (TOURS[…].bit); 0 - не пройден ни один,
     # и главный тур запустится при старте
@@ -206,6 +211,8 @@ def settings(lang: str = '') -> Dict[str, object]:
     from src.config.app_config import AppConfig
     from src.shared.constants import SVPURE_BYPASS_DEFAULT
     from src.services.tf2_paths import TF2Paths
+    from src.services.app_links import cached_links
+    from src.shared.version import __version__
 
     lang = _lang(lang)
     t = _t(lang)
@@ -274,13 +281,11 @@ def settings(lang: str = '') -> Dict[str, object]:
         ],
         'bypass_tip': t.get('bypass_tooltip', ''),
         'cache_caps': list(_CACHE_CAPS),
-        'support_url': SUPPORT_URL,
+        # Без сети, чтобы окно открылось сразу. Свежие страница спросит
+        # отдельно (`app_links`)
+        'links': cached_links(),
+        'version': __version__,
     }
-
-
-#: Куда ведёт «Поддержать автора». Тот же адрес, что в окне приложения
-SUPPORT_URL = ('https://steamcommunity.com/tradeoffer/new/'
-               '?partner=394814324&token=GNGCagXk')
 
 
 def _cache_mb() -> float:

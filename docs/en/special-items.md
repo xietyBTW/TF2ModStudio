@@ -14,7 +14,7 @@ The **Character** category lists what each class is made of. Filter by **Class**
 
 A body can't be replaced with your own model. Class models have a complex skeleton, facial flexes, bodygroups and LODs, and swapping the geometry alone would almost always break something, so **Replace model** isn't offered here.
 
-**Tools → Extract original texture** asks which of the body's textures you want before saving them.
+**Tools → Export original texture** asks which of the body's textures you want before saving them.
 
 ### Hands
 

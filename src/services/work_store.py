@@ -160,6 +160,8 @@ def _own_paths(edits: Dict[str, object], files_dir: Path) -> Dict[str, object]:
     out['custom_source_path'] = _own_file(edits.get('custom_source_path'), files_dir)
     out['decor_models'] = {kind: own for kind, smd in (edits.get('decor_models') or {}).items()
                            if (own := _own_file(smd, files_dir))}
+    out['decor_wrapped'] = {kind: own for kind, smd in (edits.get('decor_wrapped') or {}).items()
+                            if (own := _own_file(smd, files_dir))}
     out['part_models'] = {part: own for part, smd in (edits.get('part_models') or {}).items()
                           if (own := _own_file(smd, files_dir))}
 
@@ -341,9 +343,10 @@ def _prune(edits: Dict[str, object]) -> Dict[str, object]:
         edits['custom_smd_path'] = None
     if edits.get('custom_source_path') and not os.path.isfile(edits['custom_source_path']):
         edits['custom_source_path'] = None
-    if 'decor_models' in edits:
-        edits['decor_models'] = {kind: smd for kind, smd in (edits['decor_models'] or {}).items()
-                                 if smd and os.path.isfile(smd)}
+    for key in ('decor_models', 'decor_wrapped'):
+        if key in edits:
+            edits[key] = {kind: smd for kind, smd in (edits[key] or {}).items()
+                          if smd and os.path.isfile(smd)}
     if 'part_models' in edits:
         edits['part_models'] = {part: smd for part, smd in (edits['part_models'] or {}).items()
                                 if smd and os.path.isfile(smd)}

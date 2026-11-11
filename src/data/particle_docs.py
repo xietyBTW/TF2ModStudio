@@ -328,6 +328,12 @@ ATTRS: Dict[str, Tuple[str, str]] = {
     "ease_in_and_out": (
         "Сглаживать начало и конец перехода вместо линейного.",
         "Smooth the start and end of the transition instead of linear."),
+    "sequence_min": (
+        "Первый кадр листа спрайтов, из которого частица берёт картинку.",
+        "First sprite sheet sequence a particle may pick."),
+    "sequence_max": (
+        "Последний кадр листа спрайтов, из которого частица берёт картинку.",
+        "Last sprite sheet sequence a particle may pick."),
     # Размер и вращение
     "radius_min": (
         "Нижняя граница радиуса частицы при рождении.",
@@ -486,6 +492,12 @@ ATTRS: Dict[str, Tuple[str, str]] = {
         "Дальше этого расстояния от точки частицу не пускать.",
         "Particles are kept no farther than this from the point."),
     # Форсы
+    "min force": (
+        "Нижняя граница случайной силы по каждой оси, обновляется каждый кадр.",
+        "Lower bound of the random force per axis, rerolled every frame."),
+    "max force": (
+        "Верхняя граница случайной силы по каждой оси.",
+        "Upper bound of the random force per axis."),
     "amount of force": (
         "Величина силы. Знак задаёт направление.",
         "Force magnitude. The sign sets the direction."),

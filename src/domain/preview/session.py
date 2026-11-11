@@ -49,7 +49,7 @@ EDIT_FIELDS = (
     'custom_smd_path', 'custom_qc_text', 'custom_source_path',
     # Подгонка и изгибы гирлянды под свою модель: своя форма гирлянды -
     # такая же правка, как своя геометрия предмета
-    'decor_fit', 'decor_bends', 'decor_models', 'decor_baked',
+    'decor_fit', 'decor_bends', 'decor_models', 'decor_wrapped', 'decor_baked',
     # Своя модель снаряда в оружии - та же правка геометрии
     'part_models',
 )
@@ -109,6 +109,10 @@ class PreviewSession:
     #: Свои модели гирлянд: {вид: SMD}. Кости и QC остаются стоковые (см.
     #: festive_decor.build), материалы - свои
     decor_models: Dict[str, str] = field(default_factory=dict)
+    #: Гирлянды, обтянутые под свою модель оружия (decor_autofit): {вид: SMD}
+    #: - та же гирлянда (стоковая или своя) со сдвинутыми вершинами. Отдельно
+    #: от своей модели: обтягивают заново всегда от неё, а не от обтянутой
+    decor_wrapped: Dict[str, str] = field(default_factory=dict)
     #: Вид гирлянды, вшитой в модель оружия (decor_bake), пусто - не вшита
     decor_baked: str = ''
     #: Своя геометрия деталей модели: {имя SMD детали без .smd: SMD человека}.
@@ -129,6 +133,17 @@ class PreviewSession:
     #: В моде своя модель (а не только текстуры на стоковой): развёртка у неё
     #: своя, и всё, что привязано к UV стоковой (War Paint игры), мимо
     custom_vpk_own_model: bool = False
+    #: Мод без модели, чьи текстуры - небо: {грань: карточка}. Превью
+    #: показывает кубмапу из текущих картинок этих карточек
+    custom_vpk_sky: Dict[str, str] = field(default_factory=dict)
+    #: Мод из одних текстур, которых игра не рисует ни на одной модели
+    #: (c_items/c_scattergun от старой версии пушки): в игре он ничего не
+    #: изменит, и экран должен сказать это прямо
+    custom_vpk_unused: bool = False
+    #: Что заменяет мод: вид модели (vpk_mod_models.kind_of) и её путь в игре.
+    #: По виду мод-шапка живёт на странице шапок и надевается на персонажа
+    custom_vpk_kind: str = ''
+    custom_vpk_mdl: str = ''
     #: Режим загруженного custom-VPK мода: карточки строятся из VTF мода и
     #: не должны перетираться обычной фильтрацией материалов модели
     custom_vpk_mode: bool = False
@@ -552,7 +567,7 @@ class PreviewSession:
         out: Dict[str, str] = {}
 
         # Мод из VPK: карточки названы по VTF мода, а красить надо меши модели.
-        # Связь между ними - только имя без учёта регистра (resolve_mesh)
+        # Связь между ними - VMT материала, без неё имя (resolve_mesh)
         if self.custom_vpk_mode and self.custom_model_materials:
             for mat in self.custom_model_materials:
                 path = t.resolve_mesh(mat)
@@ -624,13 +639,16 @@ class PreviewSession:
     def scene_names(self, card: str) -> List[str]:
         """Меши показанной сцены, на которые ложится карточка `card`
 
-        Та же связь, что в scene_textures: у мода из VPK - по имени без учёта
-        регистра, у одноматериальной модели в сцене - настоящие имена мешей.
-        Нужна странице, чтобы временная картинка (предпросмотр War Paint)
-        легла туда же, куда легла бы настоящая, в любой сцене
+        Та же связь, что в scene_textures: у мода из VPK - по VMT материала
+        (без неё - по имени без учёта регистра), у одноматериальной модели в
+        сцене - настоящие имена мешей. Нужна странице, чтобы временная
+        картинка (предпросмотр War Paint) легла туда же, куда легла бы
+        настоящая, в любой сцене
         """
         if self.custom_vpk_mode and self.custom_model_materials:
-            return [m for m in self.custom_model_materials if m.lower() == card.lower()]
+            links = self.textures.mod_mesh_cards
+            return [m for m in self.custom_model_materials
+                    if links.get(m.lower(), m).lower() == card.lower()]
         return list(self._name_for_scene({card: ''}))
 
     def _name_for_scene(self, out: Dict[str, str]) -> Dict[str, str]:
@@ -800,6 +818,7 @@ class PreviewSession:
             'decor_bends': {kind: [dict(b) for b in bends]
                             for kind, bends in self.decor_bends.items() if bends},
             'decor_models': dict(self.decor_models),
+            'decor_wrapped': dict(self.decor_wrapped),
             'decor_baked': self.decor_baked,
             'part_models': dict(self.part_models),
         }
@@ -928,6 +947,8 @@ class PreviewSession:
                             in (edits.get('decor_bends') or {}).items() if bends}
         self.decor_models = {str(kind): str(smd) for kind, smd
                              in (edits.get('decor_models') or {}).items() if smd}
+        self.decor_wrapped = {str(kind): str(smd) for kind, smd
+                              in (edits.get('decor_wrapped') or {}).items() if smd}
         self.decor_baked = str(edits.get('decor_baked') or '')
         self.part_models = {str(part): str(smd) for part, smd
                             in (edits.get('part_models') or {}).items() if smd}
@@ -957,6 +978,7 @@ class PreviewSession:
         self.decor_fit = {}
         self.decor_bends = {}
         self.decor_models = {}
+        self.decor_wrapped = {}
         self.decor_baked = ''
         self.part_models = {}
 
@@ -972,13 +994,18 @@ class PreviewSession:
         self.custom_vpk_weapon = None
         self.custom_vpk_smd = None
         self.custom_vpk_own_model = False
+        self.custom_vpk_sky = {}
+        self.custom_vpk_unused = False
+        self.custom_vpk_kind = ''
+        self.custom_vpk_mdl = ''
         self.mod_maps = {}
         self.mod_vmts = {}
 
     def forget_decor_look(self, kind: str) -> None:
         """Правки гирлянды вида `kind`, привязанные к её геометрии: краска,
         части и изгибы. Зовётся при смене её модели - у новой треугольники и
-        материалы другие. Подгонка остаётся: она про место на оружии"""
+        материалы другие. Подгонка остаётся: она про место на оружии.
+        Обтянутая - от прежней модели, её тоже нет"""
         prefix = f"{DECOR_PREFIX}{kind}/"
         for team in self.textures.textures.values():
             for card in [c for c in team if c.startswith(prefix)]:
@@ -988,6 +1015,7 @@ class PreviewSession:
             for key in [k for k in store if str(k).startswith(prefix)]:
                 del store[key]
         self.decor_bends.pop(kind, None)
+        self.decor_wrapped.pop(kind, None)
 
     def reset_custom_model(self) -> None:
         """Забывает подставленную пользователем геометрию"""
@@ -1078,6 +1106,7 @@ class PreviewSession:
         self.decor_fit = {}
         self.decor_bends = {}
         self.decor_models = {}
+        self.decor_wrapped = {}
         self.decor_baked = ''
         self.part_models = {}
         self.decor_cards = []

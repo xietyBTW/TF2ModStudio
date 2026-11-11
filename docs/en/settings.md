@@ -13,7 +13,7 @@
 | **Game folder** | The TF2 folder, the one that contains `tf` and `bin`, for example `D:\Steam\steamapps\common\Team Fortress 2`. The folder icon opens a folder picker. While the path is missing or wrong, **Detect automatically** appears under the field: it finds the game through the Steam registry entries and Steam's library list, on any drive. A path counts as valid when `bin\studiomdl.exe` and `tf\tf2_misc_dir.vpk` exist in it. |
 | **Export folder** | Where built mods and extracted files go. The default is `export`. A relative path is counted from the app's data folder (see [below](#where-the-app-keeps-your-files)), an absolute one is used as is. |
 | **sv_pure bypass** | The folder that model materials are moved into so they get past `sv_pure` on casual servers: `console\` (default) or `vgui\replay\thumbnails\`. Both work; the switch is a fallback in case one of them gets blocked. Skyboxes aren't affected. See [troubleshooting](troubleshooting.md#casual-servers-and-sv_pure). |
-| **Extraction format** | The file format for **Tools → Extract original texture**: `VTF` (default), `PNG`, `TGA` or `JPG`. It doesn't affect the build, which always produces VTF. |
+| **Texture export format** | The file format for **Tools → Export original texture**: `VTF` (default), `PNG`, `TGA` or `JPG`. It doesn't affect the build, which always produces VTF. |
 
 ## Interface
 
@@ -66,12 +66,22 @@ Some materials are hidden from the start and can't be unhidden here: eyes, teeth
 | **Model cache size** | How much space decompiled models may take: from 512 MB to 10 GB or no limit, 1 GB by default. A cached model opens without Crowbar, in seconds instead of half a minute. When the cache is full, the models you have not opened for the longest go first. The app cannot work with no cache at all, because the model you have open right now lives there too. |
 | **Clear the model cache** | Deletes the decompiled models. The size of the cache is shown next to the button. After clearing, the first build of each item is slower, because the app decompiles it again. Clear it if models start misbehaving after a game update. |
 | **Delete drafts…** | Lists the drafts with their sizes so you can delete the ones you don't need. Saved works aren't listed and aren't touched. |
-| **Check for updates** | Asks GitHub whether a newer version exists and shows the current one. See [Updates](#updates). |
 | **Replay the tutorial** | Closes the settings and starts the tutorials from the beginning. |
 | **Keep temp files on failure** | Keeps the temporary build folder when a build fails, so you can look at the intermediate files. Useful together with a bug report. |
 | **Debug mode** | Writes detailed debug entries to the log. Turn it on before reproducing a problem you're going to report. |
 
-**Support the author** in the bottom left corner opens the author's Steam trade offer page, if you'd like to say thanks.
+## About
+
+| Item | What it does |
+|---|---|
+| **Version** | The installed version. **Check for updates** asks GitHub again. See [Updates](#updates). |
+| **Contact the author** | Links to the author's Discord and Steam profiles. **Copy username** copies the Discord username, so you can find the author by searching for it. |
+| **Copy details** | Copies the app version, Windows version, language, whether the game folder is found, and the latest warnings and errors from the log. Your Windows user folder is replaced with `~`. Paste it into your message along with what you did and what went wrong. |
+| **Open log** | Opens the folder with the full log file. |
+| **Report on GitHub** | Opens a new issue on GitHub, if you have an account there. |
+| **Support the author** | Opens the author's Steam trade offer page, if you'd like to say thanks. |
+
+The app takes these links from the project's GitHub page when you open the settings, so they stay correct even if the author changes them after your version was released.
 
 ## Updates
 

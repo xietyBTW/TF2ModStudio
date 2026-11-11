@@ -22,6 +22,7 @@
 import * as api from './api.js';
 import { t } from './i18n.js';
 import { el, button, card, clone } from './sheen-ui.js';
+import { paintTrack } from './util.js';
 import { SheenPattern } from './sheen-pattern.js';
 import { createPlayer } from './sheen-player.js';
 import { createLayers } from './sheen-layers.js';
@@ -171,6 +172,7 @@ export async function openSheenBuilder({ patternId = '', length = 2.5 } = {}) {
       player.refresh();
     });
     showLength();
+    paintTrack(lengthIn);
     const prow = (label, title, ...nodes) => {
       const row = el('div', 'sheenb__row');
       row.title = title;

@@ -49,7 +49,9 @@ The particle editor keeps a separate history of its own, with the same keys and 
 
 The **Custom Mod** category also holds VPK mods you've opened: your older builds or someone else's mods.
 
-**Open a VPK mod…** picks a `.vpk` from disk. The app copies it into its library and opens it: the mod's model and textures replace what was on screen, and the title shows the mod's name. From there you can work with it like with any item: repaint its textures, cut it into parts, apply a War Paint. **Build VPK** makes a new mod based on the opened one, with your changes on top.
+**Open a mod…** picks a `.vpk` or a `.zip` from disk, **Open a mod folder…** picks a folder laid out as in `tf/custom`. An archive or a folder is packed into a VPK: ready VPKs inside an archive are taken as they are, a multi-part one (`_dir.vpk` with `_000.vpk`) is rebuilt as one file, and every folder with `materials`, `models` or `sound` becomes a mod of its own. If there are several mods inside, all of them go to the library and the app asks which one to open now. The app copies it into its library and opens it: the mod's model and textures replace what was on screen, and the title shows the mod's name. From there you can work with it like with any item: repaint its textures, cut it into parts, apply a War Paint. **Build VPK** makes a new mod based on the opened one, with your changes on top.
+
+If the mod has several models, the app asks which one to show. The mod is built in full whatever you pick. A mod without a model of its own opens too: for a repaint of a body, hands, a projectile or a medkit the app shows the game model it found by the texture paths, a skybox mod shows as a cubemap of its own textures (a replacement in the album shows on the sky right away), and for a spray the view stays empty and you edit the textures in the album. Your last choice of model is marked again the next time you open the mod.
 
 The library keeps a copy, so the mod stays available even if you delete or move the original file. Cards show the mod's size and, where the app can find one, its texture as a cover. The **×** on a card removes the copy from the library. The file you originally opened stays where it was.
 
@@ -59,9 +61,11 @@ A few things work differently for opened mods. The VMT editor can't edit a mod's
 
 **Tools → Merge several VPKs into one** combines mods from the export folder into a single file. It's handy for sharing a set of skins, or for keeping `tf/custom` tidy.
 
-1. Tick at least two mods in the list and press **Next**.
-2. Enter a name for the result (`merged_mod.vpk` by default).
-3. If two of the mods change the same item, the app warns you and lists which mods touch which item. Only one version of a file can survive in a VPK, so one mod will override the other. Confirm with **Merge** or cancel and pick the mods again.
+It all happens in one window:
+
+1. Mark at least two mods. Under each name you see what is inside, and the size is on the right.
+2. If the mods change the same thing, the window shows it right under the list: which item, which mods and whose version stays. This works for mods without models too, such as two repaints of one Scattergun. A file can have only one version in a VPK, and the mod higher in the list wins. Change the order with the arrows on the right.
+3. Enter a name for the result (`merged_mod.vpk` by default) and press **Merge**.
 
 The merged mod appears in the export folder.
 

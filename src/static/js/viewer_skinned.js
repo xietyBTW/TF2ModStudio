@@ -122,6 +122,33 @@ export function createBones(THREE, list) {
   return bones;
 }
 
+// Оружие, надетое на руку, повторяет её поверхность: «Горячая рука» - та же
+// правая рука пиро (1262 треугольника), хлеб «Кусай-хлеба» облегает кулак.
+// Игра рисует его после рук, и равная глубина уходит ему. У нас кости рук и
+// оружия считаются порознь, глубины расходятся в последних знаках, и поверх
+// шла рябь из двух текстур. Сдвиг глубины к камере отдаёт совпадающее место
+// оружию; там, где поверхности не совпадают, он ничего не меняет. Ставится
+// перед каждой отрисовкой: материал меша пересоздаётся при смене текстуры
+function pullForward(mesh) {
+  mesh.onBeforeRender = (renderer, scene, camera, geometry, material) => {
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = -1;
+    material.polygonOffsetUnits = -4;
+  };
+}
+
+// Руки класса - как в игре, без изнанки: Source её не рисует, а двусторонний
+// материал (умолчание вьювера, см. viewer_materials) показывал внутренность
+// там, где меш открыт. Ставится перед каждой отрисовкой по той же причине,
+// что и сдвиг глубины у оружия
+function cullBackFaces(THREE, mesh) {
+  mesh.onBeforeRender = (renderer, scene, camera, geometry, material) => {
+    if (material.side === THREE.FrontSide) return;
+    material.side = THREE.FrontSide;
+    material.needsUpdate = true;       // шейдер двустороннего другой
+  };
+}
+
 // Один меш на материал: так вьювер меняет текстуры по имени материала - тем же
 // путём, что и в обычном превью, где каждой группе OBJ соответствует свой меш
 function createPart(THREE, part, makeMaterial) {
@@ -144,6 +171,8 @@ function createPart(THREE, part, makeMaterial) {
     const mesh = new THREE.SkinnedMesh(geometry, makeMaterial(group.material));
     mesh.name = group.material;
     mesh.frustumCulled = false;   // вьюмодель всегда перед камерой
+    if (part.kind === 'weapon') pullForward(mesh);
+    else cullBackFaces(THREE, mesh);
     out.push({ name: group.material, mesh, kind: part.kind });
   }
   return out;

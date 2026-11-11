@@ -25,6 +25,10 @@
 #ifndef ReleaseName
   #define ReleaseName "TF2ModStudio"
 #endif
+; Загрузчик WebView2 от Microsoft (около 2 МБ): скачивается во время установки
+; и только если человек оставил галку, сам в установщике не лежит
+#define WebView2Url "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+#define WebView2Setup "MicrosoftEdgeWebview2Setup.exe"
 
 ; Версию и папку со сборкой задаёт build-release.ps1. Значения ниже —
 ; только чтобы файл открывался в редакторе Inno сам по себе.
@@ -101,6 +105,14 @@ russian.RemoveDataGroup=При удалении программы:
 russian.RemoveData=Удалить и мои работы, моды и настройки
 english.DirNotWritable=You can't write to this folder without administrator rights:%n%n%1%n%nChoose a folder in your user profile or on another drive, for example D:\Games\Tf2SkinGenerator.
 russian.DirNotWritable=В эту папку нельзя записывать без прав администратора:%n%n%1%n%nВыберите папку в своём профиле или на другом диске, например D:\Games\Tf2SkinGenerator.
+english.WebView2Group=Missing component:
+english.WebView2Task=Download and install Microsoft Edge WebView2 from Microsoft (needed for the app window)
+english.WebView2Installing=Installing Microsoft Edge WebView2...
+english.WebView2Failed=Couldn't download Microsoft Edge WebView2:%n%n%1%n%nInstallation will continue. Until WebView2 is installed, the app opens in your browser.
+russian.WebView2Group=Не хватает компонента:
+russian.WebView2Task=Скачать и установить Microsoft Edge WebView2 с сайта Microsoft (нужен для окна приложения)
+russian.WebView2Installing=Устанавливается Microsoft Edge WebView2...
+russian.WebView2Failed=Не удалось скачать Microsoft Edge WebView2:%n%n%1%n%nУстановка продолжится. Пока WebView2 не установлен, приложение будет открываться в браузере.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -108,6 +120,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; в папке установки (см. src/shared/paths.py). Обычное удаление их не трогает,
 ; эта галка — способ снести всё вместе с программой.
 Name: "removedata"; Description: "{cm:RemoveData}"; GroupDescription: "{cm:RemoveDataGroup}"; Flags: unchecked
+; Видна, только если WebView2 нет: тогда окно приложения рисовать нечем.
+; Решает человек, тихо ничего не скачиваем
+Name: "webview2"; Description: "{cm:WebView2Task}"; GroupDescription: "{cm:WebView2Group}"; Check: OfferWebView2
 
 [InstallDelete]
 ; ДО распаковки убираем прошлую версию. Inno перезаписывает свои файлы, но не
@@ -118,9 +133,10 @@ Name: "removedata"; Description: "{cm:RemoveData}"; GroupDescription: "{cm:Remov
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\tools"
 ; Ярлыки под прежним названием: новые создаются под AppDisplayName, а
-; старые Inno сам не убирает, и значков стало бы два
-Type: files; Name: "{group}\{#AppName}.lnk"
-Type: files; Name: "{autodesktop}\{#AppName}.lnk"
+; старые Inno сам не убирает, и значков стало бы два. Портативная копия
+; ярлыков не заводит, и чужие (установленной) ей трогать нельзя
+Type: files; Name: "{group}\{#AppName}.lnk"; Check: not IsPortable
+Type: files; Name: "{autodesktop}\{#AppName}.lnk"; Check: not IsPortable
 
 [Files]
 ; Вся собранная папка целиком. PayloadDir приходит от build-release.ps1.
@@ -132,6 +148,9 @@ Name: "{group}\{cm:UninstallProgram,{#AppDisplayName}}"; Filename: "{uninstallex
 Name: "{autodesktop}\{#AppDisplayName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
+; Без прав администратора загрузчик Microsoft ставит WebView2 только для
+; этого пользователя, ему этого хватает
+Filename: "{tmp}\{#WebView2Setup}"; Parameters: "/silent /install"; StatusMsg: "{cm:WebView2Installing}"; Tasks: webview2; Check: WebView2Downloaded; Flags: waituntilterminated
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppDisplayName}}"; Flags: nowait postinstall skipifsilent
 ; Обновление из приложения идёт тихо, и строка выше его пропускает: программа
 ; закрывалась, обновлялась и не поднималась. RestartApplications тут не
@@ -195,6 +214,68 @@ begin
     DeleteFile(Probe);
 end;
 
+const
+  WebView2Key = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+var
+  DownloadPage: TDownloadWizardPage;
+  WebView2Ready: Boolean;
+
+// Признак WebView2 по Microsoft: значение pv на машину или на пользователя,
+// пустое или 0.0.0.0 значит «не установлен»
+function HasWebView2Version(Root: Integer; Key: String): Boolean;
+var
+  Version: String;
+begin
+  Result := RegQueryStringValue(Root, Key, 'pv', Version)
+            and (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+function WebView2Installed: Boolean;
+begin
+  Result := HasWebView2Version(HKLM32, 'SOFTWARE\' + WebView2Key)
+            or HasWebView2Version(HKCU, 'Software\' + WebView2Key);
+end;
+
+// Тихий запуск (обновление из приложения, портативная копия) ничего не
+// скачивает: спросить там некого
+function OfferWebView2: Boolean;
+begin
+  Result := not WizardSilent and not IsPortable and not WebView2Installed;
+end;
+
+function WebView2Downloaded: Boolean;
+begin
+  Result := WebView2Ready;
+end;
+
+procedure InitializeWizard;
+begin
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing),
+    SetupMessage(msgPreparingDesc), nil);
+end;
+
+// Без сети или при обрыве установка идёт дальше: приложение и так откроется
+// в браузере и само подскажет, где взять WebView2
+procedure DownloadWebView2;
+begin
+  DownloadPage.Clear;
+  DownloadPage.Add('{#WebView2Url}', '{#WebView2Setup}', '');
+  DownloadPage.Show;
+  try
+    try
+      DownloadPage.Download;
+      WebView2Ready := True;
+    except
+      if not DownloadPage.AbortedByUser then
+        MsgBox(FmtMessage(CustomMessage('WebView2Failed'), [GetExceptionMessage]),
+          mbInformation, MB_OK);
+    end;
+  finally
+    DownloadPage.Hide;
+  end;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
@@ -205,4 +286,6 @@ begin
     MsgBox(FmtMessage(CustomMessage('DirNotWritable'), [WizardDirValue]), mbError, MB_OK);
     Result := False;
   end;
+  if (CurPageID = wpReady) and WizardIsTaskSelected('webview2') then
+    DownloadWebView2;
 end;

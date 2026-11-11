@@ -29,14 +29,14 @@ Right-clicking a system opens its menu:
 
 | Item | What it does |
 |---|---|
+| **Child systems** | Hover to open a submenu: **New layer for your own image** adds a child system ready to draw your texture on top of the effect, **Attach an existing one…** picks another system of the file, and **Detach** lists the children to detach one. |
+| **Rename the system…**, **Duplicate the system…** | Rename or copy the system inside the file. |
 | **Copy every parameter of the system** | Puts the whole system on the clipboard as JSON. <kbd>Ctrl</kbd>+<kbd>C</kbd> does the same. |
 | **Paste parameters** | Pastes a copied set. See [Copying and pasting](#copying-and-pasting-parameters). <kbd>Ctrl</kbd>+<kbd>V</kbd> does the same. |
-| **Add a layer with a custom texture…** | Adds a new child system to draw your own texture on top of the effect. |
-| **Rename the system…**, **Duplicate the system…** | Rename or copy the system inside the file. |
-| **Add a child…** | Attaches another system of the file as a child (**Attach an existing one…**), or detaches one (**Detach…**). |
-| **Texture colors (remove the tint)** | Removes the color modules from the system and its children and sets the base color to white, so the textures show their own colors. |
 | **Revert to game version** | Replaces every edit of the system (parameters, modules, children) with the game's version. |
 | **Delete the system** | Removes the system from the file. |
+
+To show the textures in their own colors, use **Native texture colors** next to the color in the simple mode. It removes the color modules from the system and its children and sets the base color to white.
 
 ## Editing parameters
 

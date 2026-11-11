@@ -14,7 +14,7 @@ You can also drop an image straight onto the model. The app highlights the piece
 
 Three things appear over the 3D view:
 
-- **The tool column** on the right edge: icons for the tools, the current color, and buttons for the whole job. Next to it a small panel shows the options of the selected tool. The arrow at the top of the column folds it away.
+- **The tool column** on the right edge: icons for the tools, the current color, and buttons for the whole job. Next to it a small panel shows the options of the selected tool. The arrow at the top of the column or <kbd>Tab</kbd> folds it away.
 - **The parts list** on the left: one numbered chip per part. Hovering a chip lights up its piece on the model. <kbd>Ctrl</kbd>+click a chip or a part on the model to keep only that part in view, with the rest of the model see-through; <kbd>Esc</kbd> or another <kbd>Ctrl</kbd>+click brings it all back. You can drag the list by its title, resize it from the bottom right corner, and double-click the title to put it back.
 - **A hint** at the bottom of the view that says what the current tool will do.
 
@@ -29,7 +29,7 @@ Three things appear over the 3D view:
 
 A part is a connected piece of geometry: the revolver's cylinder, its frame, its barrel. That's how people see a model, and it keeps the list short. A revolver has 29 such pieces against 106 UV islands.
 
-Chip numbers stay attached to places on the model. When you cut piece 04 into smaller ones, they become `04·1`, `04·2` and so on, so you can still tell where they came from. The chip's size reflects how much of the texture the part takes, and its tooltip gives the exact share.
+Chip numbers stay attached to places on the model. When you cut piece 04 into smaller ones, they become `04·1`, `04·2` and so on, so you can still tell where they came from. The bar at the bottom of a chip reflects how much of the texture the part takes, and its tooltip gives the exact share.
 
 **Parts that share texture space.** Sometimes several pieces use the same area of the texture. The left and right halves of a symmetric model are the usual case: the artist mirrored them to save space. In game they share the same pixels, so they can't look different, and painting one paints the other. Such chips are marked, and their tooltip says so. The app also cuts both halves together for the same reason.
 
@@ -39,14 +39,12 @@ If the model is one solid piece, there's nothing to split, and the hint tells yo
 
 | Tool | What a click on a part does |
 |---|---|
-| Image (cursor icon) | Puts an image on the part. Click a part to choose a file, or drag an image onto it. |
-| Brush | Paints the part with the current color or gradient. |
-| Scissors | Selects pieces of the surface to cut the part finer. See [Cutting parts](#cutting-parts-finer). |
-| Outline | Draws an outline along the edges of the parts you paint. |
-| Material (ball icon) | Moves the part into a material of its own, or back. See [Own material for a part](#own-material-for-a-part). |
+| Image (<kbd>I</kbd>) | Puts an image on the part. Click a part to choose a file, or drag an image onto it. |
+| Brush (<kbd>B</kbd>) | Paints the part with the current color or gradient. |
+| Scissors (<kbd>C</kbd>) | Selects pieces of the surface to cut the part finer. See [Cutting parts](#cutting-parts-finer). |
+| Material (<kbd>M</kbd>) | Moves the part into a material of its own, or back. See [Own material for a part](#own-material-for-a-part). |
 | Color square | Opens the color picker. The second square appears when a gradient is on. |
-| Die | Paints every part in random colors. Click parts afterwards to fix what you don't like. |
-| Eraser | **Clear all**: removes every color, image and outline from the parts. <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back. |
+| **…** | **Undo** and **Restore**, same as <kbd>Ctrl</kbd>+<kbd>Z</kbd> and <kbd>Ctrl</kbd>+<kbd>Y</kbd>. **Random colors** paints every part in random colors; click parts afterwards to fix them. **Remove all painting** removes every color, image and outline from the parts, <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back. |
 | Check mark | **Done**: leaves the parts mode. Your work stays. |
 
 No tool is selected when the mode opens, so your first click on the model doesn't paint anything by accident.
@@ -58,6 +56,7 @@ Take the brush and choose a color in the color square, then click parts on the m
 | Option | What it does |
 |---|---|
 | **Strength** | How strongly the color covers the original texture, from 20 to 100 percent. |
+| **Outline** | Draws a line along the edges of the parts you paint. See [Outline](#outline). |
 | **Exact color** | On (default): the color lands exactly as you picked it, and the texture's detail survives through its own light and shadow. Off: the color is blended with the original based on its brightness, which looks more natural on worn metal but drifts from the color in the picker. |
 
 **Gradient.** In the color picker, **Gradient** switches the brush to a blend from the first color to the second. The bar shows how the blend lies on a part: the squares at its ends mark where each color is pure, and the closer they are, the sharper the transition; the diamond marks the midpoint. Click a square to edit its color. The round dial sets the direction: drag it or use the arrow keys. A tilted gradient is what makes a flat part look rounded.
@@ -70,22 +69,24 @@ A part can have a color and an image at the same time. The color then lies under
 
 Take the image tool and click a part to choose a file, or just drag an image file onto a part on the model. The image is fitted into the part's area of the texture.
 
-A chip with an image gets a **…** button (with a number if there are several images). It opens the placement window. The **×** on a chip removes everything you did to that part and returns its game texture.
+Hovering a chip with an image shows a **…** button (with a number if there are several images). It opens the part's image window. An image dropped on the model opens this window too. The **×** next to it removes everything you did to that part and returns its game texture.
 
-### The placement window
+### The image window
 
-The window shows the part's real area on the texture: the triangles that make up its UV island, not a rectangle around them. Whatever falls outside these triangles is cut off when the mod is built, so what you see here is what you get.
+The window shows the part's real area on the texture: the triangles that make up its UV island, not a rectangle around them. Whatever falls outside these triangles is cut off when the mod is built, so what you see here is what you get. The canvas draws all of the part's images at once, bottom to top.
 
 | Area | What's there |
 |---|---|
-| **Layers** (left) | The images on this part. The top row lies over the others; drag a row to reorder. **+ Add** puts one more image on top, **Replace…** swaps the file and keeps the placement, **Remove** takes the image off. **Copy** and **Paste** move an image with its placement between parts. |
-| Canvas (middle) | Drag the image to move it. Drag the small squares to resize; dragging past the opposite edge mirrors the image. Rotate with the round handle or the arrow keys. The wheel zooms. |
-| **View** (under the canvas) | **Zoom** brings the canvas close to the part, which helps with small pieces. **No game texture** hides the original so your image's edges are easier to see. **Mesh** shows the part's triangles instead of its outline. |
-| Properties (right) | The same placement in numbers. **Fit**: **Whole** fits the image inside the area keeping proportions, **Fill** covers the area and lets the edges go under the mask, **Stretch** fills it without keeping proportions. **Size, %** for width and height (a negative value mirrors). **Rotation, °**. **Offset, % of the area** to the right and down. **Reset placement** returns to the initial fit. |
+| Canvas (left) | Drag the image to move it. Drag the small squares to resize; dragging past the opposite edge mirrors the image. Rotate with the round handle or the arrow keys. The wheel zooms, <kbd>Ctrl</kbd>+wheel resizes the image. A file dropped on the canvas becomes a new layer. |
+| Toolbar above the canvas | Rotate by 90° either way, flip horizontally or vertically, center the image on the part, reset the placement. |
+| **View** (in the header) | **Zoom to the part** brings the canvas close to the part, which helps with small pieces. **Without the game texture** hides the original so your image's edges are easier to see. **Triangle mesh** shows the part's triangles instead of its outline. |
+| **Layers** (right) | The images on this part. The top row lies over the others; drag a row to reorder. The plus in the header puts one more image on top, the icon next to it pastes a copied one. The selected layer's row has three actions: replace the file keeping the placement, copy it with its placement, and remove it. |
+| **Fit** | **Whole** fits the image inside the area keeping proportions, **Fill** covers the area and lets the edges go under the mask, **Stretch** fills it without keeping proportions. |
+| **Exact values** | The same placement in numbers, opens on click: width and height in percent (a negative value mirrors), angle, offset to the right and down. |
 
-**Done** applies the changes, **Cancel** discards them.
+Everything you do in the window goes into the texture in one step on **Done**, and one <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes it all. **Cancel** discards everything, including an image you just dropped.
 
-**Copying to other parts.** <kbd>Ctrl</kbd>+<kbd>C</kbd> in the placement window copies the image together with its size on the texture. Then hover another part on the model and press <kbd>Ctrl</kbd>+<kbd>V</kbd>: the image lands there at the same size, as a new layer. This is the quickest way to put the same logo on several pieces.
+**Copying to other parts.** <kbd>Ctrl</kbd>+<kbd>C</kbd> in the image window copies the image together with its size on the texture. Then hover another part on the model and press <kbd>Ctrl</kbd>+<kbd>V</kbd>: the image lands there at the same size, as a new layer. This is the quickest way to put the same logo on several pieces.
 
 ### Animated images
 
@@ -109,11 +110,11 @@ The panel shows how many triangles are selected. **Separate** (or <kbd>Enter</kb
 
 **Split by UV islands** is a slider that cuts every piece along its UV islands at once. Moving it further cuts more finely.
 
-A part you cut off gets a **−** button on its chip that grows it back into the piece it came from. <kbd>Ctrl</kbd>+<kbd>Z</kbd> works too.
+Hovering the chip of a part you cut off shows a **−** button that grows it back into the piece it came from. <kbd>Ctrl</kbd>+<kbd>Z</kbd> works too.
 
 ## Outline
 
-The outline tool draws a line along the edges of the parts you paint. Press **Outline** to turn it on, pick its color, and set the **Width**. From then on, every part you paint gets an outline. It's a quick way to get a cartoon look or to separate parts painted in similar colors.
+The outline draws a line along the edges of the parts you paint. In the brush options, press **Outline**, pick its color, and set the **Width**. From then on, every part you paint gets an outline. It's a quick way to get a cartoon look or to separate parts painted in similar colors.
 
 ## Own material for a part
 

@@ -138,6 +138,13 @@ def set_decor_bends(bends: Optional[List[dict]] = None) -> Dict[str, object]:
 
 
 @endpoint
+def autofit_decor(lang: str = '') -> Dict[str, object]:
+    """«Обтянуть модель»: показанная гирлянда садится на свою модель оружия"""
+    from src.app.session import session
+    return session().decor.autofit(_lang(lang))
+
+
+@endpoint
 def paints(lang: str = '') -> List[dict]:
     """Банки краски игры для превью шапки: [{key, name, red, blu}]"""
     from src.app.session import session

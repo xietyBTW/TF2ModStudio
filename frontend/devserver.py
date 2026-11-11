@@ -21,6 +21,7 @@ import json
 import mimetypes
 import sys
 import tempfile
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -173,6 +174,14 @@ class Server(ThreadingHTTPServer):
     #: процессу сесть на тот же порт ПОВЕРХ живого (проверено): второй
     #: экземпляр приложения делил бы порт с первым вместо ошибки и запасного
     allow_reuse_address = sys.platform != "win32"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: Сколько страниц держат поток событий. По нему приложение, открытое
+        #: в обычной вкладке браузера, узнаёт, что вкладку закрыли
+        self.listeners = 0
+        self.ever_listened = False
+        self.listeners_lock = threading.Lock()
 
     def handle_error(self, request, client_address) -> None:
         # Браузер оборвал запрос (картинку заменили раньше, чем она доехала,
@@ -344,6 +353,9 @@ class Handler(SimpleHTTPRequestHandler):
 
         app = session()
         mine = app.subscribe()
+        with self.server.listeners_lock:
+            self.server.listeners += 1
+            self.server.ever_listened = True
         try:
             while True:
                 events = app.drain(mine, timeout=20.0)
@@ -361,6 +373,8 @@ class Handler(SimpleHTTPRequestHandler):
             pass
         finally:
             app.unsubscribe(mine)
+            with self.server.listeners_lock:
+                self.server.listeners -= 1
 
     def do_POST(self) -> None:  # noqa: N802 - имя задано базовым классом
         # Чужая страница не должна вызывать ни `build`, ни `set_settings`, ни

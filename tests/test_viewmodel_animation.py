@@ -243,6 +243,25 @@ class BuildSceneTests(unittest.TestCase):
         trimmed = self._build(arms_include_mats={"test_hands"})
         self.assertEqual(self._part(trimmed, "arms")["materials"], ["test_hands"])
 
+    def test_gloves_that_hide_hands_hide_the_class_hand(self):
+        """Кусай-хлеб надевается вместо кулака: кисть хэви не торчит из хлеба,
+        предплечье остаётся"""
+        from types import SimpleNamespace
+        from src.services.viewmodel_worker import ViewmodelPreviewWorker, RELOAD_ACTIONS
+        arms = self.dir / "c_heavy_arms.smd"
+        arms.write_text(_smd(
+            [("root", None)], {},
+            [_tri("hvyweapon_hands", "root"), _tri("hvyweapon_hands_sheen", "root")],
+        ), encoding="utf-8")
+        reload = next(iter(RELOAD_ACTIONS))
+
+        def shown(hides, action):
+            fake = SimpleNamespace(_hides_hands=hides, action=action)
+            return ViewmodelPreviewWorker._arms_whitelist(fake, str(arms), [])
+
+        self.assertEqual(shown(True, reload), {"hvyweapon_hands"})
+        self.assertIsNone(shown(False, reload))
+
     def test_weapon_bodygroups_share_the_weapon_skeleton(self):
         """Откидные части оружия едут теми же костями, что и основной меш"""
         extra = self.dir / "c_test_scope.smd"

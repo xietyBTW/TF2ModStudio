@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from src.domain.preview.session import PreviewSession
 from src.services.base_worker import Signal
@@ -24,6 +24,9 @@ from src.shared.constants import Team
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Показ чужого мода - свой модуль; имя здесь, его импортируют сеанс и тесты
+from src.app.vpk_mod_controller import VpkModController  # noqa: E402,F401
 
 
 def split_blu_multi_material(payload) -> Tuple[dict, dict]:
@@ -322,152 +325,6 @@ class Preview3DController:
         self.blu_materials.emit(tex_map, name_map)
 
 
-class VpkModController:
-    """
-    Показ ЧУЖОГО мода из VPK: его модель и его текстуры
-
-    Отличие от обычной загрузки - источник. Геометрия и материалы берутся из
-    файла пользователя, а карточки строятся по VTF мода, а не по материалам
-    игровой модели. Поэтому у сеанса поднимается custom_vpk_mode: обычная
-    фильтрация материалов эти карточки перетёрла бы
-    """
-
-    progress = Signal(str)
-    ready = Signal(str, str)           # (obj_path, texture_path)
-    animated = Signal(object, float)
-    cards = Signal(object)             # [{name, display_name, preview_png}]
-    materials = Signal(object)         # имена материалов модели (меши)
-    skins = Signal(object)             # стили модели (skinfamilies)
-    #: (ключ оружия, reference SMD мода) - что мод заменяет. По нему страница
-    #: открывает вид от первого лица: мод показывается в руках класса
-    weapon = Signal(str, str)
-    failed = Signal(str)
-
-    def __init__(self, session: PreviewSession):
-        self._session = session
-        self._worker = None
-
-    def stop(self) -> None:
-        """Не ждёт: у воркера своя временная папка, делить ему с новым нечего"""
-        if self._worker is not None:
-            self._worker.cancel()
-            self._worker = None
-
-    def load(self, user_vpk: str, misc_vpk: str, textures_vpk: str,
-             lang: str = 'en') -> None:
-        """Начинает разбор мода. Состояние сеанса чистится ДО загрузки"""
-        self.stop()
-
-        s = self._session
-        s.reset_skins()
-        s.reset_team_frames()
-        s.reset_misc()
-        # Режим включается ПОСЛЕ сбросов: reset_team_frames его гасит
-        s.custom_vpk_mode = True
-        s.custom_model_materials = []
-        s.reset_custom_vpk()
-
-        from src.services.preview_vpk_mod_worker import PreviewVpkModWorker
-        w = PreviewVpkModWorker(
-            user_vpk_path=user_vpk,
-            misc_vpk_path=misc_vpk,
-            textures_vpk_path=textures_vpk,
-            lang=lang,
-        )
-        w.progress.connect(self.progress.emit)
-        w.ready.connect(self._on_ready)
-        w.animated.connect(self._on_animated)
-        w.cards_ready.connect(self._on_cards)
-        w.materials_ready.connect(self._on_materials)
-        w.skins_ready.connect(self._on_skins)
-        w.weapon_found.connect(self._on_weapon)
-        w.failed.connect(self.failed.emit)
-        self._worker = w
-        w.start()
-
-    def _on_weapon(self, key: str, ref_smd: str, own_model: bool = True) -> None:
-        """Мод опознан: чьё это оружие, где его меш и свой ли он"""
-        self._session.custom_vpk_weapon = key or None
-        self._session.custom_vpk_smd = ref_smd or None
-        self._session.custom_vpk_own_model = bool(own_model)
-        self.weapon.emit(key or '', ref_smd or '')
-
-    # Сигналы воркера: сначала сессия, потом событие
-
-    def _on_ready(self, obj_path: str, texture_path: str) -> None:
-        s = self._session
-        s.textures.active_team = Team.RED
-        if texture_path:
-            s.textures.red_frames = [texture_path]
-        s.current_object = ('custom_vpk', obj_path, texture_path)
-        self.ready.emit(obj_path, texture_path)
-
-    def _on_animated(self, frames: list, framerate: float) -> None:
-        if not frames:
-            return
-        self._session.textures.red_frames = list(frames)
-        self._session.team_framerate = framerate
-        self.animated.emit(frames, framerate)
-
-    def _on_cards(self, cards: list) -> None:
-        """
-        Карточки мода. Превью его текстур кладём как ОРИГИНАЛЫ (vpk_red_tex_map)
-
-        Так нетронутая карточка остаётся текстурой мода и в сборку как
-        пользовательская не уходит, своё изображение перекроет её обычным
-        путём - через textures[RED]
-        """
-        import os
-
-        cards = list(cards or [])
-        if not cards:
-            return
-        s = self._session
-        names = [c['name'] for c in cards if c.get('name')]
-        s.textures.material_names = names
-        s.textures.main_material = names[0] if names else None
-        for card in cards:
-            png = card.get('preview_png')
-            if png and os.path.exists(png):
-                s.textures.vpk_red_tex_map[card['name']] = png
-        # Карты, что уже есть в VMT мода: диалог карт покажет их отмеченными
-        s.mod_maps = {c['name']: c['maps'] for c in cards if c.get('name') and c.get('maps')}
-        s.mod_vmts = {c['name']: c['vmt_path'] for c in cards
-                      if c.get('name') and c.get('vmt_path')}
-        self.cards.emit(cards)
-
-    def _on_materials(self, materials: list) -> None:
-        if not materials:
-            return
-        s = self._session
-        s.custom_model_materials = list(materials)
-        # Карточки шли по путям VTF в архиве, и первой бывала чужая текстура
-        # (огоньки гирлянды из того же мода). Главная - материал самой модели:
-        # на неё ложатся War Paint и части одноматериальной модели
-        own = {m.lower() for m in materials}
-        names = s.textures.material_names
-        first = [n for n in names if n.lower() in own]
-        if first:
-            s.textures.material_names = first + [n for n in names if n not in first]
-            s.textures.main_material = first[0]
-        self.materials.emit(materials)
-
-    def _on_skins(self, info: dict) -> None:
-        """
-        У мода нашлись стили (skinfamilies)
-
-        Мало запомнить их наличие: у мода СВОИ текстуры стилей, и без них
-        переключение стиля показывало бы пустые карточки вместо того, что
-        лежит в файле. Раскладываем их переопределениями - так же, как это
-        делает панель приложения (``_on_vpk_mod_skins_ready``)
-        """
-        s = self._session
-        s.textures.skin_info = info or None
-
-        s.adopt_style_textures((info or {}).get('skin_textures') or {})
-        self.skins.emit(info)
-
-
 class SkinDetectController:
     """
     Стили модели (skinfamilies) - «Базовый», «Bloody», командные, австралий
@@ -574,12 +431,14 @@ class ViewmodelController:
     def load(self, weapon_key: str, mode: str, misc_vpk: str, textures_vpk: str,
              tf2_root: str, action: str = 'IDLE', lang: str = 'en',
              custom_smd: str = '', keep_materials: bool = False,
-             decor_smd: str = '', decor_prefix: str = 'deco:') -> None:
+             decor_smd: str = '', decor_prefix: str = 'deco:',
+             mod_vpk: str = '') -> None:
         """Сцена «руки класса с оружием»
 
         `custom_smd` - меш вместо игрового: так в руке показывается чужой мод
-        из VPK или своя модель. Скелет и анимации остаются игровыми, иначе
-        оружию нечем двигаться. `decor_smd` - гирлянда поверх оружия
+        из VPK (`mod_vpk` - откуда его текстуры) или своя модель. Скелет и
+        анимации остаются игровыми, иначе оружию нечем двигаться.
+        `decor_smd` - гирлянда поверх оружия
         """
         self.stop()
         from src.data import viewmodel_anims
@@ -604,6 +463,7 @@ class ViewmodelController:
             custom_keep_materials=keep_materials,
             decor_smd=decor_smd,
             decor_prefix=decor_prefix,
+            mod_vpk_path=mod_vpk,
             lang=lang,
         )
         w.progress.connect(self.progress.emit)
@@ -657,7 +517,8 @@ class ViewmodelController:
                   tf2_root: str, tf2_class: str = '', slot: str = '',
                   lang: str = 'en', hidden_bodygroups: dict = None,
                   weapon_key: str = '',
-                  custom_smd: str = '', custom_keep: bool = False) -> None:
+                  custom_smd: str = '', custom_keep: bool = False,
+                  mod_vpk_path: str = '') -> None:
         """
         Сцена «На персонаже»: персонаж в стойке, на нём предмет - шапка или
         надеваемое оружие (`weapon_key`)
@@ -680,6 +541,7 @@ class ViewmodelController:
             weapon_key=weapon_key,
             custom_smd=custom_smd,
             custom_keep=custom_keep,
+            mod_vpk_path=mod_vpk_path,
         )
         w.progress.connect(self.progress.emit)
         w.animated_ready.connect(self.animated.emit)

@@ -9,8 +9,9 @@ import { ask } from './ask.js';
 import { t } from './i18n.js';
 import { say, sayError, sayBusy, viewer, withViewer } from './stage.js';
 import { work } from './layout.js';
-import { closeParts, refreshParts } from './parts.js';
-import { toggleDecorFit, isDecorFitOn, leaveDecorFit } from './custom-model.js';
+import { closeParts, syncParts } from './parts.js';
+import { toggleDecorFit, isDecorFitOn, leaveDecorFit, flushFitSave, flushBends }
+  from './custom-model.js';
 import { applyView, refreshView } from './preview.js';
 import { reloadSceneIfFp } from './preview-scenes.js';
 
@@ -126,13 +127,46 @@ export function showFestive(st) {
     });
     bar.appendChild(fit);
   }
+  if (st.festive && scene === 'item' && st.custom_geometry) {
+    const auto = document.createElement('button');
+    auto.className = 'tag festive__fit';
+    auto.textContent = 'Обтянуть модель';
+    auto.title = t('Посадить гирлянду на свою модель так, как она сидит на стоковой');
+    auto.addEventListener('click', autofitDecor);
+    bar.appendChild(auto);
+  }
   // На своей модели гирлянда стоит по стоковой, пока её не подогнали: так её
   // и повесит игра, и огоньки будут висеть мимо
-  if (st.festive && st.custom_geometry && !st.decor_fit && !(st.decor_bends || []).length) {
+  if (st.festive && st.custom_geometry && !st.decor_fit && !st.decor_wrapped
+      && !(st.decor_bends || []).length) {
     const note = document.createElement('span');
     note.className = 'label label--inline festive__note';
     note.textContent = 'Висит как на стоковой модели - подгоните под свою';
     bar.appendChild(note);
+  }
+}
+
+//: Обтягивание идёт: второй щелчок не запускает ещё один тяжёлый расчёт
+let wrapping = false;
+
+/** Изгибы считаются под подгонку гирлянды - её последнюю правку и
+ *  недописанные изгибы сначала записать. Прежние изгибы заменяются,
+ *  вернуть - Ctrl+Z */
+async function autofitDecor() {
+  if (wrapping) return;
+  wrapping = true;
+  try {
+    await flushFitSave();
+    await flushBends();
+    sayBusy('Гирлянда садится на модель…');
+    const res = await api.autofitDecor();
+    if (res.error) { sayError(res.error); return; }
+    applyView(res);
+    say('Гирлянда обтянула модель');
+  } catch (err) {
+    sayError(err.message);
+  } finally {
+    wrapping = false;
   }
 }
 
@@ -244,7 +278,7 @@ export function showSkins(info) {
     b.addEventListener('click', async () => {
       applyView(await api.setSkin(index));
       // Мазки у стиля свои: полоса частей должна показать его покраску
-      if (!document.getElementById('partsbar').hidden) await refreshParts();
+      await syncParts();
     });
     row.appendChild(b);
   }

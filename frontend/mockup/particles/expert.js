@@ -165,7 +165,8 @@ export async function showExpert(system) {
           const res = await api.setParticleAttr(system, g.group, mod.index,
                                                 attr.name, value);
           if (res.error) { sayError(res.error); return; }
-          withParticles((w) => w.updateSystems(res.systems, pSystem));
+          // В ответе только правленая система - вливается в остальные
+          withParticles((w) => w.mergeSystems(res.changed, pSystem));
           ensureEffectMaterials();
           setDiff(res.diff);
           markExpert(res.system_diff);

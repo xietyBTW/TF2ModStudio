@@ -185,13 +185,24 @@ class CustomModelEditor:
         запуск, поэтому собираем его заново из того же SMD
         """
         from src.domain.preview.material_cards import editable_material_cards
+        from src.services import mesh_import_service
 
         p = self._host.preview
         smd = p.custom_smd_path
         if not smd or not os.path.isfile(smd) or self._host._vpk_mod_path:
             return False
+        # Подгонку импорта вьювер накладывает сам, а в SMD она уже запечена:
+        # OBJ из него встал бы с подгонкой дважды (нож с масштабом 17 - во
+        # весь кадр). Кадру - импорт без подгонки, SMD остаётся сборке
+        shown = smd
+        if p.custom_source_path and os.path.isfile(p.custom_source_path):
+            try:
+                shown = self.unfitted_mesh(p.custom_source_path)
+            except mesh_import_service.MeshImportError as exc:
+                logger.warning(f"импорт своей модели не перечитан: {exc}")
+                return False
         # Призрак оригинала нужен подгонке, а она есть только у импорта
-        obj, materials = self._custom_model_obj(smd, ghost=bool(p.custom_source_path))
+        obj, materials = self._custom_model_obj(shown, ghost=bool(p.custom_source_path))
         if obj is None:
             logger.warning(f"своя модель из работы не показана: {smd}")
             return False
@@ -290,29 +301,55 @@ class CustomModelEditor:
             self._imported_mesh = (source, None, out_dir)
             mesh = None
         else:
-            mesh = mesh_import_service.load_mesh(source)
-            # Скульпт из интернета на сотни тысяч треугольников studiomdl не
-            # возьмёт - упрощаем сами, с сохранением UV; человеку об этом
-            # скажет ответ загрузки. Слишком много материалов так не лечится
-            self._imported_simplified = None
-            if mesh_import_service.over_limits(mesh):
-                before = mesh.triangle_count
-                mesh = mesh_import_service.simplify(mesh)
-                self._imported_simplified = (before, mesh.triangle_count)
-            problem = mesh_import_service.check_limits(mesh)
-            if problem:
-                raise mesh_import_service.MeshImportError(problem)
-            if not mesh.has_uv:
-                logger.warning(f"у модели нет UV-развёртки: {source}")
-            # Одна папка на источник: SMD перезаписывается, а не плодится
-            # по 15 МБ на каждый шаг ползунка
-            out_dir = tempfile.mkdtemp(prefix='tf2_mesh_import_')
-            self._imported_mesh = (source, mesh, out_dir)
+            mesh, out_dir = self._parse_import(source)
         stem = os.path.splitext(os.path.basename(source))[0]
         out = os.path.join(out_dir, stem + '.smd')
         if mesh is None:
             return mesh_import_service.transform_smd(source, out, fit)
         return mesh_import_service.write_smd(mesh, out, fit)
+
+    def _parse_import(self, source: str):
+        """(меш, папка SMD) импорта OBJ/GLB - один разбор на источник"""
+        import tempfile
+
+        from src.services import mesh_import_service
+
+        cached = self._imported_mesh
+        if cached and cached[0] == source and cached[1] is not None:
+            return cached[1], cached[2]
+        mesh = mesh_import_service.load_mesh(source)
+        # Скульпт из интернета на сотни тысяч треугольников studiomdl не
+        # возьмёт - упрощаем сами, с сохранением UV; человеку об этом
+        # скажет ответ загрузки. Слишком много материалов так не лечится
+        self._imported_simplified = None
+        if mesh_import_service.over_limits(mesh):
+            before = mesh.triangle_count
+            mesh = mesh_import_service.simplify(mesh)
+            self._imported_simplified = (before, mesh.triangle_count)
+        problem = mesh_import_service.check_limits(mesh)
+        if problem:
+            raise mesh_import_service.MeshImportError(problem)
+        if not mesh.has_uv:
+            logger.warning(f"у модели нет UV-развёртки: {source}")
+        # Одна папка на источник: SMD перезаписывается, а не плодится
+        # по 15 МБ на каждый шаг ползунка
+        out_dir = tempfile.mkdtemp(prefix='tf2_mesh_import_')
+        self._imported_mesh = (source, mesh, out_dir)
+        return mesh, out_dir
+
+    def unfitted_mesh(self, source: str) -> str:
+        """SMD импорта без подгонки - для кадра: вьювер накладывает её сам.
+        Свой файл: SMD в папке импорта - с подгонкой, он уходит в сборку"""
+        import tempfile
+
+        from src.services import mesh_import_service
+
+        if source.lower().endswith('.smd'):
+            return source
+        mesh, _ = self._parse_import(source)
+        stem = os.path.splitext(os.path.basename(source))[0]
+        return mesh_import_service.write_smd(
+            mesh, os.path.join(tempfile.mkdtemp(prefix='tf2_mesh_view_'), stem + '.smd'))
 
     def set_custom_fit(self, fit: Optional[dict] = None) -> Dict[str, Any]:
         """Подгонка импортированной модели: пересобирает SMD с запечённым

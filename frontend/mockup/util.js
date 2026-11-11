@@ -63,6 +63,27 @@ function pick(n, one, few, many) {
   return d === 1 ? one : (d >= 2 && d <= 4 ? few : many);
 }
 
+/**
+ * Закраска дорожки ползунка от нуля до ручки: видно, сколько выставлено, а у
+ * знаковых (наклон -60..60) - в какую сторону. `zero` - где ноль на дорожке,
+ * если он не в начале (кривые частиц). Следит за движением сам, после
+ * присвоения value из кода - позвать ещё раз
+ */
+export function paintTrack(input, zero = null) {
+  const min = Number(input.min) || 0;
+  const max = Number(input.max);
+  const span = max - min || 1;
+  const frac = (v) => (Math.min(max, Math.max(min, v)) - min) / span;
+  const base = zero !== null ? frac(zero) : (min < 0 && max > 0 ? frac(0) : 0);
+  const at = frac(Number(input.value));
+  input.style.setProperty('--fill-from', Math.min(base, at));
+  input.style.setProperty('--fill-to', Math.max(base, at));
+  if (!input.classList.contains('slider--fill')) {
+    input.classList.add('slider--fill');
+    input.addEventListener('input', () => paintTrack(input, zero));
+  }
+}
+
 export function loadImage(src) {
   return new Promise((resolve) => {
     const img = new Image();

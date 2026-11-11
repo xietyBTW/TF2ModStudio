@@ -411,6 +411,10 @@ function saveBends(bends) {
   }).then(refreshView);
 }
 
+/** Дождаться записи всех изгибов: иначе запоздалый список лёг бы поверх
+ *  того, что пришло после него */
+export const flushBends = () => bendWrite;
+
 fitEl('fit-straighten').addEventListener('click', () => {
   withViewer((w) => w.setDecorBends && w.setDecorBends([]));
   saveBends([]);

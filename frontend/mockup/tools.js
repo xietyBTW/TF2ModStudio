@@ -10,6 +10,7 @@ import { ask } from './ask.js';
 import { chooseFile } from './util.js';
 import { say, sayError } from './stage.js';
 import { notifyApp } from './app-note.js';
+import { mergeMods } from './merge-dialog.js';
 import { loadPcf, pSystem } from './particles/index.js';
 import { floating, panel, closeCat } from './layout.js';
 
@@ -93,39 +94,6 @@ document.getElementById('tools').addEventListener('click', async (e) => {
 
   if (item.dataset.tool === 'merge') { await mergeMods(); return; }
 });
-
-/**
- * Объединение собранных модов в один VPK
- *
- * Моды, трогающие одно оружие, друг друга затирают - про такие Python
- * предупреждает до запуска и ждёт подтверждения.
- */
-export async function mergeMods() {
-  const files = await api.exportVpks();
-  if (!files.length) { notifyApp('В папке экспорта нет собранных модов', 'info'); return; }
-
-  const picked = await ask({ title: 'Какие моды объединить', list: files,
-                             multi: true, ok: 'Далее' });
-  if (!picked || picked.length < 2) return;
-
-  const name = await ask({ title: 'Имя выходного файла', value: 'merged_mod.vpk' });
-  if (!name) return;
-
-  let res = await api.mergeVpk(picked, name);
-  if (res.duplicates) {
-    const lines = Object.entries(res.duplicates)
-      .map(([weapon, mods]) => `${weapon}: ${mods.join(', ')}`).join('\n');
-    const go = await ask({
-      title: 'Моды трогают одно оружие',
-      text: `${lines}\nОдин перекроет другой. Продолжить?`,
-      ok: 'Объединить',
-    });
-    if (!go) return;
-    res = await api.mergeVpk(picked, name, true);
-  }
-  if (res.error) notifyApp(res.error, 'error');
-  else say('Объединение…');
-}
 
 // Меню инструментов
 export const tools = document.getElementById('tools');

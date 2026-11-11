@@ -2025,6 +2025,24 @@ function makeEmitter(mod) {
 
 // Система частиц (инстанс)
 
+//: Глубина дочерних систем: защита от циклических ссылок в PCF
+const MAX_CHILD_DEPTH = 8;
+//: Что конструктор запоминает из определения системы - это перечитывает
+//: живая правка (refreshFromDef). Состояние симуляции сюда не входит
+const LIVE_FIELDS = [
+    'maxParticles', 'maxTimeStep', 'initialParticles', 'constRadius', 'constColor',
+    'constRotation', 'constSeq', 'constSeq2', 'initializers', 'operators',
+    'forcesList', 'constraints', 'rendererMods', 'rendererEnv', 'animationRate',
+    'animationRateAsFps', 'animationFitLifetime', 'orientationType', 'orientationCP',
+    'rendererType', 'screenVelRotate', 'rope',
+];
+//: Пересборка для живой правки молчит: о неизвестных модулях уже сказано при
+//: загрузке, а ползунок пересобирает систему на каждое движение
+let quietBuild = false;
+const note = (...args) => { if (!quietBuild) console.log(...args); };
+//: Счётчики эмиттера: с ними новый темп продолжает старый, а не начинает с нуля
+const EMITTER_STATE = ['emitCounter', 'emitNum', 'left', 'started'];
+
 export class ParticleSystemInstance {
     /**
      * @param {object} def        JSON-определение системы
@@ -2060,24 +2078,24 @@ export class ParticleSystemInstance {
             .map(m => ({ mod: m, fn: INITIALIZERS[resolveFnName(m.functionName)],
                          sets: INIT_SETS[resolveFnName(m.functionName)] || null,
                          late: POS_MODIFIERS.has(resolveFnName(m.functionName)) }))
-            .filter(x => x.fn || (console.log('Unknown Initializer:', x.mod.functionName), false));
+            .filter(x => x.fn || (note('Unknown Initializer:', x.mod.functionName), false));
         this.initializers = [...inits.filter(x => !x.late), ...inits.filter(x => x.late)];
         this.operators = def.operators
             .map(m => ({ mod: m, fn: OPERATORS[resolveFnName(m.functionName)],
                          env: opEnvelope(m) }))
-            .filter(x => x.fn || (console.log('Unknown Operator:', x.mod.functionName), false));
+            .filter(x => x.fn || (note('Unknown Operator:', x.mod.functionName), false));
         this.emitters = def.emitters.map(makeEmitter).filter(e => e !== null);
         this.forcesList = (def.forces || [])
             .map(m => {
                 const make = FORCES[resolveFnName(m.functionName)];
-                if (!make) { console.log('Unknown Force:', m.functionName); return null; }
+                if (!make) { note('Unknown Force:', m.functionName); return null; }
                 return withForceStrength(make(m), opEnvelope(m));
             })
             .filter(f => f !== null);
         this.constraints = (def.constraints || [])
             .map(m => ({ mod: m, fn: CONSTRAINTS[resolveFnName(m.functionName)],
                          env: opEnvelope(m) }))
-            .filter(x => x.fn || (console.log('Unknown Constraint:', x.mod.functionName), false));
+            .filter(x => x.fn || (note('Unknown Constraint:', x.mod.functionName), false));
 
         this.rendererMods = def.renderers || [];
         // Огибающая ПЕРВОГО рендерера: гейт на отрисовку системы целиком
@@ -2128,13 +2146,12 @@ export class ParticleSystemInstance {
                     offset: attr(r, 'texture_offset', 0),
                 };
             } else {
-                console.log('Unknown Renderer (rendered as sprites):', r.functionName);
+                note('Unknown Renderer (rendered as sprites):', r.functionName);
             }
         }
 
         this.children = [];
-        const maxDepth = 8; // защита от циклических ссылок в PCF
-        if (depth < maxDepth) {
+        if (depth < MAX_CHILD_DEPTH) {
             for (const ch of (def.children || [])) {
                 const childDef = systems[ch.childName];
                 if (!childDef) continue;
@@ -2150,6 +2167,34 @@ export class ParticleSystemInstance {
         this.randOpPool = new Float32Array(0x800);
         this.randOpCounter = 0;
         this.reset();
+    }
+
+    /**
+     * Перечитывает настройки из `def` после того, как его атрибуты поменяли
+     * на месте (живая правка ползунком): частицы, время и счётчики эмиттеров
+     * остаются, эффект не начинается заново. Инициализаторы и операторы
+     * читают атрибуты сами на каждом шаге, а то, что конструктор запомнил
+     * (темп эмиттера, радиус системы, рендерер, силы), берём у свежего
+     * экземпляра - без дочерних, их глубина уже предельная
+     */
+    refreshFromDef() {
+        quietBuild = true;
+        let fresh;
+        try {
+            fresh = new ParticleSystemInstance(
+                this.def, {}, { [this.materialName]: this.material }, this.controller,
+                MAX_CHILD_DEPTH, this.parent);
+        } finally {
+            quietBuild = false;
+        }
+        for (const k of LIVE_FIELDS) this[k] = fresh[k];
+        const old = this.emitters;
+        this.emitters = fresh.emitters;
+        this.emitters.forEach((e, i) => {
+            const was = old[i];
+            if (!was) return;
+            for (const k of EMITTER_STATE) if (k in was) e[k] = was[k];
+        });
     }
 
     reset() {

@@ -115,6 +115,8 @@ export async function updateDockSummary() {
   if (root.dataset.section === 'particles') { await particlesSummary(el); return; }
   el.classList.remove('is-over');
   el.title = '';
+  // Предмета нет - собирать нечего, и оценка размера была бы ни о чём
+  if (!root.dataset.item) { el.textContent = ''; return; }
   const p = buildParams({ live: true });
   const parts = [p.size + ' × ' + p.size, p.format];
   try {
@@ -161,6 +163,8 @@ document.addEventListener('particles:changed', () => {
 new MutationObserver(updateDockSummary)
   .observe(root, { attributes: true, attributeFilter: ['data-section'] });
 
+// Выбрали предмет или ушли из раздела - сводка про другое
+document.addEventListener('controls:changed', updateDockSummary);
 // Любая правка параметров меняет то, что соберётся
 document.querySelector('.build__grid').addEventListener('change', updateDockSummary);
 document.getElementById('out').addEventListener('input', updateDockSummary);
@@ -181,6 +185,9 @@ buildBtn.addEventListener('click', async () => {
   // У частиц своя сборка: PCF плюс заменённые текстуры, и перед ней -
   // проверка, потому что типовые ошибки эффекта видно только в игре
   if (root.dataset.section === 'particles') { await buildParticles(); return; }
+  // Предмет на экране не выбран, а сеанс может ещё помнить прошлый (после
+  // перезагрузки страницы, смены раздела) - мод собрался бы из него
+  if (!root.dataset.item) { setStatus(t('Сначала выберите предмет'), false); return; }
   const heard = dockFx.heard();
   const hatClassesPicked = await askHatClasses();
   if (!hatClassesPicked) return;

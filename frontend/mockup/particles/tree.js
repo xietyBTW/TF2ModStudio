@@ -79,6 +79,7 @@ export function fillTree(nodes, selected) {
   els.grid.innerHTML = '';
   // Источники - про список игры, у дерева файла им делать нечего
   els.fSource.hidden = true;
+  els.fFxCat.hidden = true;
   let shown = 0;
 
   const walk = (list, depth) => {
@@ -151,6 +152,8 @@ export function fillTree(nodes, selected) {
 let fxTurn = 0;
 //: Выбранный источник: оружие, постройки, игрок… Пусто - все
 let source = '';
+//: Раздел необычных: косметика, насмешки… Пусто - все
+let category = '';
 //: Последний запрос - чтобы смена источника перерисовала тот же список
 let lastQuery = '';
 //: Корни списка эффектов, развёрнутые рукой, держатся между перерисовками
@@ -168,60 +171,60 @@ export async function showEffects(query = '') {
   treeShown = false;
   const mine = ++fxTurn;
   lastQuery = query;
-  const res = await api.particleEffects(query, source);
+  const res = await api.particleEffects(query, source, category);
   if (mine !== fxTurn) return;
   for (const it of res.items) {
     for (const k of [it, ...it.kids]) if (k.name) fxNames.set(k.system, k.name);
   }
 
   // Виды источников - только те, что есть под этим запросом, выбор
-  // держится, пока его не сняли
+  // держится, пока его не сняли. Раздел другого вида не бывает
   fillFilters(els.fSource, res.facets || [], source || null, (key) => {
     source = key || '';
+    category = '';
     showEffects(lastQuery);
   });
   els.fSource.hidden = !(res.facets || []).length;
+  const cats = res.categories || [];
+  fillFilters(els.fFxCat, cats, category || null, (key) => {
+    category = key || '';
+    showEffects(lastQuery);
+  });
+  els.fFxCat.hidden = !cats.length;
 
   els.grid.innerHTML = '';
-  let group = '';
+  // Без запроса список идёт группами: необычные - по разделам, другой
+  // источник - по предмету («Огнемёт», «Турель»), подписываем границы
+  const byItem = source && source !== 'unusual';
+  let group = null;
   for (const it of res.items) {
-    // Без запроса список идёт группами: каталог - по категориям, источник
-    // - по предмету («Огнемёт», «Турель»), подписываем границы
-    const key = query ? '' : (source ? (it.labels[0] || '') : it.category_name);
+    const key = byItem ? (it.labels[0] || '') : it.category_name;
     if (!query && key !== group) {
       group = key;
       const head = document.createElement('p');
       head.className = 'label fx__head';
-      head.textContent = group || 'Без предмета';
+      head.textContent = group || (byItem ? 'Без предмета' : 'Без названия');
       els.grid.append(head);
     }
     // Корень первым, дочерние системы под ним свёрнуты: у эффекта из
     // тридцати систем человеку нужна одна строка. При поиске раскрыты те,
     // где совпали именно дети - иначе непонятно, почему корень в списке
-    const row = effectRow(it, 0, query);
-    // У ребёнка не повторяем то, что уже сказано у корня: «Язычки пламени»
-    // под «Язычками пламени» - шум
-    const said = new Set([it.name, ...it.labels]);
-    const kids = it.kids.map((k) => effectRow(k, 1, query, said));
-    if (kids.length) {
-      const twist = row.firstChild;
-      twist.disabled = false;
-      const show = (on) => {
-        twist.textContent = on ? '−' : '+';
-        // Подпись на уже показанной кнопке: наблюдатель перевода её не
-        // увидит, он смотрит только за добавленными узлами
-        twist.title = t(on ? 'Свернуть' : 'Развернуть');
-        for (const k of kids) k.hidden = !on;
-        if (on) staggerIn(kids, Infinity);
-      };
-      show(it.open || fxOpen.has(it.system));
-      twist.addEventListener('click', () => {
-        const on = kids[0].hidden;
-        show(on);
-        if (on) fxOpen.add(it.system); else fxOpen.delete(it.system);
-      });
+    const row = effectRow(it, 0, query, new Set(), byItem);
+    els.grid.append(row);
+    if (it.kids_n) {
+      // Дочерние приходят только у раскрытых сразу (поиск), остальные -
+      // по первому раскрытию: в каталоге они почти весь ответ
+      const want = { query, source, category };
+      foldable(row, async () => {
+        if (!it.kids.length) {
+          it.kids = await api.particleEffectKids(it.system, want.query, want.source,
+                                                 want.category);
+          for (const k of it.kids) if (k.name) fxNames.set(k.system, k.name);
+        }
+        return kidRows(it, query, byItem);
+      }, it.open || fxOpen.has(it.system),
+      (on) => (on ? fxOpen.add(it.system) : fxOpen.delete(it.system)));
     }
-    els.grid.append(row, ...kids);
   }
 
   const count = document.getElementById('cat-count');
@@ -235,8 +238,84 @@ export async function showEffects(query = '') {
     : 'Индекс эффектов ещё строится - пока ищем только по именам из игры.';
 }
 
+/**
+ * Треугольник строки списка эффектов. Дети строятся при первом раскрытии
+ * (у необычных их тысячи, а смотрят единицы) и живут в своей обёртке:
+ * свёрнутый корень прячет и внуков. `build` может отдать обещание - строки
+ * тогда дописываются, когда придут
+ */
+function foldable(row, build, open, onToggle) {
+  const twist = row.firstChild;
+  twist.disabled = false;
+  let box = null;
+  //: Последнее, чего хотели. Строки грузятся, а щёлкнуть успевают ещё раз -
+  //: применяется последний щелчок, а не тот, что начал загрузку
+  let wanted = false;
+  let loading = null;
+  const paint = () => {
+    twist.textContent = wanted ? '−' : '+';
+    // Подпись на уже показанной кнопке: наблюдатель перевода её не
+    // увидит, он смотрит только за добавленными узлами
+    twist.title = t(wanted ? 'Свернуть' : 'Развернуть');
+    if (box) box.hidden = !wanted;
+  };
+  const show = async (on) => {
+    wanted = on;
+    if (on && !box) {
+      loading ||= Promise.resolve(build()).finally(() => { loading = null; });
+      let rows;
+      try {
+        rows = await loading;
+      } catch {
+        // Не пришли - строка свёрнута, следующий щелчок попробует снова
+        wanted = false;
+        onToggle?.(false);
+        paint();
+        return;
+      }
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'fx__kids';
+        box.append(...rows);
+        row.after(box);
+      }
+    }
+    paint();
+    if (wanted && box) staggerIn([...box.children], Infinity);
+  };
+  show(open);
+  twist.addEventListener('click', () => {
+    const on = !wanted;
+    show(on);
+    onToggle?.(on);
+  });
+}
+
+/**
+ * Строки детей эффекта. Часть варианта (`via` - вариант «Жара» под
+ * ракетомёт) встаёт под свой вариант, свёрнутой, а не сотней строк подряд
+ */
+function kidRows(it, query, byItem) {
+  // У ребёнка не повторяем то, что уже сказано у корня: «Язычки пламени»
+  // под «Язычками пламени» - шум
+  const said = new Set([it.name, ...it.labels]);
+  const here = new Set(it.kids.map((k) => k.system));
+  const nested = (k) => k.via && here.has(k.via);
+  const subs = new Map();
+  for (const k of it.kids.filter(nested)) {
+    if (!subs.has(k.via)) subs.set(k.via, []);
+    subs.get(k.via).push(k);
+  }
+  return it.kids.filter((k) => !nested(k)).map((k) => {
+    const row = effectRow(k, 1, query, said, byItem);
+    const mine = subs.get(k.system);
+    if (mine) foldable(row, () => mine.map((s) => effectRow(s, 2, query, said, byItem)), false);
+    return row;
+  });
+}
+
 /** Строка списка эффектов: имя, чем вызывается, система, файл */
-function effectRow(it, depth, query, said = new Set()) {
+function effectRow(it, depth, query, said, byItem) {
   const row = document.createElement('div');
   row.className = 'tree__row';
   row.style.setProperty('--depth', depth);
@@ -257,12 +336,14 @@ function effectRow(it, depth, query, said = new Set()) {
   btn.querySelector('.fx__name').textContent = it.name || it.system;
   // Чем вызывается - словами: «Огнемёт», «Турель». В группе по предмету
   // первый уже в заголовке, остальные (общие эффекты) - при строке
-  const who = it.labels.filter((l, i) => !(source && !query && i === 0) && !said.has(l));
+  const who = it.labels.filter((l, i) => !(byItem && !query && i === 0) && !said.has(l));
   btn.querySelector('.fx__who').textContent = who.join(', ');
   btn.querySelector('.fx__sys').textContent = it.name ? it.system : '';
   btn.querySelector('.fx__file').textContent =
     (it.file || '').replace(/^particles\//, '');
-  btn.addEventListener('click', () => openEffect(it));
+  // У «Жара» своей системы нет, только варианты под оружие - их и показываем
+  btn.addEventListener('click', () => (it.file || !(it.kids_n || it.kids?.length)
+    ? openEffect(it) : twist.click()));
   btn.addEventListener('contextmenu', (e) => effectMenu(e, it));
   row.append(twist, btn);
   return row;
@@ -273,8 +354,10 @@ function effectRow(it, depth, query, said = new Set()) {
  * эффекта из уже открытого файла под ним - меню системы целиком.
  */
 async function effectMenu(e, it) {
-  const go = { label: 'Перейти к файлу', hint: (it.file || '').replace(/^particles\//, ''),
-               value: 'goto', disabled: !it.file, run: () => goToFile(it) };
+  // Файл ещё не известен (индекс строится) - предложить нечего
+  if (!it.file) { e.preventDefault(); return; }
+  const go = { label: 'Перейти к файлу', hint: it.file.replace(/^particles\//, ''),
+               value: 'goto', run: () => goToFile(it) };
   if (it.file && it.file === loadedFile) {
     await systemMenu(e, it.system, [go]);
     return;

@@ -64,7 +64,7 @@ export function ask({ title, text = '', value = null, list = null, multi = false
       search.removeEventListener('input', onSearch);
       search.removeEventListener('keydown', onSearchKey);
       askEl.removeEventListener('cancel', onCancel);
-      askEl.removeEventListener('close', onCancel);
+      askEl.removeEventListener('close', onClose);
       if (askEl.open) askEl.close();
       resolve(result);
     };
@@ -76,6 +76,11 @@ export function ask({ title, text = '', value = null, list = null, multi = false
       settle(wrap(value === null ? true : input.value.trim()));
     };
     const onCancel = () => settle(null);
+    // Закрытие прошлого вопроса приходит событием уже ПОСЛЕ того, как этот
+    // открылся (close ставится в очередь), и принималось за отмену: второй
+    // вопрос цепочки мелькал и пропадал. Своё закрытие - когда окно правда
+    // закрыто, а не открыто заново
+    const onClose = () => { if (!askEl.open) onCancel(); };
     // Фильтр по подстроке имени. Отмеченное при множественном выборе не
     // теряется: прячутся кнопки, а не набор
     const onSearch = () => {
@@ -170,7 +175,7 @@ export function ask({ title, text = '', value = null, list = null, multi = false
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     askEl.addEventListener('cancel', onCancel);      // Esc
-    askEl.addEventListener('close', onCancel);
+    askEl.addEventListener('close', onClose);
     search.addEventListener('input', onSearch);
     search.addEventListener('keydown', onSearchKey);
     askEl.showModal();

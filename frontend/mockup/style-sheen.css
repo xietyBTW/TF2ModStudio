@@ -58,10 +58,13 @@
   min-height: 30px;
 }
 .sheenb__lbl { font-size: 12.5px; color: var(--ink-soft); }
-.sheenb__rowctl { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* Не помещается - уходит строкой ниже то, что справа (размер маски, пауза),
+   а не кнопки переключателя */
+.sheenb__rowctl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .sheenb__rowctl .slider { flex: 1; min-width: 60px; }
 .sheenb__num { width: 58px; flex: none; }
-.sheenb__val { min-width: 64px; text-align: right; font-size: 11px; color: var(--ink-soft); }
+.sheenb__val { min-width: 64px; margin-left: auto; text-align: right; white-space: nowrap;
+  font-size: 11px; color: var(--ink-soft); }
 .sheenb__dash, .sheenb__unit { color: var(--ink-mute); font-size: 12px; }
 
 /* Превью */
@@ -200,7 +203,12 @@
 .sheenb__secsum { font-size: 11px; font-weight: 400; color: var(--ink-mute); }
 .sheenb__secbody { display: none; flex-direction: column; gap: 8px; padding: 2px 12px 14px 30px; }
 .sheenb__sec.is-open .sheenb__secbody { display: flex; }
-.sheenb__seg { flex-wrap: wrap; }
+/* Кнопки переключателя - по ширине своего текста: поровну поделённая ширина
+   выпускала «ВЫРЕЗАТЬ» и «ВЫСОКОЕ» за рамку кнопки */
+.sheenb .seg { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+.sheenb .seg + .sheenb__val { flex: 1 0 auto; }
+.sheenb .seg button { flex: 0 0 auto; padding: 6px 10px; }
+.sheenb .sheenb__streak button { flex: 0 0 28px; padding: 6px 0; }
 .sheenb__thumb { width: 76px; height: 46px; object-fit: contain; background: #000; }
 .sheenb__thumb[hidden] { display: none; }
 .sheenb__colour { display: flex; flex-direction: column; gap: 8px; }

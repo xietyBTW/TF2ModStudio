@@ -76,8 +76,23 @@ def material_names(pcf) -> List[str]:
     return names
 
 
+def material_png(pcf, tf2_root_dir: str, mat: str,
+                 original: bool = False) -> Optional[bytes]:
+    """PNG текстуры материала: своя картинка, если её положили, а с original
+    или без неё - игровая. Карточка аддитивного материала подмешивает фон
+    только для вида, здесь картинка как есть"""
+    info = materials_json(pcf, tf2_root_dir, names=[mat],
+                          include_custom=not original).get(mat) or {}
+    url = info.get('dataUrl') or ''
+    prefix = 'data:image/png;base64,'
+    if not url.startswith(prefix):
+        return None
+    return base64.b64decode(url[len(prefix):])
+
+
 def materials_json(pcf, tf2_root_dir: str, cancel_check=None,
-                   names: Optional[List[str]] = None) -> Dict[str, dict]:
+                   names: Optional[List[str]] = None,
+                   include_custom: bool = True) -> Dict[str, dict]:
     """
     Резолвит материалы систем в текстуры для JS:
     {mat: {"dataUrl": png, "sheet": {...}|None, "additive": bool,
@@ -91,7 +106,7 @@ def materials_json(pcf, tf2_root_dir: str, cancel_check=None,
     # Перезаписанные текстуры - превью-инфо по нормализованному ключу
     out: Dict[str, dict] = {}
     names = material_names(pcf) if names is None else list(names)
-    for mat in names:
+    for mat in names if include_custom else ():
         ck = norm_mat(mat)
         if ck in pcf._custom_material_info:
             out[mat] = pcf._custom_material_info[ck]

@@ -307,6 +307,8 @@ import { buildSkinnedScene as _buildSkinnedScene,
          updateHidden as _updateSkinnedHidden } from './js/viewer_skinned.js';
 import { applyBends as _applyBends, toSmd as _bendToSmd } from './js/viewer_bend.js';
 import * as _select from './js/viewer_select.js';
+import * as _tex from './js/viewer_textures.js';
+import { createFire as _createFire } from './js/viewer_fire.js';
 import { buildSoldierGroup } from './js/viewer/soldier.js';
 import { SRC_FACE_MAP, buildSkyCube } from './js/viewer/skybox.js';
 
@@ -488,7 +490,9 @@ function hideStatus() {
 // Texture animation
 function stopAnimation() {
   if (_animTimer !== null) { clearInterval(_animTimer); _animTimer = null; }
+  const frames        = _animFrames;
   _animFrames         = [];
+  _retireMaps(frames);   // кадр, оставшийся на модели, уцелеет
   _animMeshNames      = null;
   _pendingAnim        = null;
   _pendingMaterialMap = null;
@@ -932,8 +936,15 @@ function makeMeshMaterial(opts) {
     m.name = opts.name;
     return m;
   }
-  return _withNormal(_makeMeshMaterial(THREE, opts, _matHints));
+  return _fire.wear(_withNormal(_makeMeshMaterial(THREE, opts, _matHints)));
 }
+
+// Огонь горящего игрока поверх раскраски: js/viewer_fire.js
+const _fire = _createFire(THREE, { requestRender, each: fn => {
+  if (currentModel) currentModel.traverse(o => [].concat(o.material || []).forEach(fn));
+} });
+window.setFireOverlay = spec => _fire.set(spec);
+window.fireDebug = () => ({ active: _fire.active(), level: _fire.level() });
 
 // Карта нормалей (превью галки «Normal Map»)
 //
@@ -1254,14 +1265,46 @@ document.addEventListener('pointerlockchange', () => {
  * над уже удалённой моделью - и на следующей, если операция шла в момент
  * смены оружия.
  */
+// Память видеокарты и повторная раздача текстур: js/viewer_textures.js
+
+/** Текстура гирлянды: у неё свой реестр и своя чистка */
+const _isDecorTex = tex => Object.values(_decorTex).includes(tex);
+const _freeObject = root => _tex.freeObject(root, _isDecorTex);
+const _retireMaps = maps => _tex.retireMaps(
+  maps, currentModel, [..._animFrames, ...Object.values(_texByName)], _isDecorTex);
+const _alreadyOn = (root, url, pick) => _tex.alreadyOn(
+  root, url, pick, name => _isDecorName(name) || name.startsWith('ghost:'));
+
+//: {материал: последний запрошенный адрес}. Ответ на более ранний запрос
+//: отбрасывается: иначе после пропуска победила бы опоздавшая старая текстура
+let _wantedUrl = {};
+
+/** Для автопроверки: память видеокарты и число загруженных текстур */
+let _texLoads = 0;
+window.gpuDebug = () => ({ ...renderer.info.memory });
+window.textureLoads = () => _texLoads;
+
+/** Меняет материал меша и отпускает текстуру прежнего, если она осталась ничьей */
+function _setMaterial(child, material) {
+  const old = child.material;
+  child.material = material;
+  const map = old && !Array.isArray(old) && old.map;
+  if (map && map !== material.map) _retireMaps([map]);
+}
+
 function _dropModel() {
   if (_fitOp) _fitOpEnd();          // модели больше нет - отменять нечего
   if (_fitControls) _fitControls.detach();
   _fitGroup = null;
   _fitTween = null;
+  // Гирлянда живёт дольше модели, её чистит clearDecor
+  if (_decorObject && _decorObject.parent) _decorObject.parent.remove(_decorObject);
+  const gone = [currentModel, _critSprite].filter(Boolean);
   if (currentModel) { scene.remove(currentModel); currentModel = null; }
   if (_critSprite)  { scene.remove(_critSprite);  _critSprite  = null; }
   _texByName = {};
+  _wantedUrl = {};
+  gone.forEach(_freeObject);
   // Выделение ножниц - номера треугольников УШЕДШЕЙ модели
   if (window.clearCutSelection) window.clearCutSelection();
 }
@@ -1406,7 +1449,7 @@ window.setMaterialHints = function(hints) {
 function _updateMeshTex(child, tex) {
   const prevName = (child.material && !Array.isArray(child.material))
     ? (child.material.name || '') : '';
-  child.material = makeMeshMaterial({ map: tex, name: prevName });
+  _setMaterial(child, makeMeshMaterial({ map: tex, name: prevName }));
 }
 
 // Обходит модель и применяет текстуру только к мешам из filter (Set имён).
@@ -1552,7 +1595,7 @@ function applyTexture(object, tex) {
     // Preserve the material name so applyMaterialMap can still match by name
     const prevMatName = child.material && !Array.isArray(child.material)
       ? child.material.name : '';
-    child.material = makeMeshMaterial({ map: tex, name: prevMatName });
+    _setMaterial(child, makeMeshMaterial({ map: tex, name: prevMatName }));
     child.material.needsUpdate = true;
   });
 }
@@ -1570,6 +1613,8 @@ function _loadTextureThen(dataUrl, onLoaded) {
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;
+      tex.userData.url = dataUrl;
+      _texLoads++;
       onLoaded(tex);
       requestRender();
     },
@@ -1792,6 +1837,8 @@ function _disposeSkinned() {
   _skinned.meshes.forEach(({ mesh }) => {
     if (mesh.geometry) mesh.geometry.dispose();
     if (mesh.material && mesh.material.dispose) mesh.material.dispose();
+    // У скелета своя текстура с матрицами костей
+    if (mesh.skeleton) mesh.skeleton.dispose();
   });
   _skinned = null;
 }
@@ -1813,6 +1860,10 @@ window.updateTextureFromDataUrl = function(texDataUrl) {
   }
   const target  = currentModel;
   const animGen = _animGeneration;   // зафиксировали поколение после stopAnimation
+  // Одна текстура на все меши перекрывает и раздачу по материалам
+  _wantedUrl = {};
+  const editable = _editableMeshNames;
+  if (_alreadyOn(target, texDataUrl, c => !editable || editable.has(c.name))) return;
   _loadTextureThen(texDataUrl, tex => {
     if (_animGeneration !== animGen) return;   // за время загрузки запустили анимацию - отменяем
     if (currentModel !== target)     return;
@@ -1822,7 +1873,7 @@ window.updateTextureFromDataUrl = function(texDataUrl) {
         if (!child.isMesh || !_editableMeshNames.has(child.name)) return;
         const prevName = child.material && !Array.isArray(child.material)
           ? child.material.name : '';
-        child.material = makeMeshMaterial({ map: tex, name: prevName });
+        _setMaterial(child, makeMeshMaterial({ map: tex, name: prevName }));
         child.material.needsUpdate = true;
       });
     } else {
@@ -1853,11 +1904,19 @@ window.applyMaterialMap = function(texMapJson) {
   const target = currentModel;
   const gen    = _animGeneration;   // фиксируем поколение после возможного stopAnimation
 
+  const carries = matName => child =>
+    child.name === matName || child.material.name === matName;
+
   Object.entries(texMapJson).forEach(([matName, dataUrl]) => {
     if (!dataUrl) return;
+    _wantedUrl[matName] = dataUrl;
+    const on = _alreadyOn(target, dataUrl, carries(matName));
+    // Куски своих материалов берут картинку по имени отсюда
+    if (on) { _texByName[matName] = on; return; }
     _loadTextureThen(dataUrl, tex => {
       if (currentModel !== target)  return;
       if (_animGeneration !== gen)  return;   // анимация перезапустилась - не перезаписываем
+      if (_wantedUrl[matName] !== dataUrl) return;   // уже просили другую
       // Кусок своего материала пересоздаётся при каждом выходе из режима
       // частей - свою картинку он берёт отсюда (см. _splitMesh)
       _texByName[matName] = tex;
@@ -1868,7 +1927,7 @@ window.applyMaterialMap = function(texMapJson) {
         const matNameMatch = child.material && !Array.isArray(child.material)
           ? child.material.name === matName : false;
         if (child.name === matName || matNameMatch) {
-          child.material = makeMeshMaterial({ map: tex, name: matName });
+          _setMaterial(child, makeMeshMaterial({ map: tex, name: matName }));
           matched = true;
         }
       });
@@ -1975,6 +2034,7 @@ window.resetViewer = function() {
   _endIsolation();              // показ одной части - про прошлую модель
   window.clearDecor();          // и гирлянда: она висела на прошлом предмете
   window.setViewRig(null);      // сброс режима - обратно к орбите
+  _fire.set(null);              // и огонь: он был про сцену горения
   stopAnimation();
   _exitSkyboxView();
   _disposeSkinned();

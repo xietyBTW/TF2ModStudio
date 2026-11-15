@@ -98,7 +98,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_shoulders_only_for_hands(self):
         self.assertTrue(api.controls_for('engineer_hands')['shoulders'])
-        for mode in ('c_scattergun', 'scout_body', 'hat', 'spray', 'skybox'):
+        for mode in ('c_scattergun', 'scout_body', 'hat', 'critHIT', 'skybox'):
             self.assertFalse(api.controls_for(mode)['shoulders'], mode)
 
     def test_first_person_only_for_weapons(self):
@@ -138,11 +138,15 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual((pack['wear'], pack['first_person']), (True, False))
         self.assertEqual((horn['wear'], horn['first_person']), (False, True))
 
-    def test_spray_pins_resolution_and_locks_format(self):
-        c = api.controls_for('spray')
-        self.assertEqual(c['resolutions'], ['256'])
-        self.assertTrue(c['format_locked'])
-        self.assertFalse(c['flags_enabled'])
+    def test_every_resolution_is_offered_in_every_mode(self):
+        for mode in ('c_scattergun', 'hat', 'critHIT', 'death_fire', 'skybox'):
+            self.assertEqual(api.controls_for(mode)['resolutions'],
+                             ['256', '512', '1024', '2048'], mode)
+
+    def test_crit_and_death_effects_lock_the_flags(self):
+        for mode in ('critHIT', 'death_ice', 'death_gold', 'death_fire'):
+            self.assertFalse(api.controls_for(mode)['flags_enabled'], mode)
+        self.assertTrue(api.controls_for('c_scattergun')['flags_enabled'])
 
     def test_crit_narrows_formats_to_alpha_capable(self):
         self.assertEqual(api.controls_for('critHIT')['formats'],
@@ -270,32 +274,32 @@ class ControlsTests(unittest.TestCase):
         """
         from src.shared.constants import VTF_FORMATS
 
-        for mode in ('c_scattergun', 'hat', 'spray', 'scout_body'):
+        for mode in ('c_scattergun', 'hat', 'death_ice', 'scout_body'):
             self.assertEqual(api.controls_for(mode)['formats'],
                              list(VTF_FORMATS), mode)
 
     def test_normal_map_needs_a_model(self):
-        """Spray и CritHIT - UnlitGeneric, бамп там бессмыслен"""
+        """CritHIT - UnlitGeneric, бамп там бессмыслен; у эффектов смерти материал игровой"""
         for mode in ('c_scattergun', 'engineer_hands', 'scout_body'):
             self.assertTrue(api.controls_for(mode)['normal_map'], mode)
-        for mode in ('spray', 'critHIT'):
+        for mode in ('death_fire', 'critHIT'):
             self.assertFalse(api.controls_for(mode)['normal_map'], mode)
 
     def test_material_maps_follow_normal_map(self):
-        for mode in ('c_scattergun', 'spray', 'critHIT', 'engineer_hands'):
+        for mode in ('c_scattergun', 'death_ice', 'critHIT', 'engineer_hands'):
             c = api.controls_for(mode)
             self.assertEqual(c['material_maps'], c['normal_map'], mode)
 
     def test_tools_need_a_model(self):
         self.assertTrue(api.controls_for('c_scattergun')['extract_model'])
-        self.assertFalse(api.controls_for('spray')['extract_model'])
+        self.assertFalse(api.controls_for('critHIT')['extract_model'])
         self.assertFalse(api.controls_for('skybox')['extract_texture'])
 
     def test_vmt_editor_only_where_the_model_has_a_material(self):
         """Кнопка VMT висела под пустым альбомом до выбора предмета"""
         for mode in ('c_scattergun', 'hat', 'scout_body', 'scout_hands', 'custom'):
             self.assertTrue(api.controls_for(mode)['vmt_editor'], mode)
-        for mode in ('', 'spray', 'skybox', 'critHIT'):
+        for mode in ('', 'death_gold', 'skybox', 'critHIT'):
             self.assertFalse(api.controls_for(mode)['vmt_editor'], mode)
 
     def test_replace_model_not_offered_for_player_body(self):
@@ -313,7 +317,7 @@ class ControlsTests(unittest.TestCase):
         чаще, чем у оружия"""
         for mode in ('c_scattergun', 'hat', 'scout_body', 'scout_hands'):
             self.assertTrue(api.controls_for(mode)['split_parts'], mode)
-        for mode in ('spray', 'skybox', 'critHIT'):
+        for mode in ('death_ice', 'skybox', 'critHIT'):
             self.assertFalse(api.controls_for(mode)['split_parts'], mode)
 
     def test_gamma_hidden_where_flags_are_restricted(self):
@@ -328,7 +332,7 @@ class ControlsTests(unittest.TestCase):
     def test_every_mode_answers_the_same_questions(self):
         """Набор ключей не должен зависеть от режима - иначе фронт ловит undefined"""
         base = set(api.controls_for('c_scattergun'))
-        for mode in ('hat', 'engineer_hands', 'scout_body', 'spray',
+        for mode in ('hat', 'engineer_hands', 'scout_body', 'death_fire',
                      'critHIT', 'skybox', 'spy_masks', ''):
             self.assertEqual(set(api.controls_for(mode)), base, mode)
 
@@ -432,12 +436,12 @@ class CoverTests(unittest.TestCase):
 
 
 class SpecialCategoryTests(unittest.TestCase):
-    """Спец-режимы: спрей, крит и эффекты смерти"""
+    """Спец-режимы: крит и эффекты смерти"""
 
     def test_special_items_have_human_names(self):
         """Ключ режима человеку ничего не говорит: «death_ice» - не название"""
         names = {i['key']: i['name'] for i in api.items('special', lang='ru')}
-        self.assertEqual(names['spray'], 'Спрей')
+        self.assertNotIn('spray', names)
         self.assertEqual(names['critHIT'], 'Крит')
         self.assertTrue(names['death_ice'].startswith('Эффект смерти'))
 

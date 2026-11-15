@@ -12,7 +12,7 @@
     (например phong-exp нельзя в DXT1 - потеряется альфа)
 
 Карты имеют смысл только на VertexLitGeneric (модели). На UnlitGeneric
-(spray/crit) - игнорируются (см. VMTService.add_material_map_params)
+(crit) - игнорируются (см. VMTService.add_material_map_params)
 """
 
 # id_карты -> правила. format/flags - для генерации VTF; path_param - параметр

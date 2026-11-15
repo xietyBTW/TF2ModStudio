@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from typing import List, Optional, Tuple
 
@@ -87,33 +88,98 @@ def game_texture(mode: str, vpk_paths: List[Optional[str]]) -> str:
     Пусто - покажем без текстуры
     """
     try:
-        from src.services import vtf_preview_service as vps
-        from src.services.vmt_service import VMTService
-
-        rel, _vmt, vtf = VMTService.get_weapon_relpaths(mode)
-        folder = rel.replace('\\', '/').rstrip('/')
-        candidates = [f"{folder}/{vtf}"]
-        if vtf.lower() != vtf:
-            candidates.append(f"{folder}/{vtf.lower()}")
-
-        for pak in vps.open_vpks(vpk_paths):
-            for candidate in candidates:
-                try:
-                    data = pak[candidate].read()
-                except KeyError:
-                    continue
-                from src.shared.file_utils import get_temp_file_path
-                tmp = str(get_temp_file_path(prefix='tf2_deatheff_', suffix='.vtf'))
-                with open(tmp, 'wb') as f:
-                    f.write(data)
-                png = vtf_to_png(tmp)
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                if png:
-                    logger.info(f"[спец-режим] игровая текстура: {candidate}")
-                    return png
+        tmp = _game_vtf_file(mode, vpk_paths)
+        if tmp:
+            try:
+                return vtf_to_png(tmp)
+            finally:
+                _remove(tmp)
     except Exception as exc:                      # noqa: BLE001
         logger.debug(f"[спец-режим] игровую текстуру не достать: {exc}")
     return ''
+
+
+def _game_vtf_file(mode: str, vpk_paths: List[Optional[str]]) -> str:
+    """Игровой VTF спец-режима во временном файле; пусто - в игре его нет"""
+    from src.services import vtf_preview_service as vps
+    from src.services.vmt_service import VMTService
+    from src.shared.file_utils import get_temp_file_path
+
+    rel, _vmt, vtf = VMTService.get_weapon_relpaths(mode)
+    folder = rel.replace('\\', '/').rstrip('/')
+    candidates = [f"{folder}/{vtf}"]
+    if vtf.lower() != vtf:
+        candidates.append(f"{folder}/{vtf.lower()}")
+
+    for pak in vps.open_vpks(vpk_paths):
+        for candidate in candidates:
+            try:
+                data = pak[candidate].read()
+            except KeyError:
+                continue
+            tmp = str(get_temp_file_path(prefix='tf2_deatheff_', suffix='.vtf'))
+            with open(tmp, 'wb') as f:
+                f.write(data)
+            logger.info(f"[спец-режим] игровая текстура: {candidate}")
+            return tmp
+    return ''
+
+
+def _remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+#: Как игра кладёт огонь на горящего. Текстура подключена слоем `$detail` во
+#: всех материалах игроков, шапок и оружия: `$detailscale 5` (плиткой, пять
+#: повторов по развёртке), `$detailblendmode 6` (прибавляется к уже освещённому
+#: цвету, а не затемняет его), кадры листает прокси AnimatedTexture, 30 в
+#: секунду. Сила слоя - прокси BurnLevel, на пике единица
+FIRE_SCALE = 5
+FIRE_FPS = 30
+
+
+def fire_overlay(vpk_paths: List[Optional[str]]) -> dict:
+    """
+    Игровой огонь для превью: все кадры одним листом и как его показывать
+
+    Кадров в игре 121 по 64 пикселя. Отдельными файлами это сотня запросов
+    на каждое открытие режима, поэтому они склеены в одну картинку сеткой, а
+    вьювер режет её обратно
+
+    Returns:
+        {atlas, cols, rows, count, fps, scale} или пустой словарь
+    """
+    try:
+        import numpy as np
+
+        from src.services import fast_png
+        from src.services.vtflib_wrapper import VTFLib
+        from src.shared.file_utils import get_temp_file_path
+
+        tmp = _game_vtf_file('death_fire', vpk_paths)
+        if not tmp:
+            return {}
+        try:
+            frames, width, height = VTFLib.read_vtf_all_frames(tmp)
+        finally:
+            _remove(tmp)
+        if not frames:
+            return {}
+        cols = math.ceil(math.sqrt(len(frames)))
+        rows = math.ceil(len(frames) / cols)
+        sheet = np.zeros((rows * height, cols * width, 4), np.uint8)
+        for i, rgba in enumerate(frames):
+            top, left = (i // cols) * height, (i % cols) * width
+            sheet[top:top + height, left:left + width] = (
+                np.frombuffer(rgba, np.uint8).reshape(height, width, 4))
+        atlas = str(get_temp_file_path(prefix='tf2_deatheff_', suffix='.png'))
+        with open(atlas, 'wb') as f:
+            f.write(fast_png.encode_rgba(sheet.tobytes(), cols * width, rows * height))
+        return {'atlas': atlas, 'cols': cols, 'rows': rows, 'count': len(frames),
+                'fps': FIRE_FPS, 'scale': FIRE_SCALE}
+    except Exception as exc:                      # noqa: BLE001
+        logger.warning(f"[спец-режим] кадры огня не собраны: {exc}")
+        return {}

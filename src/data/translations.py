@@ -307,7 +307,7 @@ TRANSLATIONS = {
         'placeholder': 'Введите имя VPK-файла (без .vpk)',
         'language': 'Язык',
         'image_format': 'Формат изображения:',
-        'res_256': '256x256 (Спрей)',
+        'res_256': '256x256',
         'res_high': '1024x1024 (Высокое)',
         'res_normal': '512x512 (Обычное)',
         'res_ultra': '2048x2048 (Ультра)',
@@ -344,7 +344,6 @@ TRANSLATIONS = {
         'filename_must_be_vpk': 'Имя файла должно оканчиваться на .vpk',
         'invalid_size': 'Некорректный размер текстуры.',
         'special_crit': 'Крит',
-        'special_spray': 'Спрей',
         'special_death_ice': 'Эффект смерти: Лёд',
         'special_death_gold': 'Эффект смерти: Золото',
         'special_death_fire': 'Эффект смерти: Огонь',
@@ -658,8 +657,6 @@ TRANSLATIONS = {
         'select_weapon_error': 'Сначала выберите оружие!',
         'crit_hit_conflict_error': 'Дополнительные настройки (Normal Map) конфликтуют с CritHIT. Сборка не запущена.',
         'replace_model': 'Заменить модель:',
-        'spray_mode': 'Режим спрея:',
-        'enable_spray': 'Создать спрей (256×256, RGBA)',
 
         # 3D Preview
         '3d_prompt_weapon':    'Выберите оружие и нажмите кнопку ▶ чтобы загрузить модель',
@@ -1134,7 +1131,7 @@ TRANSLATIONS = {
         'placeholder': 'Enter VPK file name (without .vpk)',
         'language': 'Language',
         'image_format': 'Image format:',
-        'res_256': '256x256 (Spray)',
+        'res_256': '256x256',
         'res_high': '1024x1024 (High)',
         'res_normal': '512x512 (Normal)',
         'res_ultra': '2048x2048 (Ultra)',
@@ -1171,7 +1168,6 @@ TRANSLATIONS = {
         'filename_must_be_vpk': 'Filename must end with .vpk',
         'invalid_size': 'Invalid texture size.',
         'special_crit': 'Crit',
-        'special_spray': 'Spray',
         'special_death_ice': 'Death effect: Ice',
         'special_death_gold': 'Death effect: Gold',
         'special_death_fire': 'Death effect: Fire',
@@ -1506,8 +1502,6 @@ TRANSLATIONS = {
         'select_weapon_error': 'Please select a weapon first!',
         'crit_hit_conflict_error': 'Additional settings (Normal Map) conflict with CritHIT. Build was not started.',
         'replace_model': 'Replace Model:',
-        'spray_mode': 'Spray Mode:',
-        'enable_spray': 'Create spray (256×256, RGBA)',
 
         # 3D Preview
         '3d_prompt_weapon':    'Select a weapon and click ▶ to load the model',

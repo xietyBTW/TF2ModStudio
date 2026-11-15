@@ -93,7 +93,7 @@ export function applyControls(c, hasItem = true) {
   });
   syncNormal();
 
-  // Разрешения: спрей прибит к 256
+  // Разрешения: какие доступны, решает режим
   document.querySelectorAll('input[name="res"]').forEach((r, i) => {
     const value = ['256', '512', '1024', '2048'][i];
     const ok = c.resolutions.includes(value);
@@ -101,7 +101,7 @@ export function applyControls(c, hasItem = true) {
     if (!ok && r.checked) document.querySelector('input[name="res"]').checked = true;
   });
 
-  // Формат: список сужается режимом, спрей его ещё и запирает
+  // Формат: список сужается режимом
   const fmt = document.getElementById('fmt');
   if (c.formats) {
     const keep = fmt.value;
@@ -109,7 +109,6 @@ export function applyControls(c, hasItem = true) {
     for (const f of c.formats) fmt.append(new Option(f, f));
     if (c.formats.includes(keep)) fmt.value = keep;
   }
-  fmt.disabled = Boolean(c.format_locked);
 
   // Имя VPK предлагает Python по предмету (scattergun_mod.vpk). Своё имя
   // не трогаем: набранное руками важнее подсказки, поэтому смотрим на

@@ -150,7 +150,7 @@ class HatTextureExtractWorker(BaseWorker):
                     logger.warning(f"[hat-tex] VTF not found for $baseTexture={basetexture}")
                     continue
 
-                if info.tint is not None and not info.tint.is_neutral:
+                if info.tint is not None and not info.tint.is_neutral and not info.tint.whole:
                     painted = True
 
                 out = self._save_vtf(vtf_data, basetexture)

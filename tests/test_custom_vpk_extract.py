@@ -69,5 +69,47 @@ class ExtractViaVpkExeTests(unittest.TestCase):
             self.assertFalse(ok)
 
 
+class _FakePak(dict):
+    """Архив с заданными именами: настоящий VPK с «..» библиотекой не собрать"""
+
+    def __getitem__(self, name):
+        data = super().__getitem__(name)
+        return type("Entry", (), {"read": lambda self: data})()
+
+
+class EntryOutsideTests(unittest.TestCase):
+    BAD = ("../evil.txt", "materials/../../evil.txt", "..\\evil.txt",
+           "C:/evil.txt", "/../evil.txt", "\\\\host\\share\\evil.txt")
+
+    def test_archive_with_outside_path_is_refused_before_any_tool(self):
+        for name in self.BAD:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                out_dir = Path(tmp) / "out"
+                pak = _FakePak({"materials/ok.vmt": b"ok", name: b"evil"})
+                with patch("vpk.open", return_value=pak), \
+                     patch("src.services.custom_vpk_service.subprocess.run") as run:
+                    ok = CustomVPKService.extract_vpk_to_dir("mod.vpk", str(out_dir))
+                self.assertFalse(ok)
+                run.assert_not_called()
+                self.assertEqual([p for p in Path(tmp).rglob("*") if p.is_file()], [])
+
+    def test_ordinary_archive_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pak = _FakePak({"materials/models/a/b.vtf": b"x", "models/a.mdl": b"y"})
+            with patch("vpk.open", return_value=pak):
+                self.assertIsNone(CustomVPKService._entry_outside("mod.vpk", tmp))
+
+    def test_python_fallback_never_writes_outside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
+            out_dir.mkdir()
+            pak = _FakePak({"materials/ok.vmt": b"ok", "../evil.txt": b"evil"})
+            with patch("vpk.open", return_value=pak):
+                ok = CustomVPKService._extract_via_python_vpk("mod.vpk", str(out_dir))
+            self.assertTrue(ok)
+            self.assertTrue((out_dir / "materials" / "ok.vmt").is_file())
+            self.assertFalse((Path(tmp) / "evil.txt").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

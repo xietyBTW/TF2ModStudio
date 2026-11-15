@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Dict, List, Optional, Sequence, Tuple
+import threading
+from array import array
+from collections import OrderedDict
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from src.services import smd_pose, viewmodel_pose
 from src.services.smd_to_obj_service import SmdToObjService
@@ -160,6 +163,8 @@ def build_scene(
 
     order = _bone_order(bind)
     index_of = {name: i for i, name in enumerate(order)}
+    # Скелет рук входит в каждую часть: оружие запекается в его bind-позу
+    rig_key = _stamp([arms_ref_smd])
 
     # Какие кости оружия садятся в руку, решают КАДРЫ анимации, а не bind рук:
     # в bind-позе `weapon_bone_1..4` у пиро свалены в одну точку, у шпиона
@@ -170,19 +175,23 @@ def build_scene(
         merge = (_shared_bones(weapon_ref_smd, bind) if merge_by_name
                  else _merge_names(weapon_ref_smd, anim_smd)
                  or weapon_merge_bones)
-        weapon_part = _weapon_part(weapon_ref_smd, bind, index_of, merge,
-                                   weapon_extra_smds)
+        weapon_part = _held_part(weapon_ref_smd, bind, index_of, merge,
+                                 weapon_extra_smds, rig_key)
         if weapon_part is None:
             return None
         editable = list(editable_mats or weapon_part["materials"])
         if weapon_carrier_smd:
             _add_carrier(weapon_part, weapon_carrier_smd, bind, index_of,
-                         anim_smd, carrier_extra_smds)
+                         anim_smd, carrier_extra_smds, rig_key=rig_key)
         if decor_smd:
             _add_carrier(weapon_part, decor_smd, bind, index_of, anim_smd,
-                         prefix=decor_prefix)
-    arms_part = _arms_part(arms_ref_smd, bind, index_of,
-                           arms_extra_smds, arms_include_mats)
+                         prefix=decor_prefix, rig_key=rig_key)
+    arms_part = _remembered(
+        _part_key("arms", rig_key, [arms_ref_smd, *arms_extra_smds],
+                  None if arms_include_mats is None
+                  else tuple(sorted(arms_include_mats))),
+        lambda: _arms_part(arms_ref_smd, bind, index_of,
+                           arms_extra_smds, arms_include_mats))
     if arms_part is None:
         return None
 
@@ -422,6 +431,90 @@ def quaternion_from_euler(rot: Sequence[float]) -> Tuple[float, float, float, fl
 
 # Части сцены
 
+#: Собранные части: {отпечаток входа: часть в плотных массивах}. Тело класса и
+#: стоковое оружие одни у всех шапок класса, руки - у всего оружия класса, а
+#: разбор их SMD стоит полсекунды на каждую сцену. Плотные массивы втрое
+#: меньше списков чисел: часть на 20 тысяч вершин занимает около 3 МБ
+_parts: "OrderedDict[tuple, dict]" = OrderedDict()
+_PARTS_MAX = 16
+_parts_lock = threading.Lock()
+_FLOAT_KEYS = ("positions", "normals", "uvs", "skinWeight")
+
+
+def clear_parts_cache() -> None:
+    with _parts_lock:
+        _parts.clear()
+
+
+def _stamp(paths: Sequence[str]) -> Optional[tuple]:
+    """Отпечаток файлов: путь, время правки, размер. None - файла нет"""
+    out = []
+    for path in paths:
+        if not path:
+            continue
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        out.append((path, st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
+def _remembered(key: Optional[tuple], build: Callable[[], Optional[dict]]) -> Optional[dict]:
+    """
+    Часть сцены из запаса или собранная заново
+
+    Отдаётся своя копия: носитель и гирлянда дописываются прямо в часть оружия
+    """
+    if key is None:
+        return build()
+    with _parts_lock:
+        kept = _parts.get(key)
+        if kept is not None:
+            _parts.move_to_end(key)
+    if kept is None:
+        part = build()
+        if part is None:
+            return None
+        kept = {"kind": part["kind"],
+                "materials": tuple(part["materials"]),
+                "groups": tuple(dict(g) for g in part["groups"]),
+                "skinIndex": array("i", part["skinIndex"]),
+                **{k: array("d", part[k]) for k in _FLOAT_KEYS}}
+        with _parts_lock:
+            _parts[key] = kept
+            while len(_parts) > _PARTS_MAX:
+                _parts.popitem(last=False)
+        return part
+    return {"kind": kept["kind"],
+            "materials": list(kept["materials"]),
+            "groups": [dict(g) for g in kept["groups"]],
+            "skinIndex": kept["skinIndex"].tolist(),
+            **{k: kept[k].tolist() for k in _FLOAT_KEYS}}
+
+
+def _part_key(kind: str, rig_key: Optional[tuple], smds: Sequence[str],
+              extra: Optional[tuple]) -> Optional[tuple]:
+    """Отпечаток входа части. None - запоминать нельзя: файла нет на диске"""
+    stamp = _stamp(smds)
+    if rig_key is None or stamp is None:
+        return None
+    return kind, rig_key, stamp, extra
+
+
+def _held_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
+               index_of: Dict[str, int],
+               merge_bones: Optional[Sequence[str]],
+               extra_smds: Sequence[str] = (),
+               rig_key: Optional[tuple] = None) -> Optional[dict]:
+    """Часть оружия (`_weapon_part`) с запасом по входу"""
+    return _remembered(
+        _part_key("weapon", rig_key, [weapon_ref_smd, *extra_smds],
+                  None if merge_bones is None else tuple(merge_bones)),
+        lambda: _weapon_part(weapon_ref_smd, bind, index_of, merge_bones,
+                             extra_smds))
+
+
 def _triangles(smds: Sequence[str]) -> Dict[str, list]:
     """Треугольники по материалам из нескольких SMD одной модели"""
     merged: Dict[str, list] = {}
@@ -524,7 +617,8 @@ def _weapon_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
 
 def _add_carrier(part: dict, carrier_smd: str, bind: viewmodel_pose.Rig,
                  index_of: Dict[str, int], anim_smd: str,
-                 extra_smds: Sequence[str] = (), prefix: str = "") -> None:
+                 extra_smds: Sequence[str] = (), prefix: str = "",
+                 rig_key: Optional[tuple] = None) -> None:
     """Дописывает в часть с оружием пушку-носитель. Не вышло - молча пропускаем
 
     Носитель - обычная модель оружия, только собранная теми же костями: у
@@ -537,8 +631,9 @@ def _add_carrier(part: dict, carrier_smd: str, bind: viewmodel_pose.Rig,
     даёт вьювер своим слоем, а не состояние предмета
     """
     try:
-        carrier = _weapon_part(carrier_smd, bind, index_of,
-                               _merge_names(carrier_smd, anim_smd), extra_smds)
+        carrier = _held_part(carrier_smd, bind, index_of,
+                             _merge_names(carrier_smd, anim_smd), extra_smds,
+                             rig_key)
     except viewmodel_pose.NotHeldInHands:
         carrier = None
     if carrier is None:

@@ -220,20 +220,47 @@ export let sceneModelTex = '';
 //: Что человек положил сам. Сцена приходит позже текстуры и наоборот -
 //: помним последнее, иначе сборка сцены стирала уже выбранную картинку
 let userTextures = {};
+//: Игровой огонь: лист кадров и как его показывать (режим горения)
+let sceneFire = null;
+//: Какой слой огня сейчас во вьювере: applyView зовут после каждого действия,
+//: а перезапускать ради этого анимацию незачем
+let fireKey = '';
 
 /** Спец-сцена прошлого предмета: у обычной модели её нет */
-export function forgetSpecialScene() { sceneKind = ''; }
+export function forgetSpecialScene() { sceneKind = ''; fireKey = ''; }
+
+/**
+ * Слой огня поверх раскраски солдата
+ *
+ * Своя картинка - один кадр, игровая - лист из 121. Повтор плитки и скорость
+ * одни и те же: их задаёт материал игры, а не текстура.
+ */
+function showFire(force = false) {
+  const own = Object.values(userTextures || {})[0];
+  const base = sceneFire || {};
+  const spec = own
+    ? { frames: [api.fileUrl(own)], fps: 0, scale: base.scale || 1 }
+    : (base.atlas ? { ...base, atlas: api.fileUrl(base.atlas) } : null);
+  const key = JSON.stringify(spec);
+  if (!force && key === fireKey) return;
+  fireKey = key;
+  withViewer((w) => w.setFireOverlay && w.setFireOverlay(spec));
+}
 
 /**
  * Сцена спец-режима
  *
- * Спрей - просто картинка, показывать нечего. Крит - персонаж и билборд над
- * ним. Эффект смерти - тот же персонаж, но текстура ложится на него.
+ * Крит - персонаж и билборд над ним. Лёд и золото - тот же персонаж, но
+ * текстура ложится на него целиком. Огонь горит поверх его раскраски.
  */
 export function showSpecialScene(ev) {
   sceneKind = ev.scene_kind || 'none';
   sceneModelTex = ev.model_texture || '';
+  sceneFire = ev.fire || null;
   userTextures = {};
+  // Огонь прошлого режима: у льда и крита его нет
+  fireKey = '';
+  if (sceneKind !== 'fire') withViewer((w) => w.setFireOverlay && w.setFireOverlay(null));
   // Кнопки стилей прошлого предмета к спец-режиму не относятся: своего
   // события skins тут не будет, и они остались бы в ряду навсегда
   document.querySelectorAll('#skinbar .tag').forEach((b) => b.remove());
@@ -285,15 +312,17 @@ export function showSpecialAnimated(ev) {
     w.setViewRig(null);
     w.loadViewmodelAnimated(ev.scene, 0);
     if (sceneKind === 'crit') w.setCritSprite(url);
-    // У эффекта смерти игра ЗАМЕНЯЕТ материалы трупа целиком: одна картинка
-    // ложится на всё тело, а не по материалам
-    else if (url) w.updateTextureFromDataUrl(url);
+    // Лёд и золото: игра ЗАМЕНЯЕТ материалы трупа целиком, одна картинка
+    // ложится на всё тело, а не по материалам. Огонь - слой поверх них
+    else if (sceneKind !== 'fire' && url) w.updateTextureFromDataUrl(url);
   });
+  // Материалы сцены новые: слой огня надо повесить заново
+  if (sceneKind === 'fire') showFire(true);
   // Сообщение о сборке иначе висит поверх кадра до конца сеанса: своего
   // события «готово» у прогресса нет
   say('');
   // Текстуры персонажа приехали раньше сцены - разложить их некуда было
-  if (sceneKind === 'crit') refreshView();
+  if (sceneKind === 'crit' || sceneKind === 'fire') refreshView();
 }
 
 //: Что сейчас показывать в спец-сцене: своя картинка человека, иначе игровая
@@ -306,11 +335,12 @@ function specialTextureUrl() {
 /**
  * Текстура спец-сцены: у крита - билборд, у эффекта смерти - сам персонаж
  *
- * Возвращает true, если сцена забрала текстуру на себя и обычная раздача по
- * материалам не нужна.
+ * Что сцена забрала на себя: 'all' - всё, обычная раздача по материалам не
+ * нужна; 'card' - только картинку карточки, меши красятся своими текстурами;
+ * '' - ничего.
  */
 export function applySpecialTexture(textures) {
-  if (!sceneKind || sceneKind === 'none') return false;
+  if (!sceneKind || sceneKind === 'none') return '';
   userTextures = textures || {};
   const url = specialTextureUrl();
   if (sceneKind === 'crit') {
@@ -318,12 +348,17 @@ export function applySpecialTexture(textures) {
     // игровыми текстурами, и обычную раздачу по материалам перебивать нельзя
     // - иначе он остаётся серым
     withViewer((w) => w.updateCritHitTexture(url));
-    return false;
+    return 'card';
+  }
+  if (sceneKind === 'fire') {
+    // Огонь в игре не заменяет раскраску, а горит поверх неё
+    showFire();
+    return 'card';
   }
   // На кубиках-заглушке это тоже работает: текстура кладётся на все меши
   // сцены, чем бы она ни была
   withViewer((w) => w.updateTextureFromDataUrl(url));
-  return true;
+  return 'all';
 }
 
 /** Небо: шесть граней кубмапой вместо модели */

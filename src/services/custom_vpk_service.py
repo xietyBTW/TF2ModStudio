@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Callable, Tuple
 
 from src.shared.constants import ToolPaths, ToolTimeouts
 from src.shared.logging_config import get_logger
+from src.shared.validators import sanitize_path
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,11 @@ class CustomVPKService:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
+        outside = CustomVPKService._entry_outside(vpk_path, str(output_path))
+        if outside is not None:
+            logger.error(f"VPK не распакован: путь внутри ведёт наружу ({outside!r})")
+            return False
+
         # Попытка 1: vpk.exe x
         if CustomVPKService._extract_via_vpk_exe(vpk_path, str(output_path)):
             return True
@@ -42,6 +48,28 @@ class CustomVPKService:
 
         # Попытка 2: Python-библиотека vpk
         return CustomVPKService._extract_via_python_vpk(vpk_path, str(output_path))
+
+    @staticmethod
+    def _entry_outside(vpk_path: str, output_dir: str) -> Optional[str]:
+        """
+        Имя файла в архиве, которое легло бы вне папки распаковки
+
+        Мод чужой, а vpk.exe пишет файлы по именам из архива как есть: «..»
+        или диск в имени положили бы файл куда угодно. Архив, который
+        библиотека не читает, уходит в vpk.exe без этой проверки
+        """
+        try:
+            import vpk as vpklib
+            names = list(vpklib.open(vpk_path))
+        except Exception as exc:  # noqa: BLE001 - не читается, проверять нечего
+            logger.debug(f"Имена в {vpk_path} не прочитаны: {exc}")
+            return None
+        for name in names:
+            try:
+                sanitize_path(name.replace('\\', '/'), output_dir)
+            except ValueError:
+                return name
+        return None
 
     @staticmethod
     def _extract_via_vpk_exe(vpk_path: str, output_dir: str) -> bool:
@@ -105,7 +133,7 @@ class CustomVPKService:
                     entry = pak[file_path]
                     data = entry.read()
                     # Нормализуем разделители (VPK всегда хранит с '/')
-                    dest = output_path / Path(file_path.replace('\\', '/'))
+                    dest = Path(sanitize_path(file_path.replace('\\', '/'), str(output_path)))
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(data)
                     extracted += 1

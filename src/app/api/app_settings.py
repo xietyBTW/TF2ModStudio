@@ -289,10 +289,11 @@ def settings(lang: str = '') -> Dict[str, object]:
 
 
 def _cache_mb() -> float:
-    """Размер кэша декомпилированных моделей в мегабайтах"""
+    """Размер кэша моделей в мегабайтах: разобранные модели и запас превью"""
     try:
+        from src.services import preview_disk_cache
         from src.services.decompile_cache import get_cache_size_mb
-        return round(float(get_cache_size_mb()), 1)
+        return round(float(get_cache_size_mb()) + preview_disk_cache.size_mb(), 1)
     except Exception:                                         # noqa: BLE001
         return 0.0
 
@@ -305,10 +306,14 @@ def clear_model_cache() -> Dict[str, object]:
     собираются с прежней геометрией. Первая сборка каждого оружия после этого
     будет медленнее - кэш ради того и живёт
     """
+    from src.services import preview_disk_cache
     from src.services.decompile_cache import clear_cache
 
     was = _cache_mb()
     removed = int(clear_cache())
+    # Запас превью собран из тех же моделей: без них его записи не найти.
+    # В счёт удалённых не идёт - человеку показывают число моделей
+    preview_disk_cache.clear()
     return {'removed': removed, 'freed_mb': was}
 
 

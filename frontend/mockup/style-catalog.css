@@ -113,7 +113,7 @@
 .pick.is-active .pick__box { border-color: var(--accent); }
 
 /* Обложка специального режима: свой значок вместо картинки из рюкзака (её у
-   спрея и эффектов смерти нет - см. catalog.js -> SPECIAL_ART)
+   крита и эффектов смерти нет - см. catalog.js -> SPECIAL_ART)
 
    Размер долей от рамки, а не в пикселях: та же обложка бывает и во всю плитку
    каталога, и меткой в 26 px у имени в прибитой панели. А вот линия долей быть
@@ -135,8 +135,6 @@
   stroke-linejoin: round;
 }
 .pick__art * { vector-effect: non-scaling-stroke; }
-/* Заливка только у капель баллончика - как у точек на кубике «Случайно» */
-.pick__art .pick__drop { fill: currentColor; stroke: none; }
 .pick:hover .pick__art { color: var(--ink); }
 .pick.is-active .pick__art { color: var(--accent); }
 .pick__name { font-size: 13px; }

@@ -17,7 +17,7 @@ Every guide exists in English and Russian. The two versions describe the same ap
 | [War Paint](en/war-paint.md) | Baking an in-game War Paint into a texture, wear and seed, universal mode, arranging patterns by part |
 | [Materials and effects](en/materials.md) | Material maps, normal maps, the VMT editor with its presets, game paint in VMT, hidden materials |
 | [Custom models](en/custom-models.md) | Replacing a model with SMD, OBJ or GLB, the two import modes, fitting, QC, game limits, festive lights |
-| [Characters, effects and skyboxes](en/special-items.md) | Class bodies and hands, Spy masks, crit text, sprays, death effects, projectiles, pickups, taunt props, skyboxes |
+| [Characters, effects and skyboxes](en/special-items.md) | Class bodies and hands, Spy masks, crit text, death effects, projectiles, pickups, taunt props, skyboxes |
 | [Particle editor](en/particles.md) | Finding effects, simple and expert modes, systems and modules, control points, textures, building, casual limits |
 | [Sounds](en/sounds.md) | Finding the right entry, replacing files, formats the game accepts, building a sound mod |
 | [Works, drafts and the mod library](en/works-and-mods.md) | Saving work, drafts, undo, opening VPK mods, merging mods |
@@ -36,7 +36,7 @@ Every guide exists in English and Russian. The two versions describe the same ap
 | [War Paint](ru/war-paint.md) | Запекание игрового War Paint в текстуру, износ и сид, универсальный режим, раскладка узоров по деталям |
 | [Материалы и эффекты](ru/materials.md) | Карты материала, карта нормалей, редактор VMT и готовые эффекты, краска игры в VMT, скрытые материалы |
 | [Своя модель](ru/custom-models.md) | Замена модели на SMD, OBJ или GLB, два режима загрузки, подгонка, QC, лимиты игры, праздничные гирлянды |
-| [Персонажи, эффекты и небо](ru/special-items.md) | Тела и руки классов, маски Шпиона, надпись крита, спрей, эффекты смерти, снаряды, аптечки, реквизит насмешек, небо |
+| [Персонажи, эффекты и небо](ru/special-items.md) | Тела и руки классов, маски Шпиона, надпись крита, эффекты смерти, снаряды, аптечки, реквизит насмешек, небо |
 | [Редактор частиц](ru/particles.md) | Поиск эффектов, обычный и экспертный режимы, системы и модули, контрольные точки, текстуры, сборка, ограничения казуала |
 | [Звуки](ru/sounds.md) | Как найти нужную запись, замена файлов, какие форматы принимает игра, сборка звукового мода |
 | [Работы, черновики и библиотека модов](ru/works-and-mods.md) | Сохранение работы, черновики, отмена правок, открытие VPK-модов, объединение модов |

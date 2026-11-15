@@ -138,7 +138,7 @@ def tint(cards: list, vmt_texts: Dict[str, str], misc_vpk: str) -> None:
             table = table or game_texture_index.load(misc_vpk)
             text = game_vmt_text(misc_vpk, game_texture_index.vmt_for(card['vtf_path'], table))
         if card.get('preview_png'):
-            vmt_tint.apply_to_png(card['preview_png'], vmt_tint.parse_tint(text))
+            vmt_tint.apply_to_png(card['preview_png'], vmt_tint.preview_tint(text))
 
 
 def _vmt_by_path(rel: str, vmt_texts: Dict[str, str], misc_vpk: str) -> str:

@@ -193,7 +193,7 @@ export async function showModel(ev) {
   try {
     const obj = await (await fetch(api.fileUrl(ev.obj))).text();
     const b = ev.bounds || { cx: 0, cy: 0, cz: 0, scale: 1 };
-    w.loadModelFromContent(obj, ev.texture ? api.fileUrl(ev.texture) : '',
+    w.loadModelFromContent(obj, ev.texture ? api.texUrl(ev.texture, ev.stamps) : '',
                            b.cx, b.cy, b.cz, b.scale, 0);
     bindParts(w);
     bindFitViewer(w);
@@ -268,8 +268,9 @@ export function wearCard(name) {
   wornMeshes = Object.keys(map);
   const all = { ...back, ...map };
   if (!Object.keys(all).length) return;
+  const stamps = lastView && lastView.stamps;
   withViewer((w) => w.applyMaterialMap(Object.fromEntries(
-    Object.entries(all).map(([mat, png]) => [mat, api.fileUrl(png)]))));
+    Object.entries(all).map(([mat, png]) => [mat, api.texUrl(png, stamps)]))));
 }
 
 /**
@@ -307,24 +308,29 @@ export function applyView(st) {
     ([card, png]) => (st.card_scene?.[card] || [card]).map((mesh) => [mesh, png]));
   const worn = wornCard();
   wornMeshes = Object.keys(worn);
+  // Сцена крита и огня берёт картинку карточки себе (билборд, слой огня):
+  // на меши она лечь не должна, иначе солдат до прихода своих текстур
+  // стоял бы целиком в ней
+  const taken = applySpecialTexture(st.textures);
   const entries = Object.entries({ ...(st.scene || st.textures), ...worn,
-                                   ...Object.fromEntries(trial) });
+                                   ...Object.fromEntries(trial) })
+    .filter(([mat]) => taken !== 'card' || mat !== SINGLE_TEX);
   const single = entries.length === 1 && entries[0][0] === SINGLE_TEX;
 
   // Куски своих материалов частей - до раздачи: текстуры ищут меши по имени
   withViewer((w) => w.setPartMaterials(st.part_materials || {}));
 
-  if (applySpecialTexture(st.textures)) {
+  if (taken === 'all') {
     // Сцена сама решила, куда положить картинку: обычная раздача по
     // материалам здесь только испортила бы её
   } else withViewer((w) => {
     if (single) {
-      w.updateTextureFromDataUrl(api.fileUrl(entries[0][1]));
+      w.updateTextureFromDataUrl(api.texUrl(entries[0][1], st.stamps));
     } else if (entries.length) {
       // applyMaterialMap ждёт ОБЪЕКТ, несмотря на имя параметра texMapJson:
       // внутри он делает Object.entries. Строка перебиралась бы посимвольно
       w.applyMaterialMap(Object.fromEntries(
-        entries.map(([mat, png]) => [mat, api.fileUrl(png)])));
+        entries.map(([mat, png]) => [mat, api.texUrl(png, st.stamps)])));
     }
     // Раздача текстур останавливает анимацию во вьювере, если на сцене всё
     // ещё та склейка, для которой считались кадры, - запускаем их заново
@@ -388,7 +394,7 @@ export function applyView(st) {
     !(modeControls.replace_model && st.custom_keep);
 
   // «Разделить на части» - только когда модель и правда в сцене. Признак
-  // держит Python (`can_split`): у скайбокса и спрея модели нет вовсе, а до
+  // держит Python (`can_split`): у скайбокса модели нет вовсе, а до
   // прихода model_ready её ещё нет - и кнопка обещала бы действие, которого
   // сделать нельзя. Режим при этом спрашиваем свой (`split_parts`), а не
   // подмену модели: тело класса не подменить, а разделить - можно.
@@ -462,7 +468,7 @@ function acceptModelDrop(material, file) {
 }
 
 // Вьювер живёт в своём iframe и перезагружается со сменой сцены: крючок
-// ставим на каждую загрузку, а не только когда приехала модель (у спрея и
+// ставим на каждую загрузку, а не только когда приехала модель (у
 // эффектов смерти её нет)
 function bindModelDrop() {
   const w = viewer();

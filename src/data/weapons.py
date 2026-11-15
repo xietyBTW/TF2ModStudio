@@ -393,7 +393,6 @@ TF2_WEAPONS = {
 # Специальные режимы (эффекты). Только значения нужны везде (mode in SPECIAL_MODES)
 SPECIAL_MODES = (
     "critHIT",
-    "spray",
     # Скины эффектов смерти (override игровых материалов рагдолла, client-side):
     "death_ice",    # лёд (как от Sky-cicle)    -> models/player/shared/ice_player
     "death_gold",   # золото (Golden Pan/Saxxy) -> models/player/shared/gold_player

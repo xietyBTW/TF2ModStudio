@@ -36,7 +36,7 @@ Masks are built at the game's own material paths, without the sv_pure workaround
 
 ## Special
 
-The **Special** category has five items that aren't models: the crit text, the spray and three death effects. They have no **Replace model**, no parts and no VMT editor, and their VTF flags are locked.
+The **Special** category has four items that aren't models: the crit text and three death effects. They have no **Replace model**, no parts and no VMT editor, and their VTF flags are locked.
 
 ### Crit
 
@@ -48,21 +48,21 @@ The text that pops up over a target on a critical hit. The preview plays a real 
 
 The game tints the crit text with a fixed color through its particle effect. To keep the colors of your image, the mod also carries a copy of the game's `crit.pcf` with that color removed. The app makes this copy from the file in your game installation.
 
-### Spray
-
-A 256 × 256 image with transparency. The resolution is fixed, and so is the format. The preview has no model, so it just shows the image in the frame.
-
 ### Death effects: Ice, Gold, Fire
 
-These replace the textures the game puts on a dying player:
+These replace the textures the game puts on a dying or burning player:
 
 | Effect | When it appears in game |
 |---|---|
 | **Death effect: Ice** | A player is frozen into an ice statue, for example by the Spy-cicle. |
 | **Death effect: Gold** | A player is turned into a golden statue, for example by the Golden Frying Pan. |
-| **Death effect: Fire** | The flames on a burning player. |
+| **Death effect: Fire** | The fire that plays over a burning player, alive or dead. |
 
-The preview shows a Soldier playing the matching death animation: a backstab for ice and gold, burning for fire. Your image covers the whole body, because that's what the game does: it replaces all of the corpse's materials with this one. Until you add an image, the preview shows the game's texture.
+The preview shows a Soldier playing the matching animation: a backstab for ice and gold, burning for fire. Until you add an image, the preview shows the game's texture.
+
+For ice and gold your image covers the whole body, because that's what the game does: it replaces all of the corpse's materials with this one.
+
+Fire works differently. The game keeps the player's own textures and adds the fire on top of them as a glowing layer, tiled five times across the model. The preview does the same: the Soldier stays in his uniform and the fire plays over it. The layer flares up in 0.3 seconds and fades out over ten, as in game, then the preview lights him again. Black areas of your image add nothing, so black means no fire there. The game's fire has 121 frames; your image replaces them with a single still frame.
 
 The mod contains only the VTF. The game's own material for these effects relies on special shaders and proxies, and a custom VMT would break them, so the app keeps the game's VMT and lets it pick up your texture from the same path.
 

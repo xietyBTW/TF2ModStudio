@@ -18,7 +18,7 @@ def model_key_for(mode: str) -> Optional[str]:
     """
     Ключ, по которому воркер ищет модель, либо None - показывать нечего
 
-    None означает не ошибку, а «для этого режима 3D-модели нет»: спрей,
+    None означает не ошибку, а «для этого режима 3D-модели нет»: крит,
     пустой выбор и режимы, где геометрию задаёт сам пользователь
     """
     if not mode:
@@ -43,7 +43,7 @@ def model_key_for(mode: str) -> Optional[str]:
         return SPY_MDL_PATH
 
     if mode in SPECIAL_MODES:
-        return None            # спрей, critHIT, эффекты смерти - модели нет
+        return None            # critHIT, эффекты смерти - модели нет
 
     if '_' in mode:
         # Обычное оружие: режим «класс_ключ», нужен только ключ

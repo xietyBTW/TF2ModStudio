@@ -235,15 +235,15 @@ class DeathScenePreviewWorker(BaseWorker):
     def _emit_scene(self, reader, scene: dict, player_dir: str) -> None:
         """Текстуры персонажа и сама сцена
 
-        У эффекта смерти своих текстур персонаж не получает: лёд, золото и
-        огонь в игре ЗАМЕНЯЮТ его материалы целиком, и одна картинка ложится
-        на всё тело. Доставать под неё родные текстуры - лишняя работа и гонка
-        за то, какая ляжет последней
+        У застывшей статуи своих текстур нет: лёд и золото в игре ЗАМЕНЯЮТ
+        материалы трупа целиком, и одна картинка ложится на всё тело.
+        Доставать под неё родные текстуры - лишняя работа и гонка за то,
+        какая ляжет последней. Горящий остаётся в своей раскраске: огонь -
+        слой поверх неё
         """
-        from src.data.weapons import VTF_ONLY_SPECIAL_MODES
         from src.services.viewmodel_worker import _cdmaterials, _scene_materials
 
-        if self.mode in VTF_ONLY_SPECIAL_MODES:
+        if self.mode in FROZEN:
             self.animated_ready.emit(scene)
             return
 

@@ -13,11 +13,11 @@ CATEGORY_KEYS = ('weapon', 'character', 'special', 'projectile',
                  'pickup', 'taunt', 'skybox', 'custom')
 
 #: Категория -> режим сборки по умолчанию. Подтип может его уточнить
-#: (персонаж: тело/руки/маски, специальное: спрей/critHIT)
+#: (персонаж: тело/руки/маски, специальное: critHIT или эффект смерти)
 _CATEGORY_MODE = {
     'weapon': 'normal',
     'character': 'body',
-    'special': 'spray',
+    'special': 'critHIT',
     'projectile': 'normal',
     'pickup': 'normal',
     'taunt': 'normal',
@@ -203,7 +203,7 @@ def items(category: str = 'weapon', tf2_class: Optional[str] = None,
         from src.data.weapons import SPECIAL_MODES
         # Подписи те же, что в приложении: ключ режима человеку ничего не
         # говорит («death_ice» вместо «Эффект смерти: Лёд»)
-        labels = {'critHIT': 'special_crit', 'spray': 'special_spray',
+        labels = {'critHIT': 'special_crit',
                   'death_ice': 'special_death_ice',
                   'death_gold': 'special_death_gold',
                   'death_fire': 'special_death_fire'}
@@ -310,7 +310,6 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     from src.data.weapons import VTF_ONLY_SPECIAL_MODES
     from src.shared.validators import suggest_vpk_name
 
-    is_spray = mode == 'spray'
     # Эффекты смерти показываются ТОЙ ЖЕ сценой, что и крит (персонаж плюс
     # текстура), и в приложении их накрывает один флаг `_crithit_mode`. Значит
     # и правила показа у них общие: модель подменять нечем, стилей нет
@@ -319,8 +318,7 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     is_hands = bool(mode) and mode in HAND_MODE_KEYS
     is_body = bool(mode) and mode in PLAYER_BODY_MODE_KEYS
     is_spy_mask = mode == SPY_MASK_MODE_KEY
-    is_normal = bool(mode) and not (is_spray or is_crit or is_skybox
-                                    or is_hands or is_body)
+    is_normal = bool(mode) and not (is_crit or is_skybox or is_hands or is_body)
     # Предмет оружия из каталога (не снаряд и не реквизит насмешки)
     held_weapon = (is_normal and kind_of(mode).is_weapon
                    and not category_of_mode(mode))
@@ -338,13 +336,12 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     return {
         'mode': mode,
         # Панель сборки
-        'resolutions': ['256'] if is_spray else ['256', '512', '1024', '2048'],
+        'resolutions': ['256', '512', '1024', '2048'],
         # Список ВСЕГДА конкретный. `allowed_formats_for_mode` возвращает None
         # там, где ограничений нет, и это значило «покажи полный список» -
         # окно приложения его знало (VTF_FORMATS), а страница держала свою
         # копию из четырёх штук в разметке. Итого из 26 форматов было видно 4
         'formats': allowed_formats_for_mode(mode) or list(VTF_FORMATS),
-        'format_locked': is_spray,
         # Имя VPK по предмету: в разметке стояло одно на всех
         # («scattergun_mod.vpk»), и топор собирался под именем скаттергана.
         # Считаем здесь, потому что имя обязано пройти validate_vpk_filename
@@ -356,7 +353,7 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         'flags': [{'key': key, 'label': label, 'adv': adv,
                    'on': allowed_flags is None or key in allowed_flags}
                   for key, label, adv in VTF_FLAGS],
-        'flags_enabled': not (is_spray or is_crit),
+        'flags_enabled': not is_crit,
         'gamma': allowed_flags is None,
         'normal_map': model_like and not is_crit,
         'material_maps': model_like and not is_crit,
@@ -370,14 +367,14 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         'extract_model': model_like,
         'extract_texture': model_like,
         # Превью
-        # Модель подменять можно только там, где она есть: у спрея, крита и
+        # Модель подменять можно только там, где она есть: у крита и
         # эффектов смерти её нет вовсе, у неба - грани вместо неё.
         # Пустой режим - предмет ещё не выбран: страница спрашивает правила
         # на старте, и без этого «Заменить модель» висела над пустым кадром
-        'load_model': bool(mode) and not (is_crit or is_skybox or is_spray),
+        'load_model': bool(mode) and not (is_crit or is_skybox),
         # Руки сборка своей моделью не собирает (VPKService.build_vpk), и
         # кнопка обещала бы подмену, которой в моде не будет
-        'replace_model': bool(mode) and not (is_crit or is_skybox or is_spray
+        'replace_model': bool(mode) and not (is_crit or is_skybox
                                              or is_body or is_hands),
         # Деление на части - про ГЕОМЕТРИЮ, а не про подмену модели: делить
         # можно всё, что приехало декомпиляцией, включая тела классов и руки
@@ -396,12 +393,12 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         'warpaint': (is_normal and kind_of(mode).is_weapon
                      and not category_of_mode(mode)),
         'misc': not (is_hands or is_spy_mask),
-        # Редактор VMT - там, где материал модели: у спрея, крита и неба
+        # Редактор VMT - там, где материал модели: у крита и неба
         # своего VMT нет (то же правило, что в `materials.vmt_target`). У мода из VPK
         # правится VMT самого мода. Без признака кнопка висела под пустым
         # альбомом до выбора предмета
         'vmt_editor': model_like,
-        'styles': not (is_spray or is_crit or is_skybox),
+        'styles': not (is_crit or is_skybox),
         # Команды и вариант зависят от загруженной модели, не от режима:
         # маски шпиона прячут их безусловно, остальное решает контроллер
         'teams': not is_spy_mask,

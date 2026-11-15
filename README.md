@@ -18,7 +18,7 @@ The app does the tedious part on its own. It finds the model and textures in the
 | Bake an in-game War Paint into a texture and keep painting on top of it | **War Paint** | [War Paint](docs/en/war-paint.md) |
 | Add glow, gloss, reflections, transparency or surface relief | **Material maps**, **VMT**, build options | [Materials and effects](docs/en/materials.md) |
 | Replace a weapon model with your own SMD, OBJ or GLB | **Replace model** | [Custom models](docs/en/custom-models.md) |
-| Reskin class bodies and hands, Spy masks, the crit text, sprays, death effects, skyboxes | **Weapons**, category list | [Characters, effects and skyboxes](docs/en/special-items.md) |
+| Reskin class bodies and hands, Spy masks, the crit text, death effects, skyboxes | **Weapons**, category list | [Characters, effects and skyboxes](docs/en/special-items.md) |
 | Edit particle effects, unusuals included | **Particles** | [Particle editor](docs/en/particles.md) |
 | Replace weapon sounds, voice lines and world sounds | **Sounds** | [Sounds](docs/en/sounds.md) |
 | Find out why a mod doesn't show up in game | **Diagnostics** | [Installing mods and troubleshooting](docs/en/troubleshooting.md) |
@@ -88,7 +88,7 @@ The full guide set is in [`docs/`](docs/README.md).
 
 ## Casual servers and sv_pure
 
-Valve's casual servers run with `sv_pure`, which makes the game ignore most custom files. For skins that live on a model (weapons, cosmetics, class bodies and hands, projectiles, pickups, taunt props) the app uses a known workaround: it moves the model's materials into a folder that `sv_pure` lets through. Skyboxes, sounds, particle effects, Spy disguise masks and the crit, spray and death effect skins don't go through it. Details and caveats are in [troubleshooting](docs/en/troubleshooting.md#casual-servers-and-sv_pure).
+Valve's casual servers run with `sv_pure`, which makes the game ignore most custom files. For skins that live on a model (weapons, cosmetics, class bodies and hands, projectiles, pickups, taunt props) the app uses a known workaround: it moves the model's materials into a folder that `sv_pure` lets through. Skyboxes, sounds, particle effects, Spy disguise masks and the crit and death effect skins don't go through it. Details and caveats are in [troubleshooting](docs/en/troubleshooting.md#casual-servers-and-sv_pure).
 
 ## Building from source
 

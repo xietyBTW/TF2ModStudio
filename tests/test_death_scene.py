@@ -11,16 +11,14 @@ from __future__ import annotations
 
 import unittest
 
-from src.data.weapons import SPECIAL_MODES, VTF_ONLY_SPECIAL_MODES
+from src.data.weapons import SPECIAL_MODES
 from src.services import death_scene_worker as dsw
 
 
 class SequenceTests(unittest.TestCase):
 
-    def test_every_special_mode_but_spray_has_a_death(self):
-        """Спрей - это одна картинка, персонажа в нём нет"""
-        self.assertEqual(sorted(dsw.SEQUENCES),
-                         sorted(m for m in SPECIAL_MODES if m != 'spray'))
+    def test_every_special_mode_has_a_scene(self):
+        self.assertEqual(sorted(dsw.SEQUENCES), sorted(SPECIAL_MODES))
 
     def test_ice_and_gold_share_the_backstab(self):
         """Золотая статуя и ледяная - это застывшее тело, смерть одна"""
@@ -75,14 +73,59 @@ class MaterialTests(unittest.TestCase):
         worker._emit_scene(None, {'parts': []}, '')
         return [name for name, _ in sent]
 
-    def test_death_effect_skips_the_players_own_textures(self):
-        """Лёд, золото и огонь ЗАМЕНЯЮТ материалы трупа целиком
+    def test_statue_skips_the_players_own_textures(self):
+        """Лёд и золото ЗАМЕНЯЮТ материалы трупа целиком
 
         Родные текстуры под ними не видны, а их поиск - лишняя работа и гонка
         за то, какая картинка ляжет последней
         """
-        for mode in VTF_ONLY_SPECIAL_MODES:
+        for mode in dsw.FROZEN:
             self.assertEqual(self._emitted(mode), ['scene'], mode)
+
+    def test_burning_player_keeps_his_own_textures(self):
+        """Огонь в игре - слой поверх раскраски, а не замена: солдату его
+        текстуры нужны так же, как в сцене крита"""
+        self.assertEqual(self._emitted('death_fire'), self._emitted('critHIT'))
+        self.assertIn('hints', self._emitted('death_fire'))
+
+
+class FireSheetTests(unittest.TestCase):
+    """Кадры игрового огня едут вьюверу одним листом"""
+
+    def test_frames_are_laid_out_row_by_row(self):
+        import os
+        import tempfile
+        from unittest.mock import patch
+
+        from PIL import Image
+
+        from src.services import special_scene_service as scene
+
+        frames = [bytes([i * 40, 0, 0, 255]) * 4 for i in range(5)]   # 2x2 каждый
+        vtf = os.path.join(tempfile.mkdtemp(), 'fire.vtf')
+        open(vtf, 'wb').close()
+        with patch.object(scene, '_game_vtf_file', return_value=vtf), \
+             patch('src.services.vtflib_wrapper.VTFLib.read_vtf_all_frames',
+                   return_value=(frames, 2, 2)):
+            sheet = scene.fire_overlay(['misc.vpk'])
+
+        self.assertEqual((sheet['cols'], sheet['rows'], sheet['count']), (3, 2, 5))
+        self.assertEqual((sheet['fps'], sheet['scale']), (30, 5))
+        with Image.open(sheet['atlas']) as img:
+            self.assertEqual(img.size, (6, 4))
+            self.assertEqual([img.getpixel(xy)[0] for xy in
+                              ((0, 0), (2, 0), (4, 0), (0, 2), (2, 2))],
+                             [0, 40, 80, 120, 160])
+            self.assertEqual(img.getpixel((4, 2)), (0, 0, 0, 0))    # пустая клетка
+        self.assertFalse(os.path.exists(vtf), "временный VTF убран")
+
+    def test_no_game_texture_means_no_sheet(self):
+        from unittest.mock import patch
+
+        from src.services import special_scene_service as scene
+
+        with patch.object(scene, '_game_vtf_file', return_value=''):
+            self.assertEqual(scene.fire_overlay(['misc.vpk']), {})
 
 
 class _Spy:

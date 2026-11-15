@@ -22,13 +22,16 @@ UV:
 """
 
 import hashlib
+import json
 import os
 import re
+import tempfile
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from src.services import preview_disk_cache
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +96,50 @@ def _convert_key(parts: Sequence[MeshPart], obj_path: str, source_zup: bool,
     # Имя файла входит в OBJ ссылкой на MTL
     raw = repr((items, os.path.basename(obj_path), source_zup, keep_source_axes))
     return hashlib.blake2b(raw.encode('utf-8'), digest_size=16).digest()
+
+
+def _keep_recent(key: bytes, made: Tuple[bytes, bytes, Tuple[str, ...]]) -> None:
+    with _recent_lock:
+        _recent[key] = made
+        while len(_recent) > _RECENT_MAX:
+            _recent.popitem(last=False)
+
+
+def _keeps_on_disk(parts: Sequence[MeshPart]) -> bool:
+    """
+    Класть ли OBJ в запас на диске (preview_disk_cache)
+
+    Только модели из постоянных папок. У своей модели и у копии с подменой
+    деталей путь временный и больше не повторится: запись легла бы зря
+    """
+    temp = os.path.normcase(os.path.abspath(tempfile.gettempdir())) + os.sep
+    return not any(
+        os.path.normcase(os.path.abspath(path)).startswith(temp)
+        for part in parts for path in (part.smd_path, *part.extra_smd_paths))
+
+
+def _to_blob(made: Tuple[bytes, bytes, Tuple[str, ...]]) -> bytes:
+    """OBJ, MTL и материалы одной записью: строка-заголовок и оба файла подряд"""
+    obj_bytes, mtl_bytes, names = made
+    head = json.dumps({"names": list(names), "obj": len(obj_bytes),
+                       "mtl": len(mtl_bytes)})
+    return head.encode("ascii") + b"\n" + obj_bytes + mtl_bytes
+
+
+def _from_blob(blob: Optional[bytes]) -> Optional[Tuple[bytes, bytes, Tuple[str, ...]]]:
+    """Запись обратно; None, если её нет или она не сходится с заголовком"""
+    if not blob:
+        return None
+    head, sep, body = blob.partition(b"\n")
+    try:
+        info = json.loads(head)
+        names = tuple(str(name) for name in info["names"])
+        obj_size, mtl_size = int(info["obj"]), int(info["mtl"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not sep or obj_size <= 0 or mtl_size < 0 or len(body) != obj_size + mtl_size:
+        return None
+    return body[:obj_size], body[obj_size:], names
 
 
 class SmdToObjService:
@@ -189,6 +236,11 @@ class SmdToObjService:
             hit = _recent.get(key) if key else None
             if hit:
                 _recent.move_to_end(key)
+        on_disk = key is not None and _keeps_on_disk(parts)
+        if not hit and on_disk:
+            hit = _from_blob(preview_disk_cache.get('obj', key))
+            if hit:
+                _keep_recent(key, hit)
         if hit:
             obj_bytes, mtl_bytes, names = hit
             os.makedirs(os.path.dirname(obj_path) or '.', exist_ok=True)
@@ -205,10 +257,10 @@ class SmdToObjService:
                 obj_bytes = f.read()
             with open(mtl_path, 'rb') as f:
                 mtl_bytes = f.read()
-            with _recent_lock:
-                _recent[key] = (obj_bytes, mtl_bytes, tuple(names))
-                while len(_recent) > _RECENT_MAX:
-                    _recent.popitem(last=False)
+            made = (obj_bytes, mtl_bytes, tuple(names))
+            _keep_recent(key, made)
+            if on_disk:
+                preview_disk_cache.put('obj', key, _to_blob(made))
         return ok, names
 
     @staticmethod

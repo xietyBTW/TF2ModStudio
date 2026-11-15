@@ -163,6 +163,81 @@ def test_with_mask_empty_and_from_original(tmp_path):
     assert alpha.getpixel((0, 0)) > 128 and alpha.getpixel((7, 7)) < 16
 
 
+PROXY = CRLF.join(['"VertexLitGeneric"', "{", '\t"$color2"\t\t"{255 0 0}"',
+                   '\t"$colortint_base"\t\t"{39 161 255}"',
+                   '\t"Proxies"', "\t{", '\t\t"ItemTintColor"', "\t\t{",
+                   '\t\t\t"resultVar"\t"$colortint_tmp"', "\t\t}", "\t}", "}"])
+
+
+def test_preview_tint_keeps_the_masked_paint():
+    text = _vmt(blendtintbybasealpha=1, colortint_base="{ 189 59 59 }",
+                blendtintcoloroverbase="0.25")
+    assert vmt_tint.preview_tint(text) == vmt_tint.parse_tint(text)
+    assert vmt_tint.preview_tint("") is None
+
+
+def test_preview_tint_masks_translucent_materials_too():
+    """Забрало «Рыцаря Туфорта»: `$translucent` и маска краски вместе. Шейдер
+    при маске берёт прозрачность не из альфы текстуры, и команды отличаются
+    только цветом. Сборке (`parse_tint`) такой материал по-прежнему не красить"""
+    text = _vmt(blendtintbybasealpha=1, translucent=1, additive=1,
+                colortint_base="{ 24 35 61 }")
+    assert vmt_tint.parse_tint(text) is None
+    assert vmt_tint.preview_tint(text) == vmt_tint.TintSpec((24, 35, 61), 0.0)
+
+
+def test_preview_tint_multiplies_whole_picture_without_mask():
+    """Огонёк Doublecross-Comm: маски нет, цвет множит всю картинку"""
+    spec = vmt_tint.preview_tint(_vmt(blendtintbybasealpha=0, color2="{255 0 0}"))
+    assert spec == vmt_tint.TintSpec((255, 0, 0), whole=True, fixed=True)
+    assert vmt_tint.parse_tint(_vmt(color2="{255 0 0}")) is None
+
+
+def test_preview_tint_takes_proxy_color_over_color2():
+    """Прокси ItemTintColor в игре подставляет `$colortint_base` вместо
+    написанного `$color2`, и такой цвет меняет банка краски"""
+    assert vmt_tint.preview_tint(PROXY) == vmt_tint.TintSpec((39, 161, 255), whole=True)
+    # Без прокси `$colortint_base` ничего не значит
+    assert vmt_tint.preview_tint(_vmt(colortint_base="{39 161 255}")) is None
+
+
+def test_preview_tint_ignores_color2_overwritten_by_a_proxy():
+    """У Sightseer `$color2 {0 0 0}`, но прокси Equals каждый кадр пишет в
+    него YellowLevel: в игре шапка не чёрная"""
+    text = CRLF.join(['"VertexLitGeneric"', "{", '\t"$color2"\t\t"{ 0 0 0 }"',
+                      '\t"proxies"', "\t{", '\t\t"Equals"', "\t\t{",
+                      '\t\t\t"srcVar1"\t\t"$yellow"',
+                      '\t\t\t"resultVar"\t\t"$color2"', "\t\t}", "\t}", "}"])
+    assert vmt_tint.preview_tint(text) is None
+
+
+def test_preview_tint_ignores_white():
+    assert vmt_tint.preview_tint(_vmt(color2="{ 255 255 255 }")) is None
+    assert vmt_tint.preview_tint(_vmt(phong=1)) is None
+
+
+def test_whole_tint_multiplies_and_keeps_alpha(tmp_path):
+    Image = pytest.importorskip("PIL.Image")
+    path = _sample(tmp_path, (200, 100, 50), 77)
+    spec = vmt_tint.TintSpec((255, 128, 0), whole=True)
+    assert vmt_tint.apply_to_png(path, spec)
+    with Image.open(path) as img:
+        px = img.convert("RGBA").getpixel((0, 0))
+    assert px[0] == 200 and abs(px[1] - 50) <= 1 and px[2] == 0
+    assert px[3] == 77, "без маски альфа остаётся прозрачностью"
+    # Банка краски перекрашивает так же, на всю картинку
+    assert vmt_tint.paintable(path) == spec
+    with Image.open(vmt_tint.raw_of(path)) as raw:
+        assert raw.convert("RGBA").getpixel((0, 0)) == (200, 100, 50, 77)
+
+
+def test_fixed_tint_is_not_offered_to_paint_cans(tmp_path):
+    """Цвет без прокси вписан в материал: банка его в игре не меняет"""
+    path = _sample(tmp_path, (200, 100, 50), 255)
+    assert vmt_tint.apply_to_png(path, vmt_tint.TintSpec((0, 255, 0), whole=True, fixed=True))
+    assert vmt_tint.paintable(path) is None
+
+
 def test_color_name():
     # Цвет Коровьего Мангла из его VMT ({183 56 61}) - красный
     assert vmt_tint.color_name((183, 56, 61), "ru") == "красный"

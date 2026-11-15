@@ -21,10 +21,12 @@
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from src.services import vmt_parse
+from src.services.vtf_preview_service import PREVIEW_PNG_COMPRESS
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -32,12 +34,21 @@ logger = get_logger(__name__)
 #: Разбор цвета VMT - общий (фигурные скобки 0-255, квадратные - доли)
 parse_color = vmt_parse.parse_color
 
+#: Прокси, который пишет в `$color2`: написанное в VMT значение при нём не действует
+_COLOR2_WRITTEN = re.compile(r'resultvar"?\s+"?\$color2\b', re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class TintSpec:
     """Как красить текстуру: цвет и насколько он перекрывает базовый"""
     color: Tuple[int, int, int]
     over_base: float = 0.0
+    #: Цвет множит всю картинку, а альфа остаётся как была: без
+    #: `$blendtintbybasealpha` цвет VMT ложится не по маске
+    whole: bool = False
+    #: Цвет вписан в сам материал: прокси ItemTintColor нет, и банка краски
+    #: его в игре не меняет
+    fixed: bool = False
 
     @property
     def is_neutral(self) -> bool:
@@ -61,12 +72,50 @@ def parse_tint(vmt_text: str) -> Optional[TintSpec]:
     # просит прозрачность, альфу считаем прозрачностью и не трогаем
     if vmt.flag("translucent") or vmt.flag("alphatest"):
         return None
+    return _masked(vmt)
 
+
+def _masked(vmt) -> TintSpec:
+    """Краска по альфе текстуры (`$blendtintbybasealpha`)"""
     color = vmt.color("colortint_base") or vmt.color("color2")
     if color is None:
         color = (255, 255, 255)     # краски нет, но альфа-маска всё равно есть
     over_base = vmt.number("blendtintcoloroverbase", 0.0) or 0.0
     return TintSpec(color, max(0.0, min(1.0, over_base)))
+
+
+def preview_tint(vmt_text: str) -> Optional[TintSpec]:
+    """
+    Краска материала для превью: всё, чем цвет VMT меняет картинку в игре
+
+    Шире `parse_tint`, по которому сборка решает про маску краски. Шейдер
+    моделей (skin_ps20b.fxc в SDK) красит двумя способами:
+
+    * с `$blendtintbybasealpha` - по альфе текстуры. Прозрачность при этом
+      берётся не из неё, так что `$translucent` маске не мешает: у «Рыцаря
+      Туфорта» так светится забрало, красным или синим по команде;
+    * без него - множит цветом всю картинку. У Doublecross-Comm огонёк
+      гарнитуры отличается у команд только этим цветом
+
+    Написанный `$color2` действует, только пока его не переписывают прокси.
+    С ItemTintColor в него попадает `$colortint_base` (и тогда цвет меняет
+    банка краски). Остальные шаблоны кладут туда YellowLevel, обычно белый:
+    у Sightseer в VMT стоит `$color2 {0 0 0}`, а шапка не чёрная
+    """
+    if not vmt_text:
+        return None
+    vmt = vmt_parse.parse(vmt_text)
+    if vmt.flag("blendtintbybasealpha"):
+        return _masked(vmt)
+    if "itemtintcolor" in vmt_text.lower():
+        color, fixed = vmt.color("colortint_base") or vmt.color("color2"), False
+    elif _COLOR2_WRITTEN.search(vmt_text):
+        return None
+    else:
+        color, fixed = vmt.color("color2"), True
+    if color is None or color == (255, 255, 255):
+        return None
+    return TintSpec(color, whole=True, fixed=fixed)
 
 
 def apply_to_png(png_path: str, spec: Optional[TintSpec]) -> bool:
@@ -91,10 +140,12 @@ def apply_to_png(png_path: str, spec: Optional[TintSpec]) -> bool:
     try:
         with Image.open(png_path) as img:
             src = img.convert("RGBA")
-        src.save(raw_of(png_path))
-        with open(png_path + ".paint.json", "w", encoding="utf-8") as f:
-            json.dump({"color": list(spec.color), "over": spec.over_base}, f)
-        _tinted(src, spec).save(png_path)
+        src.save(raw_of(png_path), compress_level=PREVIEW_PNG_COMPRESS)
+        if not spec.fixed:
+            with open(png_path + ".paint.json", "w", encoding="utf-8") as f:
+                json.dump({"color": list(spec.color), "over": spec.over_base,
+                           "whole": spec.whole}, f)
+        _tinted(src, spec).save(png_path, compress_level=PREVIEW_PNG_COMPRESS)
         return True
     except Exception as exc:
         logger.warning(f"[tint] окраска {png_path} не удалась: {exc}")
@@ -102,11 +153,18 @@ def apply_to_png(png_path: str, spec: Optional[TintSpec]) -> bool:
 
 
 def _tinted(src, spec: TintSpec):
-    """Формула шейдера на картинке RGBA: альфа - маска, на выходе непрозрачно"""
+    """Формула шейдера на картинке RGBA: альфа - маска, на выходе непрозрачно.
+    У краски на всю картинку (`whole`) маски нет, и альфа остаётся своей"""
     from PIL import Image, ImageChops
 
     r, g, b, alpha = src.split()
     base = Image.merge("RGB", (r, g, b))
+    if spec.whole:
+        out = Image.merge("RGB", [
+            ImageChops.multiply(ch, Image.new("L", src.size, level))
+            for ch, level in zip((r, g, b), spec.color)])
+        out.putalpha(alpha)
+        return out
     if spec.is_neutral:
         tinted = base
     else:
@@ -201,7 +259,8 @@ def paintable(png_path: Optional[str]) -> Optional[TintSpec]:
     try:
         with open(png_path + ".paint.json", encoding="utf-8") as f:
             data = json.load(f)
-        return TintSpec(tuple(int(c) for c in data["color"]), float(data.get("over", 0.0)))
+        return TintSpec(tuple(int(c) for c in data["color"]), float(data.get("over", 0.0)),
+                        whole=bool(data.get("whole", False)))
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -225,7 +284,7 @@ def painted(raw_png: str, spec: TintSpec, out_dir: str) -> Optional[str]:
             return out
         with Image.open(raw_png) as img:
             src = img.convert("RGBA")
-        _tinted(src, spec).save(out)
+        _tinted(src, spec).save(out, compress_level=PREVIEW_PNG_COMPRESS)
         return out
     except Exception as exc:
         logger.warning(f"[tint] покраска {raw_png} не удалась: {exc}")

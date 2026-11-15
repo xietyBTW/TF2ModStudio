@@ -249,7 +249,7 @@ def tint_from_vmt_paths(paks: list, vmt_search: list):
     for pak in paks or []:
         for path in vmt_search:
             try:
-                return vmt_tint.parse_tint(
+                return vmt_tint.preview_tint(
                     pak[path].read().decode("utf-8", "replace"))
             except KeyError:
                 continue
@@ -359,7 +359,7 @@ def blu_vtf(paks: list, cdmaterials: list, tex_name: str) -> tuple:
                 continue
             _, vmt_content = vmt_info
             basetexture = GameVpkReader.parse_basetexture(vmt_content)
-            blu_look = (basetexture, vmt_tint.parse_tint(vmt_content))
+            blu_look = (basetexture, vmt_tint.preview_tint(vmt_content))
             if basetexture:
                 for pak2 in paks:
                     vtf_data = GameVpkReader.find_vtf_in_pak(pak2, basetexture)

@@ -60,6 +60,18 @@ def _drop(entry) -> bool:
     # Кодек AVIF в Pillow: изображения читаются как png/jpg/tga/bmp/webp/gif.
     if name.startswith('_avif.') or name == 'libavif.dll':
         return True
+    # Цветовые профили ICC: Pillow зовёт их только при переводе в LAB, а его в
+    # проекте нет. Связка с tkinter - tkinter исключён выше.
+    # FreeType (_imagingft) НЕ трогать: ImageDraw.text в выгрузке развёртки
+    # рисует встроенным шрифтом через него
+    if name.startswith(('_imagingcms.', '_imagingtk.')):
+        return True
+    # Описания сущностей Hammer: их читает только srctools.fgd, а приложение
+    # берёт из srctools лишь VTF и DMX.
+    # Загрузчики WebView2 для arm64 и x86 НЕ трогать: pywebview при старте
+    # ищет все три папки и падает, если какой-то нет
+    if dest == 'srctools/fgd.lzma':
+        return True
     return False
 
 

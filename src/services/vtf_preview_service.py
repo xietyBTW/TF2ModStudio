@@ -1,28 +1,27 @@
 """
 Утилиты превью VTF: открыть VPK, прочитать файл, декодировать VTF -> PNG
 
-Связка «temp .vtf -> VTFLib.read_vtf_all_frames -> Image.frombytes -> .png»
+Связка «temp .vtf -> VTFLib.read_vtf_all_frames -> fast_png -> .png»
 живёт здесь одна, чтобы не повторяться по воркерам
 """
 
 import hashlib
-import io
 import os
+import struct
 import tempfile
 import threading
 from collections import OrderedDict
 from typing import List, Optional
 
-from src.services import vmt_parse
+from src.services import fast_png, preview_disk_cache, vmt_parse
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-#: Уровень сжатия PNG для превью. Замер на стоковой текстуре 1024x1024:
-#: уровень 6 (умолчание Pillow) - 0.18 с и 0.7 МБ, уровень 3 - 0.07 с и 0.8 МБ,
-#: уровень 1 - 0.05 с и 1.2 МБ. Файлы эти временные и читаются обратно в
-#: base64-URL для вьювера, так что +14% размера ради 2.5-кратной скорости -
-#: выгодный размен, а +70% на первом уровне уже отыграли бы его на кодировании
+#: Уровень сжатия PNG там, где превью пишет Pillow (краска, vmt_tint). Замер на
+#: стоковой текстуре 1024x1024: уровень 6 (умолчание Pillow) - 0.18 с и 0.7 МБ,
+#: уровень 3 - 0.07 с и 0.8 МБ, уровень 1 - 0.05 с и 1.2 МБ. Сами текстуры из
+#: VTF кодирует fast_png
 PREVIEW_PNG_COMPRESS = 3
 
 
@@ -107,7 +106,6 @@ def clear_png_cache() -> None:
 
 def _decode_pngs(data: bytes, tmp_dir: str, label: str, all_frames: bool) -> List[bytes]:
     """PNG первого или всех кадров VTF; пусто, если не декодировался"""
-    global _png_cache_size
     key = (hashlib.blake2b(data, digest_size=16).digest(), all_frames)
     with _png_lock:
         got = _png_cache.get(key)
@@ -115,7 +113,12 @@ def _decode_pngs(data: bytes, tmp_dir: str, label: str, all_frames: bool) -> Lis
             _png_cache.move_to_end(key)
             return got
 
-    from PIL import Image
+    disk_key = key[0] + (b"\x01" if all_frames else b"\x00")
+    kept = _unpack(preview_disk_cache.get("png", disk_key))
+    if kept:
+        _remember(key, kept)
+        return kept
+
     from src.services.vtflib_wrapper import VTFLib
 
     os.makedirs(tmp_dir, exist_ok=True)
@@ -132,19 +135,44 @@ def _decode_pngs(data: bytes, tmp_dir: str, label: str, all_frames: bool) -> Lis
             os.remove(tmp_vtf)
         except OSError:
             pass
-    pngs = []
-    for rgba in (frames if all_frames else frames[:1]):
-        buf = io.BytesIO()
-        Image.frombytes("RGBA", (w, h), rgba).save(buf, "PNG",
-                                                   compress_level=PREVIEW_PNG_COMPRESS)
-        pngs.append(buf.getvalue())
+    pngs = [fast_png.encode_rgba(rgba, w, h)
+            for rgba in (frames if all_frames else frames[:1])]
+    _remember(key, pngs)
+    if pngs:
+        preview_disk_cache.put("png", disk_key, _pack(pngs))
+    return pngs
 
+
+def _remember(key: tuple, pngs: List[bytes]) -> None:
+    global _png_cache_size
     with _png_lock:
+        if key in _png_cache:
+            return
         _png_cache[key] = pngs
         _png_cache_size += sum(map(len, pngs))
         while _png_cache_size > _PNG_CACHE_LIMIT and len(_png_cache) > 1:
             _old, dropped = _png_cache.popitem(last=False)
             _png_cache_size -= sum(map(len, dropped))
+
+
+def _pack(pngs: List[bytes]) -> bytes:
+    """Кадры одной записью: перед каждым его длина"""
+    return b"".join(struct.pack("<I", len(png)) + png for png in pngs)
+
+
+def _unpack(blob: Optional[bytes]) -> List[bytes]:
+    """Кадры из записи; пусто, если её нет или она оборвана"""
+    pngs: List[bytes] = []
+    at = 0
+    while blob and at < len(blob):
+        if at + 4 > len(blob):
+            return []
+        size = struct.unpack_from("<I", blob, at)[0]
+        at += 4
+        if size == 0 or at + size > len(blob):
+            return []
+        pngs.append(blob[at:at + size])
+        at += size
     return pngs
 
 

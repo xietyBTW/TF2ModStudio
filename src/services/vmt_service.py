@@ -62,7 +62,6 @@ class VMTService:
     # Режимы вне таблицы получают дефолт materials/effects/{mode}
     _SPECIAL_MODE_RELPATHS: dict = {
         "critHIT": (("materials", "effects"), "crit"),
-        "spray": (("materials", "vgui", "logos"), "spray"),
         # Лёд рагдолла (Sky-cicle). Override игрового материала по пути:
         "death_ice": (("materials", "models", "player", "shared"), "ice_player"),
         # Золотая статуя (Golden Frying Pan / Saxxy)
@@ -839,16 +838,6 @@ class VMTService:
 \t\t\t"animatedTextureFrameRate" "33"
 \t\t}
 \t}
-}'''
-        if mode == "spray":
-            return '''"UnlitGeneric"
-{
-\t"$basetexture" "vgui/logos/spray"
-\t"$translucent" "1"
-\t"$vertexcolor" "1"
-\t"$vertexalpha" "1"
-\t"$decal" "1"
-\t"$decalscale" "0.25"
 }'''
         return f'''"UnlitGeneric"
 {{

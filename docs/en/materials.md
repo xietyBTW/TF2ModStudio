@@ -190,7 +190,7 @@ Only you see both effects: they change the material in your game. Your color als
 - **Your edit survives builds.** You can build several times without opening the editor again.
 - **Changing `$basetexture` is respected.** If you point the material at another texture in the editor, the build keeps that path and doesn't replace it with your image.
 - **On weapons and cosmetics a static `$color2` doesn't hold.** A proxy in the game's materials overwrites it every frame, and `$color` has no effect on models at all. To tint an item, use the **In-game paint** preset or paint the texture itself.
-- The editor isn't available for sprays, the crit text, death effects, skyboxes and opened VPK mods. For these the app either writes the material itself or keeps the game's one on purpose: death effects, for example, rely on special game shaders that a custom VMT would break.
+- The editor isn't available for the crit text, death effects, skyboxes and opened VPK mods. For these the app either writes the material itself or keeps the game's one on purpose: death effects, for example, rely on special game shaders that a custom VMT would break.
 
 ## Materials that take color from the VMT
 

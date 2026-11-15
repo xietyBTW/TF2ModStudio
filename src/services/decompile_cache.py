@@ -89,6 +89,11 @@ def _entries(root: Optional[Path] = None) -> list:
         return [(root / name, meta) for name, meta in _index.items()]
 
 
+def warm_index() -> None:
+    """Читает список записей заранее, чтобы первый поиск модели его не ждал"""
+    _entries()
+
+
 def _scan(root: Path) -> dict:
     found = {}
     for meta_file in root.glob(f"*/{_META_FILENAME}"):

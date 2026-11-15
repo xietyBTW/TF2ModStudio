@@ -49,7 +49,7 @@ Next to it are the window buttons: minimize, maximize and close. The header also
 | **Open export folder** | Opens the export folder in Explorer. Available in every section that has a title row, which is all of them except **Sounds**. |
 | **Open PCF from disk…**, **Save PCF…**, **Parameter reference (JSON)…**, **Reference for AI (with a task)…** | Particle section only. See [Particle editor](particles.md#tools-menu). |
 
-The extraction and UV items appear for anything with a model. Skyboxes, sprays, the crit text and death effects have no model, so the menu doesn't offer them there.
+The extraction and UV items appear for anything with a model. Skyboxes, the crit text and death effects have no model, so the menu doesn't offer them there.
 
 **Together, Texture, Model** change the layout of the working area: both halves, only the album or only the 3D view. In the particle section the last button reads **Effect**.
 
@@ -73,7 +73,7 @@ The catalog is where you pick what to work on. In the default layout it opens ov
 |---|---|---|
 | **Weapon** | Weapons of every class, one card per model, including all-class melee weapons and the festive weapons that have a model of their own | **Class**, **Type** |
 | **Character** | Each class's body (**Player Skin**) and first-person hands. The Spy also has **Disguise Masks**, the Engineer the MvM **Robot Hand** | **Class** |
-| **Special** | **Crit**, **Spray**, **Death effect: Ice**, **Death effect: Gold**, **Death effect: Fire** | none |
+| **Special** | **Crit**, **Death effect: Ice**, **Death effect: Gold**, **Death effect: Fire** | none |
 | **Projectiles** | Rockets, grenades, stickybombs, arrows, flares and other projectiles | none |
 | **Health & Ammo** | Health kits and ammo packs, including the Halloween and birthday versions | none |
 | **Taunt Props** | Items that appear in taunts | none |
@@ -187,8 +187,8 @@ The build settings apply to the whole mod. Some of them are locked or hidden for
 
 | Setting | Notes |
 |---|---|
-| **Resolution** | 256, 512, 1024 or 2048 pixels per side. Sprays are fixed at 256. |
-| **VTF format** | The texture format. `DXT1` (no alpha) and `DXT5` (with alpha) are compressed and cover almost every case. `RGBA8888` and `BGRA8888` are uncompressed. The crit text accepts only formats with alpha (`DXT5`, `RGBA8888`, `DXT3`), skyboxes only formats without it (`DXT1`, `BGR888`), and sprays don't let you change the format. |
+| **Resolution** | 256, 512, 1024 or 2048 pixels per side. |
+| **VTF format** | The texture format. `DXT1` (no alpha) and `DXT5` (with alpha) are compressed and cover almost every case. `RGBA8888` and `BGRA8888` are uncompressed. The crit text accepts only formats with alpha (`DXT5`, `RGBA8888`, `DXT3`), and skyboxes only formats without it (`DXT1`, `BGR888`). |
 | **VPK name** | The mod's file name, 50 characters at most, without `\ / : * ? " < > \|`. The app suggests a name from the item until you type your own. |
 
 ### VTF flags
@@ -214,7 +214,7 @@ The build settings apply to the whole mod. Some of them are locked or hidden for
 | **Game paints** | Cosmetics only. Keeps the in-game team colors and paints working on your texture. See [Cosmetics](cosmetics.md#team-colors-and-game-paints). |
 | **Normal Map** | Builds surface relief from the texture's brightness. See [Materials and effects](materials.md#normal-map). |
 
-Spray, crit and death effect builds lock the VTF flags. For skyboxes the only flag on offer is **Point Sample**, because the app sets the others itself.
+Crit and death effect builds lock the VTF flags. For skyboxes the only flag on offer is **Point Sample**, because the app sets the others itself.
 
 ### Per-texture settings
 

@@ -180,8 +180,8 @@ api.subscribe((ev) => {
       withViewer((w) => w.setEditableMeshNames(ev.names));
       break;
 
-    // Спец-режимы. У спрея модели нет вовсе, у крита и эффектов смерти есть
-    // сцена с персонажем - её строит вьювер
+    // Спец-режимы: у крита и эффектов смерти своя сцена с персонажем - её
+    // строит вьювер
     case 'texture_only':
       showSpecialScene(ev);
       refreshView();

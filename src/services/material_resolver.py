@@ -176,7 +176,7 @@ class MaterialResolver:
             logger.info(f"[mat] нет $basetexture в {vmt_path}")
         return ResolvedMaterial(
             name=mat_lower, vmt_path=vmt_path, basetexture=basetexture,
-            tint=vmt_tint.parse_tint(vmt_text), shader=doc.shader,
+            tint=vmt_tint.preview_tint(vmt_text), shader=doc.shader,
             render=vmt_render.from_doc(doc),
             params=vmt_parse.fingerprint(doc, skip=("basetexture",)))
 

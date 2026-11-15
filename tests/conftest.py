@@ -23,6 +23,13 @@ from src.services import work_store  # noqa: E402
 
 work_store.WORK_DIR = Path(_RUN_TMP) / 'work'
 
+# Запас превью на диске выключен: тесты подменяют декодер VTF и пишут разные
+# модели в один путь, а запись прошлого прогона ответила бы вместо них. Свои
+# тесты запаса включают его во временной папке
+from src.services import preview_disk_cache  # noqa: E402
+
+preview_disk_cache.DIR = None
+
 
 @pytest.fixture(autouse=True)
 def _clear_vpk_cache_between_tests():
@@ -42,6 +49,10 @@ def _clear_vpk_cache_between_tests():
     # PNG текстур помнятся по содержимому VTF, а фальшивые VTF у тестов одни
     # и те же при разных подменах декодера
     vtf_preview_service.clear_png_cache()
+    # Части сцен помнятся по пути и времени правки SMD: тесты пишут разные
+    # модели в один путь быстрее, чем меняется время файла
+    from src.services import viewmodel_animation
+    viewmodel_animation.clear_parts_cache()
     yield
     vpk_cache.clear_vpk_cache()
 

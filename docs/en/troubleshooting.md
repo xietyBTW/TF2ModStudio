@@ -29,7 +29,7 @@ A server with `sv_pure` enabled makes players use the game's own files instead o
 | Skyboxes | works | not covered: the game's paths are protected |
 | Sounds | works | not covered: sound files are protected |
 | Particle effects | works | not covered; see [particle mods and casual](particles.md#particle-mods-and-casual) |
-| Spy disguise masks, crit text, spray, death effects | works | not covered by the workaround |
+| Spy disguise masks, crit text, death effects | works | not covered by the workaround |
 
 Keep in mind:
 

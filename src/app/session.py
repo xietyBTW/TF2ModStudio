@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import queue
 import threading
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
 from src.app.build_editor import BuildEditor
@@ -67,6 +68,24 @@ def _variant_label(smd_path: Optional[str], weapon_key: str) -> str:
 def _existing_path(path: Optional[str]) -> Optional[str]:
     """Путь, если файл на месте, иначе None"""
     return path if path and os.path.isfile(path) else None
+
+
+def _stamps(*texture_maps: Dict[str, str]) -> Dict[str, int]:
+    """
+    {путь картинки: время её правки} - версия для адреса на странице
+
+    Вьювер не грузит заново текстуру, которая уже лежит на меше под тем же
+    адресом. Путь при этом не меняется, когда картинку переписали на месте,
+    и без версии на модели осталась бы старая
+    """
+    out: Dict[str, int] = {}
+    for path in {p for textures in texture_maps for p in textures.values() if p}:
+        try:
+            # Микросекунды: наносекунды не влезают в точное число у страницы
+            out[path] = os.stat(path).st_mtime_ns // 1000
+        except OSError:
+            continue
+    return out
 
 
 def _viewmodel_rig() -> dict:
@@ -305,6 +324,7 @@ class AppSession:
             except Exception:      # noqa: BLE001 - кадр важнее доделки
                 logger.exception("доделка после загрузки модели не удалась")
         self._put('model_ready', obj=obj_path, texture=texture,
+                  stamps=_stamps({'': texture}),
                   unused=not obj_path and self.preview.custom_vpk_unused,
                   bounds={'cx': cx, 'cy': cy, 'cz': cz, 'scale': scale})
 
@@ -573,7 +593,7 @@ class AppSession:
     def _load_texture_only(self, mode: str, restore: bool = False,
                            lang: str = 'ru') -> Dict[str, Any]:
         """
-        Режим без модели: спрей и эффекты смерти
+        Режим без своей модели: крит и эффекты смерти
 
         Показывать нечего, кроме самой картинки, поэтому вместо запуска воркера
         готовим один пустой кадр - в него человек и кладёт текстуру. Сборка
@@ -644,13 +664,20 @@ class AppSession:
                 mode, [paths['misc_vpk'], paths['textures_vpk']]))
         return self._game_tex
 
+    def _fire_overlay(self, paths: Dict[str, Any]) -> Dict[str, Any]:
+        """Кадры игрового огня листом. Собираются один раз за сеанс"""
+        if 'error' in paths:
+            return {}
+        if not getattr(self, '_fire_sheet', None):
+            from src.services import special_scene_service as scene
+            self._fire_sheet = scene.fire_overlay(
+                [paths['misc_vpk'], paths['textures_vpk']])
+        return dict(self._fire_sheet)
+
     def _scene_for(self, mode: str) -> Dict[str, Any]:
         """Из чего собрать сцену спец-режима: своя модель и текстура по умолчанию"""
         from src.data.weapons import VTF_ONLY_SPECIAL_MODES
         from src.services import special_scene_service as scene
-
-        if mode == 'spray':
-            return {'scene_kind': 'none'}
 
         model, model_texture = scene.find_scene_model('soldier')
         if model_texture.lower().endswith('.vtf'):
@@ -663,6 +690,13 @@ class AppSession:
             if not model_texture and 'error' not in paths:
                 model_texture = scene.game_texture(
                     mode, [paths['misc_vpk'], paths['textures_vpk']])
+            if mode == 'death_fire':
+                # Огонь игра не кладёт вместо раскраски, а прибавляет поверх
+                # неё: солдат остаётся в своих текстурах, кадры огня едут
+                # отдельным слоем
+                return {'scene_kind': 'fire', 'model': model,
+                        'model_texture': model_texture,
+                        'fire': self._fire_overlay(paths)}
             return {'scene_kind': 'death', 'model': model,
                     'model_texture': model_texture}
         return {'scene_kind': 'crit', 'model': model,
@@ -1595,7 +1629,8 @@ class AppSession:
                 continue
             stock = t.game_base(*owners[path])
             spec = vmt_tint.paintable(stock)
-            if spec is None or spec.is_neutral or not vmt_tint.lacks_alpha(path):
+            if (spec is None or spec.is_neutral or spec.whole
+                    or not vmt_tint.lacks_alpha(path)):
                 continue
             out[path] = (spec, vmt_tint.raw_of(stock))
         return out
@@ -1677,15 +1712,17 @@ class AppSession:
         mode = (self.preview.current_object or ('', '', ''))[0]
         is_hands = bool(mode) and mode in HAND_MODE_KEYS
         shown = self._painted(self.preview.visible_textures())
+        scene = self._painted(self.preview.scene_textures())
 
         return {
             'textures': shown,
+            'stamps': _stamps(shown, scene),
             # Где на карточке не игровой оригинал - там меню предлагает
             # экспортировать и его
             'own_cards': self.tools.changed_cards(shown),
             # Меши красятся ПОЛНЫМ набором: карточки отфильтрованы, а служебная
             # геометрия без текстуры осталась бы серой
-            'scene': self._painted(self.preview.scene_textures()),
+            'scene': scene,
             # Куда в этой сцене ложится каждая карточка: {карточка: [меши]}.
             # Страница кладёт по нему временные картинки (предпросмотр War
             # Paint) в ту же раздачу, что и настоящие
@@ -1853,7 +1890,7 @@ class AppSession:
             same = os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(stock))
             raw = vmt_tint.raw_of(stock) if same else path
             out[mat] = vmt_tint.painted(
-                raw, vmt_tint.TintSpec(color, spec.over_base), self._work_dir()) or path
+                raw, replace(spec, color=color), self._work_dir()) or path
         return out
 
     def set_team(self, team: str) -> Dict[str, Any]:
@@ -2068,6 +2105,11 @@ class AppSession:
 
     def stop_preview(self) -> Dict[str, Any]:
         self.controller.stop()
+        # И сцены предмета: вид от первого лица, собиравшийся в миг ухода,
+        # иначе приехал бы уже в чужой раздел
+        self.viewmodel.stop()
+        self.taunt.stop()
+        self.death.stop()
         # Уход от предмета: досчитанная гирлянда легла бы на чужой кадр
         self.decor.forget()
         return {'stopped': True}
@@ -2104,9 +2146,10 @@ class AppSession:
         def warm() -> None:
             try:
                 from src.config.app_config import AppConfig
-                from src.data import viewmodel_anims
+                from src.data import stock_loadout, viewmodel_anims
                 from src.data.hats_parser import parse_hats
-                from src.services import game_texture_index
+                from src.data.item_skin_styles import item_skin_styles
+                from src.services import decompile_cache, game_texture_index
                 from src.services.particle_editor_service import ParticleEditorService
                 from src.services.tf2_paths import TF2Paths
                 from src.services.vtf_preview_service import open_vpks
@@ -2135,6 +2178,12 @@ class AppSession:
                 lambda: self.sounds.sounds(lang=lang),
                 lambda: parse_hats(root, lang),
                 lambda: ParticleEditorService.list_game_pcfs(root),
+                # Первый выбранный предмет иначе ждал их сам: стили скинов
+                # 0,25 с, список кэша моделей до 1,6 с с холодного диска,
+                # стоковое снаряжение сцены «На персонаже» 0,5 с
+                lambda: item_skin_styles(root),
+                decompile_cache.warm_index,
+                lambda: stock_loadout.loadout('scout', root),
                 # Таблица «текстура -> модели» для модов без модели. Из кэша
                 # мгновенно, после обновления игры - пара секунд. Последней:
                 # нужна реже всего

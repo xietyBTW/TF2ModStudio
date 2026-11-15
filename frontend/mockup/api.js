@@ -458,6 +458,12 @@ export function subscribe(onEvent) {
 export const fileUrl = (path, opaque = false) =>
   '/file?path=' + encodeURIComponent(path) + (opaque ? '&opaque=1' : '');
 
+/** Адрес текстуры для вьювера с версией файла (`stamps` из Python: путь ->
+ *  время правки). Вьювер пропускает текстуру, которая уже лежит на меше под
+ *  тем же адресом, а без версии переписанный на месте файл он бы не заметил */
+export const texUrl = (path, stamps) =>
+  fileUrl(path) + (stamps && stamps[path] ? '&v=' + stamps[path] : '');
+
 /** То же, но без альфа-канала - для плоского показа текстуры.
  *  В игровых VTF альфа обычно маска бликов, и на карточке текстура из-за неё
  *  выглядит призраком. Вьюверу альфа нужна, ему отдаём обычный файл */

@@ -532,6 +532,15 @@ export async function relabel() {
  * поиском и классом: у косметики нет ни слотов оружия, ни подтипов, и
  * притворяться, что есть, значило бы показывать пустые фильтры.
  */
+/**
+ * Выход из сцены (от первого лица, насмешка) до остановки превью
+ *
+ * Остановка снимает гирлянду событием, а страница на снятую гирлянду
+ * пересобирает сцену в руках. Пока сцена числилась открытой, оружие
+ * возвращалось в кадр уже в чужом разделе.
+ */
+function leaveScene() { resetView(); }
+
 export async function pickSection(name) {
   // Диагностика - отчёт, а не рабочее место: открываем окно и оставляем
   // текущий раздел на месте
@@ -559,6 +568,7 @@ export async function pickSection(name) {
   const { openSounds, closeSounds } = await import('./sounds.js');
   if (sel.section === 'sounds') {
     if (было !== 'sounds') {
+      leaveScene();
       await api.stopPreview();
       clearPreview();
       say('');
@@ -572,6 +582,7 @@ export async function pickSection(name) {
   // он ещё пришлёт model_ready, и текстура оружия вернётся в альбом уже поверх
   // чужого каталога
   if (было !== sel.section) {
+    leaveScene();
     await api.stopPreview();
     clearPreview();
     say('');

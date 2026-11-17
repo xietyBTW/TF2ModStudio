@@ -209,10 +209,17 @@ def run_proxies(text: str, game: dict, curtime: float = 0.0) -> dict:
     """Прогон блока Proxies по семантике mathproxy.cpp / functionproxy.cpp
     (source-sdk-2013): переменные из VMT, игровые прокси пишут `game`"""
     vars_ = {}
+    #: Объявленные целым ("$glowcolor" "1"): тип переменной прокси не меняют,
+    #: и Equals в такую пишет целую часть первого канала (CEqualsProxy, INT)
+    ints = set()
     for key, val in re.findall(r'^\t"(\$\w+)"\s+"([^"]*)"', text, re.MULTILINE):
         nums = [float(n) for n in re.findall(r'-?\d*\.?\d+', val)]
         if nums:
             vars_[key.lower()] = nums if val.strip().startswith('[') else nums[0]
+        if re.fullmatch(r'\s*-?\d+\s*', val):
+            ints.add(key.lower())
+    #: Первый параметр материала прокси записать не могут (вики Valve, Bugs)
+    first = next(iter(vars_), None)
     block = text[text.lower().index('"proxies"'):]
     for name, body in re.findall(r'^\t\t"(\w+)"\s*\{([^}]*)\}', block, re.MULTILINE):
         args = {k.lower(): v for k, v in re.findall(r'"(\w+)"\s+"([^"]*)"', body)}
@@ -226,6 +233,8 @@ def run_proxies(text: str, game: dict, curtime: float = 0.0) -> dict:
             return float(ref)
 
         def put(ref, value):
+            if re.sub(r'\[\d\]$', '', ref).lower() == first:
+                return
             m = re.fullmatch(r'(\$\w+)\[(\d)\]', ref)
             if m:
                 vec = list(vars_[m.group(1).lower()])
@@ -237,6 +246,10 @@ def run_proxies(text: str, game: dict, curtime: float = 0.0) -> dict:
         res = args.get('resultvar')
         if name in game:
             put(res or args.get('animatedtextureframenumvar', ''), game[name])
+        elif name == 'Equals' and res.lower() in ints:
+            src = get(args['srcvar1'])
+            whole = float(int(src[0] if isinstance(src, list) else src))
+            put(res, [whole] * 3 if isinstance(vars_.get(res.lower()), list) else whole)
         elif name == 'Equals':
             put(res, get(args['srcvar1']))
         elif name == 'Clamp':
@@ -356,6 +369,11 @@ class CritGlowTests(unittest.TestCase):
         # Заряд щита демомана: половина пути к своему цвету
         half = self.glow(out, [40, 4, 2.5])
         self.assertAlmostEqual(half[0], 40 * 0.5 + 80 * 0.5, delta=0.5)
+
+    def test_red_channel_below_one_is_not_black(self):
+        # Синий крит у RED: в игре оружие чернело, пока $glowcolor был целым
+        out = self.crit(red='#0000ff')['text']
+        self.assertEqual([round(c, 3) for c in self.glow(out, [80, 8, 5])], [0, 0, 80])
 
     def test_reconfigure_replaces_chain(self):
         once = self.crit()['text']

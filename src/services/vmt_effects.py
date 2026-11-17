@@ -55,6 +55,8 @@ from typing import Dict, List, Optional, Tuple
 #: Метка наших служебных переменных: по ней эффект находит и заменяет свои
 #: прокси при повторной настройке, не трогая прокси материала
 MARK = "$tf2sg_"
+#: Пустышка первой строкой материала: см. `_set_key`
+_FIRST_KEY = MARK + "first"
 
 GHOST = "Призрачная оболочка"
 GLASS = "Стекло"
@@ -635,7 +637,10 @@ def _crit(vals: Dict[str, object], text: str) -> Dict[str, object]:
 
     out = _drop_keys(_strip_marked_proxies(text, _CRIT_MARK), MARK + "crit")
     v = lambda name: MARK + "crit" + name
-    keys = [(v("red"), _fmt_vec(red, 6)), (v("blue"), _fmt_vec(blue, 6)),
+    # У Valve "$glowcolor" "1" - целое, а Equals в целое кладёт лишь целую
+    # часть красного канала (CEqualsProxy, ветка INT)
+    keys = [("$glowcolor", "[1 1 1]"),
+            (v("red"), _fmt_vec(red, 6)), (v("blue"), _fmt_vec(blue, 6)),
             (v("bright"), f"{bright:g}"), (v("out"), "[1 1 1]"), (v("zero"), "0.0"),
             (v("one"), "1.0"), (v("k"), "75.0"), (v("k04"), "0.4"), (v("k10"), "10.0")]
     keys += [(v(n), "0.0") for n in ("r", "b", "gn", "fr", "fb", "gate", "w", "g", "t", "c")]
@@ -831,6 +836,12 @@ def _set_key(text: str, key: str, value: str) -> str:
         return rx.sub(lambda m: m.group(1) + line, text)
     at = _first_brace(text)
     at = len(text) if at < 0 else at + 1
+    # Первый параметр материала прокси не пишут (вики Valve, Bugs), а новые
+    # ключи встают наверх: без пустышки первым стал бы, например, $tf2sg_critc
+    # и крит выходил чёрным
+    if not _key_re(_FIRST_KEY).search(text):
+        text = text[:at] + f'\n\t"{_FIRST_KEY}" "0"' + text[at:]
+    at = _key_re(_FIRST_KEY).search(text).end()
     return text[:at] + '\n\t' + line + text[at:]
 
 

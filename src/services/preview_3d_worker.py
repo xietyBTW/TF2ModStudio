@@ -233,6 +233,17 @@ class Preview3DWorker(BaseWorker):
                         f"[3D] Whitelist {_wl} не совпал ни с одним материалом "
                         f"({_all_mats}) - показываю всю модель"
                     )
+            elif self.kind.is_hands:
+                # Ракета перезарядки солдата лежит в самом меше рук, в покое
+                # её в руке нет. Сборка рук её и так не трогает (только кисти)
+                from src.data.viewmodel_anims import ARMS_PROP_MATERIALS
+                _all_mats = SmdToObjService.scan_material_names(
+                    [smd_path] + bodygroup_smds)
+                _keep = {m for m in _all_mats if m.lower() not in ARMS_PROP_MATERIALS}
+                if _keep and _keep != _all_mats:
+                    _include_mats = _keep
+                    logger.info(f"[3D] {self.weapon_key}: скрыт реквизит рук "
+                                f"{sorted(_all_mats - _keep)}")
 
             # Поза из первой последовательности QC: игра всегда её проигрывает,
             # и reference-меш - не то, что видит игрок (у Мутировавшего молока

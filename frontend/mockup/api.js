@@ -474,6 +474,6 @@ export const opaqueUrl = (path) => fileUrl(path) + '&opaque=1';
  *  и карточка каталога просто остаётся без картинки.
  *  `v` - версия правила выбора иконки: ответ кэшируется браузером на сутки,
  *  и без смены URL старая картинка переживала обновление */
-export const iconUrl = (key) => '/icon?v=2&key=' + encodeURIComponent(key);
+export const iconUrl = (key) => '/icon?v=3&key=' + encodeURIComponent(key);
 /** Иконки пачкой: {ключ: data-URL}, отсутствующих в ответе нет */
 export const icons = (keys) => call('icons', { keys });

@@ -49,7 +49,6 @@ export const els = {
   cat:   document.getElementById('cat'),
   fClass:document.getElementById('f-class'),
   fHat:  document.getElementById('f-hat'),
-  fHatSrc: document.getElementById('f-hatsrc'),
   fRegion: document.getElementById('f-region'),
   fCollection: document.getElementById('f-collection'),
   collection: document.getElementById('collection'),
@@ -63,7 +62,7 @@ export const els = {
 
 export const sel = { section: 'weapons', category: 'weapon', cls: null,
               type: null, region: null, collection: null, mode: 'normal',
-              query: '', hatSrc: '' };
+              query: '' };
 
 /** Рисует ряд фильтров; null-кнопка «Все» снимает ограничение */
 export function fillFilters(row, list, chosen, onPick) {
@@ -144,8 +143,11 @@ export function makePick(item, onPick) {
     // пути стоит подстановка (`bak_teufort_knight_%s`), и показывать её
     // человеку незачем. Длинный список сворачивается в «N классов», иначе он
     // отъедает место у названия - как в панели приложения
-    b.querySelector('.mono').textContent = item.type === 'hat'
-      ? classTag(item) : (item.label ?? item.key);
+    // У частей персонажа класс рядом с ключом: в общем списке «Руки» у всех
+    // девяти одинаковые
+    b.querySelector('.mono').textContent = item.type === 'hat' ? classTag(item)
+      : item.type === 'character' ? [item.label ?? item.key, item.cls].filter(Boolean).join(' · ')
+      : (item.label ?? item.key);
     // Пометка у шапки с модельными стилями: у каждого стиля СВОЯ геометрия, и
     // до выбора об этом узнать было неоткуда - а стилей больше одного у 224
     // предметов из 1822. Пометка на обложке, а не в подписи: подпись занята
@@ -184,7 +186,7 @@ function showCount(n) {
 
 // Импорт ZIP или папки пополнил библиотеку - перерисовать, если она открыта
 document.addEventListener('mods:changed', () => {
-  if (sel.category === 'custom' || sel.hatSrc === 'mods') showModLibrary();
+  if (sel.category === 'custom') showModLibrary();
 });
 
 /**
@@ -400,11 +402,6 @@ let reloadSeq = 0;
 
 export async function reload() {
   const seq = ++reloadSeq;
-  // Библиотека модов на странице шапок: мод-шапка открывается здесь же
-  if (sel.section === 'hats' && sel.hatSrc === 'mods') {
-    await showModLibrary();
-    return;
-  }
   // Косметика при первом открытии разбирает items_game целиком - это пара
   // секунд с пустым списком на экране. Ждём четверть секунды, прежде чем
   // сказать: обычный отбор укладывается в миллисекунды, и мигать словом на
@@ -613,8 +610,6 @@ export async function pickSection(name) {
   if (!это_частицы) els.fFxCat.hidden = true;
   els.fClass.hidden = это_частицы;
   els.fHat.hidden = !это_шапки;
-  els.fHatSrc.hidden = !это_шапки;
-  pickHatSource('', false);
   catalog.classList.toggle('no-icons', это_частицы);
   catalog.classList.toggle('catalog--tree', это_частицы);
 
@@ -707,24 +702,6 @@ export async function pickCategory(key) {
   await setMode(await api.modeFor(key), '', Boolean(lastModel));   // см. выше
   await reload();
 }
-
-/** Шапки игры или библиотека модов. Фильтры шапок к модам не относятся */
-function pickHatSource(src, again = true) {
-  sel.hatSrc = src;
-  els.fHatSrc.querySelectorAll('[data-src]').forEach(
-    (b) => b.classList.toggle('is-active', b.dataset.src === src));
-  // Без проверки раздела: уходя из шапок, метку надо снять, иначе класс
-  // пропадал и на странице оружия
-  for (const row of [els.fClass, els.fRegion, els.fCollection, els.fHat]) {
-    row.classList.toggle('is-off', src === 'mods');
-  }
-  if (again) reload();
-}
-
-els.fHatSrc.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-src]');
-  if (b) pickHatSource(b.dataset.src);
-});
 
 /**
  * Фильтр категорий косметики: медали, Halloween, сезонные

@@ -71,6 +71,8 @@ class IconLookupTests(unittest.TestCase):
             png = backpack_icons.material_png('models/x/hands', 'textures.vpk')
             import io
             self.assertEqual(Image.open(io.BytesIO(png)).size, (256, 128))
+            # Альфа текстуры модели - маска блеска, в обложку она не идёт
+            self.assertEqual(Image.open(io.BytesIO(png)).mode, 'RGB')
 
     def test_backslashes_and_case(self):
         self.assertEqual(

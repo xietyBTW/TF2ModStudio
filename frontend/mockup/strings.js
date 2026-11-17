@@ -194,8 +194,6 @@ export const EN = {
   'Разбор {}…': 'Reading {}…',
   'мод из VPK': 'VPK mod',
   'мод из VPK: {}': 'VPK mod: {}',
-  'Шапки игры': 'Game cosmetics',
-  'Моды и работы': 'Mods and works',
   'Работа сохранена - она в разделе «Кастомный мод»':
     'Work saved - it is in the “Custom mod” section',
   'Отложенные правки вернулись': 'The edits you set aside are back',
@@ -203,6 +201,7 @@ export const EN = {
 
   // Сборка
   'Разрешение': 'Resolution',
+  '256 × 256 · низкое': '256 × 256 · low',
   '512 × 512 · обычное': '512 × 512 · normal',
   '1024 × 1024 · высокое': '1024 × 1024 · high',
   '2048 × 2048 · ультра': '2048 × 2048 · ultra',

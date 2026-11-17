@@ -104,10 +104,14 @@ def material_png(rel: str, textures_vpk: str) -> Optional[bytes]:
     if not rel or '..' in rel.split('/'):
         return None
     path = f"materials/{rel}.vtf"
+    # У текстур моделей альфа - маска блеска, а не прозрачность: руки хэви с
+    # ней превращались в почти пустой квадрат
+    opaque = rel.startswith('models/')
     # `.s256` в имени: размер входит в ключ кэша, файлы в полный размер
     # текстуры (руки класса - 2048 px) не подхватятся
-    cached = _CACHE_DIR / (rel.replace('/', '_') + f'.s{_MAX_SIDE}.png')
-    return _decode(path, cached, textures_vpk, max_side=_MAX_SIDE)
+    cached = _CACHE_DIR / (rel.replace('/', '_') + f'.s{_MAX_SIDE}'
+                           + ('.rgb' if opaque else '') + '.png')
+    return _decode(path, cached, textures_vpk, max_side=_MAX_SIDE, opaque=opaque)
 
 
 def png_bytes(key: str, textures_vpk: str) -> Optional[bytes]:
@@ -121,7 +125,7 @@ def png_bytes(key: str, textures_vpk: str) -> Optional[bytes]:
 
 
 def _decode(path: str, cached: Path, textures_vpk: str,
-            max_side: int = 0) -> Optional[bytes]:
+            max_side: int = 0, opaque: bool = False) -> Optional[bytes]:
     """VTF из игрового архива в PNG, с оглядкой на уже разобранное
 
     `max_side` - потолок стороны: иконки рюкзака и так 128 px, а произвольная
@@ -147,20 +151,21 @@ def _decode(path: str, cached: Path, textures_vpk: str,
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     if vtf_bytes_to_png(data, str(cached)) is None:
         return None
-    if max_side:
-        _shrink(cached, max_side)
+    if max_side or opaque:
+        _shrink(cached, max_side, opaque)
     return cached.read_bytes()
 
 
-def _shrink(png: Path, max_side: int) -> None:
-    """Ужимает PNG на месте, альфу не трогает. Ошибка не фатальна"""
+def _shrink(png: Path, max_side: int, opaque: bool = False) -> None:
+    """Ужимает PNG на месте, с `opaque` выбрасывает альфу. Ошибка не фатальна"""
     from PIL import Image
 
     try:
         with Image.open(png) as im:
-            if max(im.size) <= max_side:
+            if (not max_side or max(im.size) <= max_side) and not opaque:
                 return
-            im.thumbnail((max_side, max_side))
-            im.save(png)
+            if max_side:
+                im.thumbnail((max_side, max_side))
+            (im.convert('RGB') if opaque else im).save(png)
     except Exception as exc:                          # noqa: BLE001
         logger.debug(f"[icons] не ужать {png.name}: {exc}")

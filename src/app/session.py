@@ -862,7 +862,10 @@ class AppSession:
         self.viewmodel.stop()
         self.taunt.load_wear(models, paths['misc_vpk'], paths['textures_vpk'],
                              paths['root'], tf2_class=tf2_class, slot=slot,
-                             lang=lang, hidden_bodygroups=self._hat_hides(item))
+                             lang=lang, hidden_bodygroups=self._hat_hides(item),
+                             # Своя модель - та же, что уйдёт в мод
+                             custom_smd=self.preview.custom_smd_path or '',
+                             custom_keep=bool(self.preview.custom_keep_materials))
         return {'started': True}
 
     def _hat_catalog_item(self, tf2_root: str, lang: str, keys=None):

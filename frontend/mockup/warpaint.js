@@ -24,7 +24,7 @@
  */
 
 import * as api from './api.js';
-import { say, sayInfo, sayError } from './stage.js';
+import { say, sayBusy, sayInfo, sayError } from './stage.js';
 import { modeControls } from './controls.js';
 import { t } from './i18n.js';
 import { applyView, cardTitle, lastView, refreshView } from './preview.js';
@@ -66,6 +66,8 @@ let wear = 1;
 //: Номер последнего запроса предпросмотра: ответы на прежние отбрасываются
 let previewSeq = 0;
 let previewTimer = null;
+//: Подпись о сборке предпросмотра стоит в кадре: снимает её тот, кто поставил
+let previewBusy = false;
 //: Предпросмотр на модели: {карточка: png}. null - на модели настоящие текстуры
 let preview = null;
 //: Материалы оружия [{card, game}] и карточки, чья галочка не как по
@@ -165,6 +167,7 @@ async function open() {
 function close(restore = true) {
   clearTimeout(previewTimer);
   previewSeq++;
+  previewDone();
   if (panel.hidden) return;
   closeLayout();
   panel.hidden = true;
@@ -384,17 +387,31 @@ function schedulePreview(delay = 250) {
   previewTimer = setTimeout(runPreview, delay);
 }
 
+/** Снимает с кадра подпись о сборке предпросмотра, если она наша */
+function previewDone() {
+  if (!previewBusy) return;
+  previewBusy = false;
+  say('');
+}
+
 async function runPreview() {
   if (!chosen || panel.hidden) return;
   const seq = ++previewSeq;
-  status('Собираю предпросмотр…');
+  // Подпись - в кадре, как у «Нанести»: смотрят в этот момент на модель, а
+  // не в низ панели. Быстрый предпросмотр её не покажет вовсе (sayBusy)
+  status('');
+  previewBusy = true;
+  sayBusy(t('Собираю предпросмотр…'));
   let res;
   try {
     res = await api.previewPaintkit(chosen.id, chosen.item, wear, seedValue(), picked());
   } catch (err) {
     res = { error: err.message };
   }
-  if (seq !== previewSeq || panel.hidden) return;    // выбор уже другой
+  // Выбор уже другой: подпись теперь у следующего запроса, а закрытая панель
+  // сняла её сама (close)
+  if (seq !== previewSeq || panel.hidden) return;
+  previewDone();
   if (res.error) {
     status(res.error);
     // Прошлый предпросмотр не про этот выбор (сняли все галочки, другой

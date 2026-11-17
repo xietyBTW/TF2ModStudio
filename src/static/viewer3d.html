@@ -299,7 +299,8 @@ import * as THREE        from 'three';
 import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { makeMeshMaterial as _makeMeshMaterial } from './js/viewer_materials.js';
+import { makeMeshMaterial as _makeMeshMaterial,
+         lightLikeGame as _lightLikeGame } from './js/viewer_materials.js';
 import { firstPersonCamera as _firstPersonCamera } from './js/viewer_camera.js';
 import { firstEditableHit as _firstEditableHit } from './js/viewer_meshes.js';
 import { buildSkinnedScene as _buildSkinnedScene,
@@ -308,6 +309,7 @@ import { buildSkinnedScene as _buildSkinnedScene,
 import { applyBends as _applyBends, toSmd as _bendToSmd } from './js/viewer_bend.js';
 import * as _select from './js/viewer_select.js';
 import * as _tex from './js/viewer_textures.js';
+import { createAnims as _createAnims } from './js/viewer_anims.js';
 import { createFire as _createFire } from './js/viewer_fire.js';
 import { buildSoldierGroup } from './js/viewer/soldier.js';
 import { SRC_FACE_MAP, buildSkyCube } from './js/viewer/skybox.js';
@@ -413,6 +415,7 @@ controls.maxDistance   = 20;
 controls.addEventListener('change', requestRender);
 
 // Lighting
+if (!_lightLikeGame(THREE)) console.warn('[3D viewer] half-Lambert не подключён: свет резче игрового');
 const ambient = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambient);
 const key  = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -432,20 +435,26 @@ let _viewRig      = null;
 // Анимированная сцена вьюмодели: { group, mixer, action, meshes } либо null
 let _skinned      = null;
 const _animClock  = new THREE.Clock();
-let _animTimer    = null;
-let _animFrames   = [];
-let _pendingAnim        = null;
+// {имя: {frameDataUrls, framerate}} - анимации, ожидающие загрузки OBJ
+let _pendingAnims       = {};
 let _pendingMaterialMap = null;  // {mat_name: dataUrl} - ожидает загрузки OBJ
 let _pendingTexUrl      = null;  // одиночная текстура - ожидает загрузки OBJ
 // null  -> обновляем все меши (обычный режим)
 // Set   -> обновляем только меши с именами из множества (режим рук)
 let _editableMeshNames  = null;
-// null  -> анимация применяется согласно _editableMeshNames (или ко всем)
-// Set   -> анимируются только эти конкретные меши/материалы (per-mesh GIF)
-let _animMeshNames      = null;
 // Счётчик поколения анимации - инкрементируется при каждом stopAnimation().
 // Используется для отмены устаревших async _loadTextureThen-коллбэков
 let _animGeneration     = 0;
+// Гифки на материалах, у каждого своя: js/viewer_anims.js. Имя '' - на все
+// меши, тогда кадр ложится согласно _editableMeshNames
+const _anims = _createAnims({
+  apply: (name, tex) => {
+    if (!currentModel) return;
+    _applyTexFiltered(currentModel, tex, name ? new Set([name]) : _editableMeshNames);
+    requestRender();
+  },
+  retire: frames => _retireMaps(frames),   // кадр, оставшийся на модели, уцелеет
+});
 
 let _critSprite   = null;   // THREE.Sprite - CritHIT billboard
 let _isCritHitMode = false; // Режим CritHIT (персонаж + billboard)
@@ -489,12 +498,8 @@ function hideStatus() {
 
 // Texture animation
 function stopAnimation() {
-  if (_animTimer !== null) { clearInterval(_animTimer); _animTimer = null; }
-  const frames        = _animFrames;
-  _animFrames         = [];
-  _retireMaps(frames);   // кадр, оставшийся на модели, уцелеет
-  _animMeshNames      = null;
-  _pendingAnim        = null;
+  _anims.stopAll();
+  _pendingAnims       = {};
   _pendingMaterialMap = null;
   _pendingTexUrl      = null;
   if (_critAnimTimer !== null) { clearInterval(_critAnimTimer); _critAnimTimer = null; }
@@ -1271,7 +1276,7 @@ document.addEventListener('pointerlockchange', () => {
 const _isDecorTex = tex => Object.values(_decorTex).includes(tex);
 const _freeObject = root => _tex.freeObject(root, _isDecorTex);
 const _retireMaps = maps => _tex.retireMaps(
-  maps, currentModel, [..._animFrames, ...Object.values(_texByName)], _isDecorTex);
+  maps, currentModel, [..._anims.frames(), ...Object.values(_texByName)], _isDecorTex);
 const _alreadyOn = (root, url, pick) => _tex.alreadyOn(
   root, url, pick, name => _isDecorName(name) || name.startsWith('ghost:'));
 
@@ -1463,25 +1468,6 @@ function _applyTexFiltered(object, tex, filter) {
     }
     _updateMeshTex(child, tex);
   });
-}
-
-// meshFilter: Set имён мешей/материалов для анимации; null = использовать _editableMeshNames или все
-function startAnimation(textures, framerate, meshFilter) {
-  stopAnimation();
-  if (!textures || textures.length <= 1) return;
-  _animFrames    = textures;
-  _animMeshNames = meshFilter || null;
-  let frame      = 0;
-  const ms       = Math.max(16, Math.round(1000 / Math.max(0.1, framerate)));
-  _animTimer     = setInterval(() => {
-    if (!currentModel) { frame++; return; }
-    const tex    = _animFrames[frame % _animFrames.length];
-    // Приоритет: per-mesh фильтр -> _editableMeshNames -> все меши
-    const filter = _animMeshNames || _editableMeshNames;
-    _applyTexFiltered(currentModel, tex, filter);
-    requestRender();
-    frame++;
-  }, ms);
 }
 
 // Перелёт камеры
@@ -1693,17 +1679,18 @@ window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale
         });
       }
 
-      if (_pendingAnim) {
-        const { frameDataUrls, framerate, matName } = _pendingAnim;
-        _pendingAnim = null;
-        window.loadAnimatedTexture(frameDataUrls, framerate, matName);
-      }
-
+      // Сначала неподвижные текстуры: картинка в общей раздаче сняла бы
+      // анимацию со своего материала
       if (_pendingMaterialMap) {
         const map = _pendingMaterialMap;
         _pendingMaterialMap = null;
         window.applyMaterialMap(map);
       }
+
+      const waiting = _pendingAnims;
+      _pendingAnims = {};
+      Object.entries(waiting).forEach(([name, a]) =>
+        window.loadAnimatedTexture(a.frameDataUrls, a.framerate, name));
 
       // Подгонка пережила перезагрузку OBJ (возврат из вида от первого
       // лица): группа старой модели ушла вместе с ней. Призрак оригинала
@@ -1892,14 +1879,12 @@ window.applyMaterialMap = function(texMapJson) {
     return;
   }
 
-  // Если идёт анимация и хотя бы один из целевых материалов анимирован - останавливаем.
-  // Это предотвращает перезапись статичной текстуры pending-коллбэками старой анимации
-  if (_animTimer !== null) {
-    const matNames = Object.keys(texMapJson);
-    const affectsAnimated = !_animMeshNames   // глобальная анимация - затрагивает все меши
-      || matNames.some(m => _animMeshNames.has(m));
-    if (affectsAnimated) stopAnimation();
-  }
+  // Неподвижная картинка снимает анимацию со своего материала, соседние
+  // крутятся дальше. Анимация на все меши красит и его - её снимает любая
+  if (_anims.covers('')) stopAnimation();
+  Object.entries(texMapJson).forEach(([matName, dataUrl]) => {
+    if (dataUrl) _anims.stop(matName);
+  });
 
   const target = currentModel;
   const gen    = _animGeneration;   // фиксируем поколение после возможного stopAnimation
@@ -1915,7 +1900,8 @@ window.applyMaterialMap = function(texMapJson) {
     if (on) { _texByName[matName] = on; return; }
     _loadTextureThen(dataUrl, tex => {
       if (currentModel !== target)  return;
-      if (_animGeneration !== gen)  return;   // анимация перезапустилась - не перезаписываем
+      if (_animGeneration !== gen)  return;   // сцену перекрасили целиком - не перезаписываем
+      if (_anims.covers(matName))   return;   // на материале уже крутится гифка
       if (_wantedUrl[matName] !== dataUrl) return;   // уже просили другую
       // Кусок своего материала пересоздаётся при каждом выходе из режима
       // частей - свою картинку он берёт отсюда (см. _splitMesh)
@@ -1941,18 +1927,18 @@ window.applyMaterialMap = function(texMapJson) {
 // matName (опционально): имя меша/материала, к которому применяется анимация.
 // Если не задан - используется _editableMeshNames (или все меши)
 window.loadAnimatedTexture = function(frameDataUrls, framerate, matName) {
-  stopAnimation();
-  if (!frameDataUrls || frameDataUrls.length === 0) return;
-
-  // Захватываем поколение ДО любых async операций.
-  // Если за время загрузки вызовут stopAnimation() - _animGeneration изменится
-  // и устаревшие коллбэки сами себя отменят
-  const animGen    = _animGeneration;
-
+  const name = matName || '';
+  frameDataUrls = frameDataUrls || [];
   // Строим фильтр из matName (если задан)
-  const meshFilter = matName ? new Set([matName]) : null;
+  const meshFilter = name ? new Set([name]) : null;
 
-  if (frameDataUrls.length === 1) {
+  if (frameDataUrls.length <= 1) {
+    // Анимация своего материала соседние не трогает, общая снимает все
+    if (name) _anims.stop(name); else stopAnimation();
+    if (!frameDataUrls.length) return;
+    // Захватываем поколение ДО любых async операций: stopAnimation() за время
+    // загрузки его сменит, и устаревший коллбэк сам себя отменит
+    const animGen = _animGeneration;
     // Одиночный кадр - применяем как статичную текстуру
     const filter = meshFilter || _editableMeshNames;
     if (filter && currentModel) {
@@ -1968,17 +1954,23 @@ window.loadAnimatedTexture = function(frameDataUrls, framerate, matName) {
     return;
   }
   if (!currentModel) {
-    _pendingAnim = { frameDataUrls, framerate, matName };
+    // Общая анимация перекрывает всё, что ждало модель
+    if (!name) stopAnimation();
+    _pendingAnims[name] = { frameDataUrls, framerate };
     return;
   }
+  // Страница зовёт это после каждого обновления вида: та же анимация, что
+  // уже идёт или грузится, заново не начинается
+  const textures = new Array(frameDataUrls.length).fill(null);
+  const anim = _anims.claim(name, JSON.stringify([frameDataUrls, framerate]), textures);
+  if (!anim) return;
   const target   = currentModel;
   let   loaded   = 0;
-  const textures = new Array(frameDataUrls.length).fill(null);
 
   frameDataUrls.forEach((url, i) => {
     _loadTextureThen(url, tex => {
-      // Отменяем коллбэк если пришёл новый stopAnimation() после нашего старта
-      if (_animGeneration !== animGen) return;
+      // Имя уже отдано другой анимации или её сняли - кадр не нужен
+      if (!_anims.owns(name, anim))    return;
       if (currentModel !== target)     return;
       textures[i] = tex;
       loaded++;
@@ -1989,9 +1981,7 @@ window.loadAnimatedTexture = function(frameDataUrls, framerate, matName) {
         else        applyTexture(target, tex);
       }
       // Все кадры готовы - запускаем анимацию
-      if (loaded === frameDataUrls.length) {
-        startAnimation(textures, framerate, meshFilter);
-      }
+      if (loaded === frameDataUrls.length) _anims.start(name, anim, framerate);
     });
   });
 };

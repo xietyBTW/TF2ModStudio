@@ -30,6 +30,7 @@ from src.app.parts_editor import PartsEditor
 from src.app.sheen_editor import SheenEditor
 from src.app.particles_editor import ParticlesEditor
 from src.app.sounds_editor import SoundsEditor
+from src.app.texture_animation import TextureAnimations
 from src.app.tools_editor import ToolsEditor
 from src.app.preview_controller import (
     Preview3DController, SkinDetectController, SkyboxController,
@@ -192,6 +193,7 @@ class AppSession:
         self._load_lock = threading.Lock()
         #: Покраска частей модели: своя картинка или цвет на куске геометрии
         self.parts = PartsEditor(self)
+        self.animations = TextureAnimations(self)
         self._bind()
         self._edits_reset()
 
@@ -1717,6 +1719,8 @@ class AppSession:
         return {
             'textures': shown,
             'stamps': _stamps(shown, scene),
+            # Гифки на материалах: кадры для вьювера, он сам гифку не крутит
+            'animations': self.animations.for_scene(scene),
             # Где на карточке не игровой оригинал - там меню предлагает
             # экспортировать и его
             'own_cards': self.tools.changed_cards(shown),

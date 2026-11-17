@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from src.services import qc_skin_parser
+from src.services import normal_map, qc_skin_parser
 from src.services.texture_service import TextureService
 from src.services.vmt_service import VMTService
 from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
@@ -98,8 +98,10 @@ def build_main_material(
     if image_path and not tex.custom_vtf_path \
             and not str(image_path).lower().endswith('.vtf'):
         _ms, _mf, _mfl, _mo = _eff(texture_filename)
-        stock = (_stock_normal(texture_filename, vmt_file, slots)
-                 if (_mo or {}).get('normal') and tex.stock_normal_ok else None)
+        vmt_text = _vmt_text(texture_filename, vmt_file)
+        _mo = normal_map.options_for(vmt_text, _mo)
+        stock = (_stock_normal(texture_filename, vmt_text, slots)
+                 if _mo.get('normal') and tex.stock_normal_ok else None)
         animated_fps, is_normal_map = TextureService.render_image_to_vtf(
             image_path,
             vtf_output_path=slots.vtf_output_path,
@@ -184,6 +186,9 @@ def _write_main_vmt(
         normal_weapon_key = f"{texture_filename}_normal"
         VMTService.update_vmt_bumpmap_path(str(vmt_path), patched_cdmaterials_path, normal_weapon_key)
         logger.info(f"Обновлен VMT файл для добавления $bumpmap: {normal_weapon_key}")
+        # С $basemapalphaphongmask игра нормаль не читает: маска блеска уже
+        # в альфе нашей нормали (normal_map.options_for), параметр долой
+        normal_map.take_phong_mask(vmt_path)
         if animated_fps:
             # Бамп многокадровый (гифка + normal) - тот же fps, что у базы
             VMTService.enable_animated_bumpmap(str(vmt_path), animated_fps)
@@ -195,7 +200,6 @@ def _normal_from_game_vtf(vtf_bytes: bytes, texture_filename: str,
                           ctx, slots, tex, _eff) -> bool:
     """Нормаль из игровой текстуры материала, если галка Normal Map стоит"""
     from PIL import Image
-    from src.services import normal_map
 
     size, fmt, _flags, options = _eff(texture_filename)
     if not (options or {}).get('normal'):
@@ -205,11 +209,14 @@ def _normal_from_game_vtf(vtf_bytes: bytes, texture_filename: str,
         return False
     png = slots.vtf_output_path / f"{texture_filename}_normal_src.png"
     try:
-        Image.fromarray(rgba, 'RGBA').convert('RGB').resize(tuple(size), Image.LANCZOS).save(png)
+        # С альфой: в ней бывает маска блеска, которую заберёт нормаль
+        Image.fromarray(normal_map.fit(rgba, size[0], size[1], Image.LANCZOS), 'RGBA').save(png)
         vmt_file = game_source.extract_original_vmt(
             original_cdmaterials_path, game_vmt_name,
             slots.tf2_textures_vpk, slots.tf2_misc_vpk, ctx.decompile_dir)
-        stock = (_stock_normal(texture_filename, vmt_file, slots)
+        vmt_text = _vmt_text(texture_filename, vmt_file)
+        options = normal_map.options_for(vmt_text, options)
+        stock = (_stock_normal(texture_filename, vmt_text, slots)
                  if tex.stock_normal_ok else None)
         return TextureService.write_normal_vtf(
             png, slots.vtf_output_path, texture_filename, fmt, options, stock) is not None
@@ -221,13 +228,9 @@ def _normal_from_game_vtf(vtf_bytes: bytes, texture_filename: str,
             png.unlink()
 
 
-def _stock_normal(texture_filename: str, vmt_file, slots):
-    """Родная нормаль материала (RGBA) - по VMT, который уйдёт в мод
-
-    VMT - тот же, что выберет _write_main_vmt: правка человека, иначе
-    игровой. Нет $bumpmap или файла - None
-    """
-    from src.services import normal_map
+def _vmt_text(texture_filename: str, vmt_file) -> Optional[str]:
+    """Текст VMT, который уйдёт в мод: тот же, что выберет _write_main_vmt -
+    правка человека, иначе игровой"""
     from src.services.edited_vmt_service import EditedVMTService
 
     source = EditedVMTService.get_edited_vmt(texture_filename)
@@ -236,10 +239,14 @@ def _stock_normal(texture_filename: str, vmt_file, slots):
     if not (source and Path(source).exists()):
         return None
     try:
-        text = Path(source).read_text(encoding='utf-8', errors='replace')
+        return Path(source).read_text(encoding='utf-8', errors='replace')
     except OSError:
         return None
-    stock = normal_map.stock_normal(text, [slots.tf2_textures_vpk, slots.tf2_misc_vpk])
+
+
+def _stock_normal(texture_filename: str, vmt_text: Optional[str], slots):
+    """Родная нормаль материала (RGBA) по его VMT. Нет $bumpmap или файла - None"""
+    stock = normal_map.stock_normal(vmt_text, [slots.tf2_textures_vpk, slots.tf2_misc_vpk])
     if stock is not None:
         logger.info(f"[{texture_filename}] рельеф ляжет поверх родной нормали")
     return stock

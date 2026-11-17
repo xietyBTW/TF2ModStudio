@@ -14,7 +14,11 @@
 * если у материала в игре есть своя нормаль (нарисованная Valve), рельеф из
   картинки ложится ПОВЕРХ неё (reoriented normal mapping), а не вместо: иначе
   пропадали смоделированные фаски и швы. Её альфа сохраняется - у ~33
-  материалов TF2 там маска блеска, и без неё предмет блестел целиком
+  материалов TF2 там маска блеска, и без неё предмет блестел целиком;
+* у материала с `$phong` и `$basemapalphaphongmask` шейдер игры карту
+  нормалей не читает вовсе (см. `phong_mask_in_base`). Чтобы рельеф появился,
+  параметр снимается, а маска блеска переезжает из альфы основы в альфу
+  нормали
 """
 
 from __future__ import annotations
@@ -38,6 +42,9 @@ _SCALES = ((1, 1.0), (4, 0.45), (16, 0.2))
 #: Сила 1.0 - рельеф заметный, но не «пластилин». Подобрано на текстурах
 #: оружия TF2: средний наклон около 10°
 _GAIN = 14.0
+#: Опция сборки: маску блеска нормаль берёт из альфы картинки. Ставит её
+#: `options_for` по VMT материала, человек её не видит
+MASK_FROM_BASE = 'normal_mask_from_base'
 
 
 @dataclass(frozen=True)
@@ -46,6 +53,9 @@ class NormalSettings:
     invert: bool = False
     #: Класть рельеф поверх родной нормали материала, если она есть
     over_stock: bool = True
+    #: Альфа нормали - альфа самой картинки: маска блеска переезжает из
+    #: основы (см. `phong_mask_in_base`)
+    mask_from_base: bool = False
 
     @classmethod
     def from_options(cls, options: Optional[dict]) -> "NormalSettings":
@@ -58,7 +68,8 @@ class NormalSettings:
                    invert=bool(o.get('normal_invert', False)),
                    # Галка страницы - «Заменить родной рельеф»: по умолчанию
                    # рельеф картинки ложится поверх родной нормали
-                   over_stock=not o.get('normal_replace_stock', False))
+                   over_stock=not o.get('normal_replace_stock', False),
+                   mask_from_base=bool(o.get(MASK_FROM_BASE, False)))
 
 
 def _height(rgb: np.ndarray, invert: bool) -> np.ndarray:
@@ -128,6 +139,9 @@ def blend(base: np.ndarray, detail: np.ndarray) -> np.ndarray:
     t = base + np.array([0.0, 0.0, 1.0], np.float32)
     u = detail * np.array([-1.0, -1.0, 1.0], np.float32)
     r = t * (np.sum(t * u, axis=2, keepdims=True) / np.maximum(t[..., 2:3], 1e-6)) - u
+    # Крутой рельеф на крутой фаске в сумме даёт больше 90°: нормаль под
+    # поверхностью игра осветила бы с изнанки
+    r[..., 2] = np.maximum(r[..., 2], 0.0)
     return r / np.maximum(np.linalg.norm(r, axis=2, keepdims=True), 1e-6)
 
 
@@ -138,6 +152,19 @@ def encode(n: np.ndarray, alpha: Optional[np.ndarray] = None) -> np.ndarray:
     return np.dstack([rgb, a.astype(np.uint8)])
 
 
+def fit(rgba: np.ndarray, cols: int, rows: int, resample=Image.BILINEAR) -> np.ndarray:
+    """Картинка H×W×C (uint8) в размере rows×cols, каждый канал отдельно
+
+    Не `Image.resize` у RGBA: Pillow на время ресайза умножает цвет на альфу,
+    а у текстур Source альфа - маска блеска, не прозрачность. Там, где маска
+    ноль, цвет обнулялся: нормаль (0, 0, 0) смотрит под поверхность
+    """
+    if rgba.shape[:2] == (rows, cols):
+        return rgba
+    return np.dstack([np.asarray(Image.fromarray(rgba[..., i]).resize((cols, rows), resample))
+                      for i in range(rgba.shape[2])])
+
+
 def make(rgb: np.ndarray, settings: NormalSettings,
          stock: Optional[np.ndarray] = None) -> np.ndarray:
     """Карта нормалей RGBA для картинки ``rgb``; ``stock`` - родная нормаль (RGBA)"""
@@ -145,14 +172,69 @@ def make(rgb: np.ndarray, settings: NormalSettings,
     alpha = None
     if stock is not None:
         rows, cols = n.shape[:2]
-        if stock.shape[:2] != (rows, cols):
-            stock = np.asarray(Image.fromarray(stock, 'RGBA').resize((cols, rows), Image.BILINEAR))
+        stock = fit(stock, cols, rows)
         # Альфа родной нормали - маска блеска или отражения: без неё предмет
         # блестел бы весь
         alpha = stock[..., 3]
         if settings.over_stock:
             n = blend(decode(stock), n)
+    if settings.mask_from_base:
+        # Картинка без альфы - в игре её альфа единица: блеск по всему предмету
+        alpha = rgb[..., 3] if rgb.shape[2] == 4 else None
     return encode(n, alpha)
+
+
+def phong_mask_in_base(vmt_text: Optional[str]) -> bool:
+    """Берёт ли материал маску блеска из альфы основы - и тогда не читает нормаль
+
+    Шейдер оружия и шапок (Source SDK 2013, skin_ps20b.fxc):
+    `tangentSpaceNormal = lerp(2 * normalTexel - 1, float3(0, 0, 1),
+    g_fBaseMapAlphaPhongMask)`. При `$basemapalphaphongmask 1` нормаль
+    плоская, что бы ни лежало в `$bumpmap`. Так устроены 263 из 371
+    материалов c_items
+
+    Прозрачный материал не в счёт: без параметра альфа основы стала бы у него
+    прозрачностью (`alpha = baseColor.a * alpha` там же), и снимать параметр
+    нельзя
+    """
+    from src.services import vmt_parse
+
+    if not vmt_text:
+        return False
+    doc = vmt_parse.parse(vmt_text)
+    if not (doc.flag('$phong') and doc.flag('$basemapalphaphongmask')):
+        return False
+    see_through = any(doc.flag(p) for p in ('$translucent', '$alphatest', '$additive'))
+    # У этих двух альфа основы занята и в прозрачность не идёт
+    alpha_taken = doc.flag('$selfillum') or doc.flag('$blendtintbybasealpha')
+    return alpha_taken or not see_through
+
+
+def options_for(vmt_text: Optional[str], options: Optional[dict]) -> dict:
+    """Опции сборки нормали для материала с этим VMT"""
+    options = dict(options or {})
+    if options.get('normal') and phong_mask_in_base(vmt_text):
+        options[MASK_FROM_BASE] = True
+    return options
+
+
+def take_phong_mask(vmt_path) -> bool:
+    """Снимает `$basemapalphaphongmask`: маску блеска теперь несёт альфа
+    нормали, собранной с `MASK_FROM_BASE`. True - параметр был и снят"""
+    from src.services.vmt_service import VMTService
+
+    try:
+        with open(vmt_path, encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError:
+        return False
+    if not phong_mask_in_base(text):
+        return False
+    done = VMTService.remove_param(str(vmt_path), '$basemapalphaphongmask')
+    if done:
+        logger.info(f'[normal] {os.path.basename(str(vmt_path))}: $basemapalphaphongmask снят, '
+                    f'маска блеска в альфе нормали')
+    return done
 
 
 def rgba_from_vtf(data: bytes) -> Optional[np.ndarray]:
@@ -176,11 +258,15 @@ def rgba_from_vtf(data: bytes) -> Optional[np.ndarray]:
 
 
 def stock_normal(vmt_text: Optional[str], vpk_paths) -> Optional[np.ndarray]:
-    """Родная нормаль материала по его VMT ($bumpmap) из VPK игры"""
+    """Родная нормаль материала по его VMT ($bumpmap) из VPK игры
+
+    None и там, где игра её не рисует (`phong_mask_in_base`): рельеф картинки
+    поверх неё показал бы то, чего в игре на предмете никогда не было
+    """
     from src.services import vmt_parse
     from src.services.game_vpk_reader import GameVpkReader
 
-    if not vmt_text:
+    if not vmt_text or phong_mask_in_base(vmt_text):
         return None
     bump = vmt_parse.parse(vmt_text).path('bumpmap')
     paks = [p for p in (vpk_paths or []) if p]

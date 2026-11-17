@@ -111,6 +111,11 @@ api.subscribe((ev) => {
       showCpModel(ev);
       break;
 
+    // Кадры гифки с карточки разобраны: они едут в состоянии показа
+    case 'texture_animated':
+      refreshView();
+      break;
+
     case 'parts_animated':
       // Гифка на части: кадры склейки в уменьшенном размере, крутит вьювер
       showPartsAnimation(ev);

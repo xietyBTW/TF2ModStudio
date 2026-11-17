@@ -59,6 +59,21 @@ class ApplyMaterialExtrasTests(unittest.TestCase):
         self.assertIn('"$bumpmap" "models/w/m9_normal"', text)
         self.assertTrue((self.folder / 'm9_normal.vtf').exists())
 
+    def test_phong_mask_moves_from_the_base_so_the_game_reads_the_normal(self):
+        """С $basemapalphaphongmask шейдер нормаль не читает: параметр
+        снимается, а родная нормаль мода основой не служит"""
+        phong = VMT.replace('}', '\t"$phong" "1"\n\t"$basemapalphaphongmask" "1"\n'
+                                 '\t"$bumpmap" "models/w/m9_old"\n}')
+        (self.folder / 'm9.vmt').write_text(phong, encoding='utf-8')
+        (self.folder / 'm9_old.vtf').write_bytes(b'old')
+        self.assertIsNone(CustomVPKService._mod_normal(self.textures[0], self.vpkroot))
+
+        problems, _ = self.run_extras({}, {'normal': True})
+        self.assertEqual(problems, [])
+        text = (self.folder / 'm9.vmt').read_text(encoding='utf-8')
+        self.assertIn('"$bumpmap" "models/w/m9_normal"', text)
+        self.assertNotIn('basemapalphaphongmask', text)
+
     def test_maps_go_to_own_vmt_and_blue_inherits(self):
         maps = {'m9': {'rimlight': {'enabled': True}}}
         problems, apply_maps = self.run_extras(maps, {})

@@ -449,6 +449,15 @@ def _read_frames(path: str):
             yield None, 100
 
 
+def _shrunk(image: Image.Image, size: Optional[int]) -> Image.Image:
+    """Ужимает картинку так, чтобы длинная сторона не превышала `size`"""
+    if not size or max(image.size) <= size:
+        return image
+    k = size / max(image.size)
+    return image.resize((max(1, round(image.size[0] * k)),
+                         max(1, round(image.size[1] * k))), Image.LANCZOS)
+
+
 def frame_count(path: str) -> int:
     """Сколько кадров в картинке; 1 - обычная. Публичная: тем же числом окно
     посадки решает, крутить ли предпросмотр"""
@@ -456,14 +465,16 @@ def frame_count(path: str) -> int:
 
 
 def export_frames(path: str, out_dir: str, prefix: str,
-                  limit: int = _MAX_FRAMES) -> Tuple[List[str], List[int]]:
+                  limit: int = _MAX_FRAMES,
+                  size: Optional[int] = None) -> Tuple[List[str], List[int]]:
     """
     Раскладывает анимацию по PNG-кадрам и отдаёт (файлы, длительности в мс)
 
     Нужна окну посадки: браузер из гифки кадры не достаёт - отсоединённый
     `<img>` её не крутит, а `drawImage` берёт всегда первый. Разбираем тем же
     PIL, что и склейка, поэтому предпросмотр показывает ровно то, что уйдёт в
-    мод
+    мод. `size` ужимает кадр по длинной стороне: вьювер держит все кадры на
+    видеокарте
     """
     count = min(limit, _frames_of(path))
     if count < 2:
@@ -477,8 +488,10 @@ def export_frames(path: str, out_dir: str, prefix: str,
             frame, delay = next(reader)
             if frame is None:
                 break
+            frame = _shrunk(frame, size)
             out = os.path.join(out_dir, f"{prefix}_{index:03d}.png")
-            frame.save(out)
+            # Уровень 1: файл временный, читает его один браузер
+            frame.save(out, 'PNG', compress_level=1)
             made.append(out)
             delays.append(delay)
     finally:
@@ -815,19 +828,26 @@ def _compose_frame(base: Image.Image, layers: Sequence[Layer],
     return base, drawn
 
 
-def _plan(layers: Sequence[Layer], frames: Optional[int]):
-    """(пути картинок, сколько кадров, самая длинная анимация)"""
+def _plan(layers: Sequence[Layer], frames: Optional[int],
+          base_path: Optional[str] = None):
+    """(пути картинок слоёв, сколько кадров, самая длинная анимация)
+
+    Основа считается наравне со слоями: гифка, положенная на материал до
+    частей, под ними обязана крутиться дальше
+    """
     paths = sorted({l.image for l in layers
                     if l.image and os.path.isfile(l.image)})
+    moving = paths + ([base_path] if base_path and os.path.isfile(base_path) else [])
     # Кадров столько, сколько у самой длинной анимации: короткие зациклятся
     count = min(frames or _MAX_FRAMES, _MAX_FRAMES,
-                max((_frames_of(p) for p in paths), default=1))
-    return paths, count, max(paths, key=_frames_of, default=None)
+                max((_frames_of(p) for p in moving), default=1))
+    return paths, count, max(moving, key=_frames_of, default=None)
 
 
-def is_moving(layers: Sequence[Layer]) -> bool:
-    """Есть ли среди слоёв анимация - то есть будет ли склейка многокадровой"""
-    return _plan(layers, None)[1] > 1
+def is_moving(layers: Sequence[Layer], base_path: Optional[str] = None) -> bool:
+    """Есть ли анимация среди слоёв или в основе - то есть будет ли склейка
+    многокадровой"""
+    return _plan(layers, None, base_path)[1] > 1
 
 
 def iter_frames(base_path: str, layers: Sequence[Layer],
@@ -859,18 +879,19 @@ def iter_frames(base_path: str, layers: Sequence[Layer],
         except OSError as exc:
             logger.warning(f"склейка частей: {base_path} не читается: {exc}")
             return
-        if size and max(base.size) > size:
-            k = size / max(base.size)
-            base = base.resize((max(1, round(base.size[0] * k)),
-                                max(1, round(base.size[1] * k))), Image.LANCZOS)
+        base = _shrunk(base, size)
         _BASES.put(base_id, base, _bytes(base))
 
-    paths, count, longest = _plan(layers, frames)
+    paths, count, longest = _plan(layers, frames, base_path)
     ready = _masks_for(layers, base.size)
     # Готовые окна - только у неподвижной склейки: у анимации картинка слоя
     # своя на каждый кадр, и ключ пришлось бы вести ещё и по кадру
     keys = _layer_keys(layers, ready, base_id) if count == 1 else None
     readers = {p: _read_frames(p) for p in paths}
+    # Основа-гифка идёт кадрами наравне со слоями: иначе под частями она
+    # замирала на первом кадре и в 3D, и в моде
+    under = (_read_frames(base_path)
+             if count > 1 and _frames_of(base_path) > 1 else None)
     try:
         for index in range(count):
             if alive is not None and not alive():
@@ -881,6 +902,13 @@ def iter_frames(base_path: str, layers: Sequence[Layer],
                 patches[path], took = next(reader)
                 if path == longest:
                     delay = took
+            if under is not None:
+                shot, took = next(under)
+                if shot is None:
+                    return
+                base = _shrunk(shot, size)
+                if base_path == longest:
+                    delay = took
             frame, hits = _compose_frame(base, layers, ready, patches, keys)
             if not hits:
                 return                    # первый кадр пуст - пусты и остальные
@@ -888,6 +916,8 @@ def iter_frames(base_path: str, layers: Sequence[Layer],
     finally:
         for reader in readers.values():
             reader.close()
+        if under is not None:
+            under.close()
 
 
 def compose(base_path: str,
@@ -918,7 +948,7 @@ def compose(base_path: str,
     Returns:
         Путь к склейке или None, если рисовать оказалось нечего
     """
-    count = _plan(layers, frames)[1]
+    count = _plan(layers, frames, base_path)[1]
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     writer = None
     drawn = 0
@@ -968,7 +998,12 @@ def export_composite_frames(base_path: str, layers: Sequence[Layer],
         delays.append(delay)
     if alive is not None and not alive():
         return [], 0
+    return made, fps_of(delays)
+
+
+def fps_of(delays: Sequence[int]) -> int:
+    """Кадров в секунду по задержкам кадров в мс: частота одна на всю анимацию"""
     # Задержка короче 20 мс у гифок означает «как получится» - браузеры и
     # сборка (TextureService._fps_from_durations) читают её как 100
     vals = [d if d >= 20 else 100 for d in delays] or [100]
-    return made, max(1, min(60, round(1000 * len(vals) / sum(vals))))
+    return max(1, min(60, round(1000 * len(vals) / sum(vals))))

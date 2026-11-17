@@ -326,9 +326,11 @@ document.getElementById('cfg-save').addEventListener('click', async () => {
   api.setLang((res.values || {}).language);
   if (api.lang() !== before) { restart(res.values || {}); return; }
   notifyApp('Настройки сохранены');
-  // Гифки на модели: выключили - сцена перекрашивается неподвижной склейкой;
-  // включили - кадры приедут событием parts_animated
-  if (!(res.values || {}).parts_animation) stopPartsAnimation();
+  // Гифки на модели: выключили - сцена перекрашивается неподвижной картинкой;
+  // включили - кадры частей приедут событием parts_animated, а кадры гифки
+  // с карточки едут в состоянии показа, его и спрашиваем заново
+  if ((res.values || {}).parts_animation) refreshView();
+  else stopPartsAnimation();
   // Тема и раскладка применяются сразу: ждать перезапуска ради галки -
   // не то, чего ждут от настроек
   applyLook(res.values || {});

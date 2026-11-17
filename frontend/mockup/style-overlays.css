@@ -36,7 +36,9 @@
   border: 1px solid var(--hairline-strong);
   color: var(--ink-soft);
 }
-.btn--stop:hover { border-color: var(--accent); color: var(--accent); }
+/* Фон держим свой: общая главная кнопка при наведении заливается акцентом,
+   и акцентная надпись на нём пропадала */
+.btn--stop:hover { background: var(--surface); border-color: var(--accent); color: var(--accent); }
 
 /* Галка-приписка к ответу в окне вопроса: стоит под списком вариантов и
    относится к выбранному, поэтому и отбита от него, а не от кнопок */

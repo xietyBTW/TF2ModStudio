@@ -35,7 +35,8 @@ const THREE = {
 
 def _run(body: str) -> dict:
     script = f"""
-import {{ makeMeshMaterial, materialParams, hintFor }} from {MODULE.as_uri()!r};
+import {{ makeMeshMaterial, materialParams, hintFor, lightLikeGame, halfLambertChunk }}
+  from {MODULE.as_uri()!r};
 {STUB}
 const out = (() => {{ {body} }})();
 console.log(JSON.stringify(out));
@@ -120,6 +121,46 @@ def test_hint_lookup_is_case_insensitive():
     """)
     assert got["found"] is True
     assert got["missing"] is None
+
+
+def _three_chunk(name: str) -> str:
+    """Текст чанка шейдера из three.js, который лежит в приложении"""
+    import re
+
+    source = (MODULE.parent / "three.module.js").read_text(encoding="utf-8")
+    found = re.search(rf'var {name} = (".*?");', source)
+    assert found, f"в three.module.js нет чанка {name}"
+    return found.group(1)                 # строка JS, она же строка JSON
+
+
+def test_light_formula_of_the_bundled_three_is_replaced_by_the_game_one():
+    """Свет вьювера - half-Lambert, как у моделей в игре. Строка ищется в
+    чанке three.js дословно: обновили библиотеку - тест скажет, что свет
+    молча вернулся к Ламберту"""
+    chunk = _three_chunk("lights_lambert_pars_fragment")
+    got = _run(f"""
+      const THREE = {{ ShaderChunk: {{ lights_lambert_pars_fragment: {chunk} }} }};
+      const before = THREE.ShaderChunk.lights_lambert_pars_fragment;
+      const first = lightLikeGame(THREE);
+      const after = THREE.ShaderChunk.lights_lambert_pars_fragment;
+      const second = lightLikeGame(THREE);
+      return {{ first, second, changed: after !== before,
+               same: THREE.ShaderChunk.lights_lambert_pars_fragment === after,
+               half: after.includes('* 0.5 + 0.5') && after.includes('dotNL *= dotNL'),
+               lambert: after.includes('saturate( dot( geometryNormal, directLight.direction ) )'),
+               rest: after.includes('RE_IndirectDiffuse_Lambert') }};
+    """)
+    assert got == {"first": True, "second": True, "changed": True, "same": True,
+                   "half": True, "lambert": False, "rest": True}
+
+
+def test_unknown_chunk_is_left_alone():
+    got = _run("""
+      const THREE = { ShaderChunk: { lights_lambert_pars_fragment: 'void other() {}' } };
+      return { ok: lightLikeGame(THREE), chunk: THREE.ShaderChunk.lights_lambert_pars_fragment,
+               none: halfLambertChunk(undefined) };
+    """)
+    assert got == {"ok": False, "chunk": "void other() {}", "none": None}
 
 
 def test_params_are_a_pure_function():

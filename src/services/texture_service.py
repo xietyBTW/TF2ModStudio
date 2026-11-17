@@ -135,7 +135,10 @@ class TextureService:
         from src.services import normal_map
 
         with Image.open(image_path) as src:
-            rgb = np.asarray(src.convert("RGB"))
+            # Альфа картинки нужна нормали, когда в ней маска блеска
+            # (NormalSettings.mask_from_base)
+            has_alpha = src.mode in ("RGBA", "LA", "PA") or "transparency" in src.info
+            rgb = np.asarray(src.convert("RGBA" if has_alpha else "RGB"))
         rgba = normal_map.make(rgb, settings or normal_map.NormalSettings(), stock_normal)
         Image.fromarray(rgba, "RGBA").save(str(out_png_path))
         return str(out_png_path)
@@ -199,8 +202,7 @@ class TextureService:
         settings = normal_settings or normal_map.NormalSettings()
         if as_normal and stock_normal is not None:
             # Родная нормаль к размеру кадра - один раз, а не на каждом кадре
-            stock_normal = np.asarray(Image.fromarray(stock_normal, "RGBA").resize(
-                tuple(size), Image.BILINEAR))
+            stock_normal = normal_map.fit(stock_normal, size[0], size[1])
         with Image.open(input_path) as img:
             for i in range(count):
                 img.seek(i)
@@ -266,8 +268,10 @@ class TextureService:
         if count < 1:
             raise RuntimeError("No frames extracted")
         if as_normal:
-            # Альфа нормали - маска блеска родной нормали, если она есть
-            has_alpha = stock_normal is not None
+            # Альфа нормали - маска блеска: родной нормали, если она есть,
+            # или самой картинки (NormalSettings.mask_from_base)
+            has_alpha = stock_normal is not None or (
+                has_alpha and _normal_settings(options).mask_from_base)
 
         dest_format = TextureService._map_format_to_vtflib(format_type, has_alpha=has_alpha)
         vtf_flags = TextureService._map_flags_to_vtflib(flags, options)

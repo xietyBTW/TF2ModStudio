@@ -1213,9 +1213,10 @@ export const EN = {
   '«{}» в библиотеке нет': 'There is no “{}” in the library',
   'Сборка уже идёт': 'A build is already running',
   'Крутить гифки на модели': 'Play GIFs on the model',
-  'Гифка, положенная на часть модели, крутится и в 3D. Каждый мазок пересчитывает кадры (секунды) и держит их на видеокарте (до сотен МБ)':
-    'A GIF placed on a model part also plays in 3D. Every stroke recomputes the frames (seconds) and keeps them on the GPU (up to hundreds of MB)',
-  'Анимация частей {}/{}': 'Part animation {}/{}',
+  'Гифка на текстуре или на части модели крутится и в 3D. Кадры лежат на видеокарте (до сотен МБ), у частей их пересчитывает каждый мазок':
+    'A GIF on a texture or on a model part also plays in 3D. The frames stay on the GPU (up to hundreds of MB), and for parts every stroke recomputes them',
+  'Кадры гифок': 'GIF frames',
+  'Кадры гифок: текстура {} из {}': 'GIF frames: texture {} of {}',
   'Не удалось собрать анимацию частей: {}': 'Could not assemble the part animation: {}',
   'Проверка уже идёт': 'A check is already running',
   'Извлечение уже идёт': 'An extraction is already running',

@@ -192,6 +192,10 @@
 .bfx__ghost { position: absolute; left: 0; top: 0; opacity: .85; }
 .dock__prog { display: inline-flex; flex: none; gap: 12px; }
 .dock__prog[hidden] { display: none; }
+/* Пустой первый элемент дал бы строке свою линию шрифта, и таймер всплывал
+   над текстом этапа */
+#dockpct:empty,
+.fxprev__pct:empty { display: none; }
 .is-roll { display: inline-flex; height: 1.25em; line-height: 1.25em; overflow: hidden; vertical-align: bottom; }
 .bfx__digit { display: inline-flex; flex-direction: column; transition: transform .45s cubic-bezier(.3, 0, .2, 1); }
 .bfx__digit > span { height: 1.25em; line-height: 1.25em; }

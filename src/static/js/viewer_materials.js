@@ -17,6 +17,36 @@
  * тестом в Node с заглушкой вместо WebGL.
  */
 
+//: Расчёт рассеянного света в three.js (чанк lights_lambert_pars_fragment)
+const LAMBERT = 'float dotNL = saturate( dot( geometryNormal, directLight.direction ) );';
+//: То же в игре без $lightwarptexture: DiffuseTerm в common_vertexlitgeneric_dx9.h
+//: (Source SDK 2013) - `saturate(NDotL * 0.5 + 0.5)` в квадрате
+const HALF_LAMBERT = 'float dotNL = dot( geometryNormal, directLight.direction ) * 0.5 + 0.5;\n'
+                   + '\tdotNL *= dotNL;';
+
+/** Чанк света с формулой игры; null - строки расчёта в нём нет (другой three.js) */
+export function halfLambertChunk(chunk) {
+  if (!chunk) return null;
+  if (chunk.includes(HALF_LAMBERT)) return chunk;
+  return chunk.includes(LAMBERT) ? chunk.replace(LAMBERT, HALF_LAMBERT) : null;
+}
+
+/**
+ * Свет как в игре у всех материалов вьювера: half-Lambert вместо Ламберта
+ *
+ * Под Ламбертом грань, отвернувшаяся от света, сразу чёрная, и рельеф карты
+ * нормалей выходил заметно резче, чем его покажет игра. Чанк правится один
+ * раз на страницу, а не обработчиком на материале: Ламбертом здесь рисуется
+ * всё, включая болванку солдата и гирлянду, и свет у них должен быть один
+ *
+ * @returns {boolean} false - формула не подменилась, свет остался прежним
+ */
+export function lightLikeGame(THREE) {
+  const chunk = halfLambertChunk(THREE.ShaderChunk.lights_lambert_pars_fragment);
+  if (chunk) THREE.ShaderChunk.lights_lambert_pars_fragment = chunk;
+  return Boolean(chunk);
+}
+
 /**
  * Параметры материала по подсказке из VMT - чистая функция, без THREE
  *

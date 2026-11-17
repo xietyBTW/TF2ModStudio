@@ -312,9 +312,18 @@ export function applyView(st) {
   // на меши она лечь не должна, иначе солдат до прихода своих текстур
   // стоял бы целиком в ней
   const taken = applySpecialTexture(st.textures);
-  const entries = Object.entries({ ...(st.scene || st.textures), ...worn,
-                                   ...Object.fromEntries(trial) })
+  // Гифки на материалах: вьювер крутит их кадрами, каждую на своём меше.
+  // Неподвижная картинка того же меша в раздачу не идёт - она остановила бы
+  // анимацию. У меша с анимацией частей кадры свои (parts_animated), а
+  // анимация на все меши (SINGLE_TEX) сняла бы и её
+  const shown = Object.entries({ ...(st.scene || st.textures), ...worn,
+                                 ...Object.fromEntries(trial) })
     .filter(([mat]) => taken !== 'card' || mat !== SINGLE_TEX);
+  const partsLive = partsAnim && shown.some(([, png]) => png === partsAnim.still);
+  const moving = Object.entries(st.animations || {}).filter(
+    ([mesh]) => !partsLive || (mesh !== SINGLE_TEX && mesh !== partsAnim.mesh));
+  const live = new Set(moving.map(([mesh]) => mesh));
+  const entries = shown.filter(([mat]) => !live.has(mat));
   const single = entries.length === 1 && entries[0][0] === SINGLE_TEX;
 
   // Куски своих материалов частей - до раздачи: текстуры ищут меши по имени
@@ -335,6 +344,10 @@ export function applyView(st) {
     // Раздача текстур останавливает анимацию во вьювере, если на сцене всё
     // ещё та склейка, для которой считались кадры, - запускаем их заново
     replayPartsAnimation(w, entries);
+    for (const [mesh, anim] of moving) {
+      w.loadAnimatedTexture(anim.frames.map(api.fileUrl), anim.fps,
+                            mesh === SINGLE_TEX ? '' : mesh);
+    }
   });
 
   // Активный стиль подсвечиваем по ответу Python, а не по последнему клику.

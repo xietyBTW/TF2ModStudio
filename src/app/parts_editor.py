@@ -1597,8 +1597,8 @@ class PartsEditor:
 
     @staticmethod
     def _parts_animation_on() -> bool:
-        from src.config.app_config import AppConfig
-        return bool(AppConfig.load_config().get('parts_animation'))
+        from src.app.texture_animation import model_gifs_on
+        return model_gifs_on()
 
     def _animate_parts(self, card: str, mesh: str, still: str, base: str,
                        layers: List[Any]) -> None:
@@ -1618,7 +1618,7 @@ class PartsEditor:
             self._anim_last = (card, mesh, still, base, layers)
         if not self._parts_animation_on():
             return
-        if not texture_compose_service.is_moving(layers):
+        if not texture_compose_service.is_moving(layers, base):
             return
         alive = lambda: self._anim_seq == seq   # noqa: E731
 
@@ -1718,9 +1718,9 @@ class PartsEditor:
             layers = self._part_layers(
                 model, obj_mat, self._slot(self._source_card(card), style, team),
                 keep=self._keep_for(model, obj_mat, card, style))
-            if not texture_compose_service.is_moving(layers):
-                continue
             base = self._compose_base(card, style, team)
+            if not texture_compose_service.is_moving(layers, base):
+                continue
             full = os.path.join(self._host._work_dir(),
                                 f"parts_{self._next_compose()}_full.png")
             plan[path] = (base, layers, full)
@@ -1736,7 +1736,8 @@ class PartsEditor:
         from src.services import texture_compose_service
 
         for n, (base, layers, full) in enumerate(plan.values(), 1):
-            report(-1, f"Анимация частей {n}/{len(plan)}")
+            report(-1, "Кадры гифок" if len(plan) == 1
+                   else f"Кадры гифок: текстура {n} из {len(plan)}")
             if not texture_compose_service.compose(base, layers, full):
                 raise RuntimeError(f"Не удалось собрать анимацию частей: {full}")
 

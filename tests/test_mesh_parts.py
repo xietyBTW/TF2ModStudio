@@ -910,6 +910,41 @@ class ComposeTests(unittest.TestCase):
         with PilImage.open(res) as im:
             self.assertEqual(im.n_frames, 64)
 
+    def test_an_animated_base_keeps_moving_under_the_parts(self):
+        """Гифка лежала на материале до частей: под ними она замирала на первом
+        кадре и в 3D, и в моде. Основа идёт кадрами наравне со слоями"""
+        from PIL import Image as PilImage
+
+        base = os.path.join(self.tmp, 'base.gif')
+        shots = [PilImage.new('RGB', (64, 64), c) for c in
+                 ((255, 0, 0), (0, 255, 0), (0, 0, 255))]
+        shots[0].save(base, save_all=True, append_images=shots[1:],
+                      duration=120, loop=0)
+        patch = os.path.join(self.tmp, 'white.png')
+        PilImage.new('RGBA', (32, 32), (255, 255, 255, 255)).save(patch)
+        left = [((0.0, 0.0), (0.5, 0.0), (0.5, 1.0)), ((0.0, 0.0), (0.5, 1.0), (0.0, 1.0))]
+        layers = [compose.Layer(polygons=left, image=patch)]
+
+        self.assertTrue(compose.is_moving(layers, base))
+        self.assertFalse(compose.is_moving(layers, self._banded('for_base.png')))
+        res = compose.compose(base, layers, os.path.join(self.tmp, 'under.png'))
+        with PilImage.open(res) as im:
+            self.assertEqual(im.n_frames, 3)
+            self.assertEqual(im.info.get('duration'), 120)
+            outside, inside = [], []
+            for k in range(3):
+                im.seek(k)
+                rgb = im.convert('RGB')
+                outside.append(rgb.getpixel((48, 32)))
+                inside.append(rgb.getpixel((16, 32)))
+        self.assertEqual(outside, [(255, 0, 0), (0, 255, 0), (0, 0, 255)])
+        self.assertEqual(set(inside), {(255, 255, 255)})
+
+        # Превью по-прежнему берёт один кадр
+        still = compose.compose(base, layers, os.path.join(self.tmp, 'one.png'), frames=1)
+        with PilImage.open(still) as im:
+            self.assertEqual(getattr(im, 'n_frames', 1), 1)
+
     def test_the_shape_fingerprint_tells_bundles_apart(self):
         """Отпечаток решает, слать ли карты треугольников. Спутает два разных
         разбиения - вьювер останется со старой картой, и в 3D нельзя будет
@@ -1077,6 +1112,37 @@ class SessionPartsTests(unittest.TestCase):
         self.session.parts.set_part_texture('weapon', 1, None)
         still = t.uploaded_for_mat(t.storage_main_key())
         self.assertEqual(self.session.parts.bake_plan([still]), {})
+
+    def test_a_gif_under_a_plain_part_still_reaches_the_build_and_the_viewer(self):
+        """Гифка на материале, на части - обычный цвет: склейка превью один
+        кадр, и без печи в мод ушла бы неподвижная картинка"""
+        import threading
+        from unittest import mock
+
+        gif = os.path.join(self.tmp, 'base.gif')
+        shots = [Image.new('RGB', (64, 64), (k * 40, 0, 0)) for k in range(5)]
+        shots[0].save(gif, save_all=True, append_images=shots[1:],
+                      duration=50, loop=0)
+        t = self.session.preview.textures
+        t.vpk_red_tex_map = {'weapon': gif}
+        got = self.session.subscribe()
+
+        with mock.patch.object(type(self.session.parts), '_parts_animation_on',
+                               staticmethod(lambda: True)):
+            self.session.parts.set_part_colors('weapon', {'1': '#00ff00'})
+            for th in threading.enumerate():
+                if th.name.startswith('parts-anim'):
+                    th.join(10)
+        ev = got.get_nowait()
+        self.assertEqual(ev['event'], 'parts_animated')
+        self.assertEqual(len(ev['frames']), 5)
+
+        shown = t.uploaded_for_mat(t.storage_main_key())
+        plan = self.session.parts.bake_plan([shown])
+        self.assertEqual(list(plan), [shown])
+        self.session.parts.bake(plan, lambda pct, text: None)
+        with Image.open(plan[shown][2]) as im:
+            self.assertEqual(im.n_frames, 5)
 
     def test_the_viewer_gets_the_gif_frames_only_when_asked(self):
         """Гифка в 3D - настройка, по умолчанию выключенная: кадры считаются

@@ -332,8 +332,11 @@ class CustomVPKService:
                           'flags': flags or [], 'options': vtf_options or {}}
 
             def _settings(tex: Dict):
+                from src.services import normal_map
                 e = effective_settings(global_tex, own_settings(material_settings, tex['name']))
-                return tuple(e['size']), e['format'], list(e['flags'] or []), dict(e['options'] or {})
+                # Маска блеска в альфе основы: нормаль заберёт её себе
+                options = normal_map.options_for(CustomVPKService._vmt_text(tex), e['options'])
+                return tuple(e['size']), e['format'], list(e['flags'] or []), options
 
             # Что сделала замена: {name: (картинка, fps, есть ли нормаль)}
             replaced: Dict[str, Tuple[str, Optional[float], bool]] = {}
@@ -473,6 +476,17 @@ class CustomVPKService:
         return rel[len('materials/'):] if rel.lower().startswith('materials/') else None
 
     @staticmethod
+    def _vmt_text(tex: Dict) -> Optional[str]:
+        """Текст VMT текстуры мода; None - VMT нет или он не читается"""
+        vmt = tex.get('vmt_path')
+        if not vmt:
+            return None
+        try:
+            return Path(vmt).read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            return None
+
+    @staticmethod
     def _mod_normal(tex: Dict, vpkroot_dir: Path):
         """Родная нормаль материала из самого мода (RGBA) или None
 
@@ -481,12 +495,9 @@ class CustomVPKService:
         """
         from src.services import normal_map, vmt_parse
 
-        vmt = tex.get('vmt_path')
-        if not vmt:
-            return None
-        try:
-            text = Path(vmt).read_text(encoding='utf-8', errors='replace')
-        except OSError:
+        text = CustomVPKService._vmt_text(tex)
+        # Нормаль, которую игра не рисует, основой не служит
+        if not text or normal_map.phong_mask_in_base(text):
             return None
         bump = vmt_parse.parse(text).path('bumpmap')
         if not bump:
@@ -604,6 +615,7 @@ class CustomVPKService:
                     VMTService.enable_animated_basetexture(vmt, fps)
                 if has_normal:
                     VMTService.update_vmt_bumpmap_path(vmt, cdmat, f"{mat}_normal")
+                    normal_map.take_phong_mask(vmt)
                     if fps:
                         VMTService.enable_animated_bumpmap(vmt, fps)
                 if record is not None:

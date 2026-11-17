@@ -139,6 +139,8 @@ The normal map follows the per-texture settings, so different materials can have
 
 Without your own image the relief is built from the game texture, so you can add depth to a stock look as well.
 
+Most weapons and some hats take their gloss mask from the alpha channel of the texture itself, and the game then doesn't draw a normal map on them at all. So that your relief shows up in the game, the build moves that mask into the normal map, and the item stays glossy in the same places. A stock relief the game never showed on such an item isn't used.
+
 ## The VMT editor
 
 **VMT** under the album opens the material of the current card as text. If you saved an edit before, you see it; otherwise you see the original from the game.

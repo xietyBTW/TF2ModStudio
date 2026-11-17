@@ -24,7 +24,7 @@
 | **Pin the panels** | Keeps the catalog on the left and the build settings on the right instead of calling them up over the window. Needs a window wider than 1100 pixels; in a narrower one the option is disabled. |
 | **Interface animations** | Panels fading in, the camera flying to a new model, the halves sliding apart. Off means everything switches instantly. |
 | **Group the particle tree** | Shows the systems of a particle file as a tree with children under their parents. Off gives a flat list. On by default. |
-| **Play GIFs on the model** | A GIF placed on a model part also plays in the 3D view. Off by default: every stroke recalculates the frames, which takes seconds, and keeps them in video memory, which can take hundreds of megabytes. The mod gets the animation either way. |
+| **Play GIFs on the model** | A GIF on a texture or on a model part also plays in the 3D view. Off by default: the frames stay in video memory, which can take hundreds of megabytes, and for parts every stroke recalculates them, which takes seconds. The mod gets the animation either way. |
 
 ## Customization
 

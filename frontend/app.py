@@ -134,7 +134,14 @@ def _open_pywebview(url: str, look: dict) -> bool:
         return False
 
     from frontend import webview2_check
-    if not webview2_check.engine_ok():
+    # До первого обращения к .NET: распакованный из скачанного zip, он иначе
+    # не поднимется (webview2_check.unblock_own_libraries)
+    webview2_check.unblock_own_libraries()
+    problem = webview2_check.engine_problem()
+    if problem == 'blocked':
+        webview2_check.explain_blocked()
+        return False
+    if problem:
         webview2_check.offer_install()
         return False
 

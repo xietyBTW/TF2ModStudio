@@ -45,10 +45,56 @@ class EngineTests(unittest.TestCase):
         """pywebview на движке IE показал бы пустое окно"""
         fake_webview = types.ModuleType('webview')
         with mock.patch.dict(sys.modules, {'webview': fake_webview}), \
-             mock.patch.object(webview2_check, 'engine_ok', return_value=False), \
+             mock.patch.object(webview2_check, 'engine_problem', return_value='missing'), \
              mock.patch.object(webview2_check, 'offer_install') as offered:
             self.assertFalse(app._open_pywebview('http://127.0.0.1:1/?', {'theme': 'dark'}))
         offered.assert_called_once()
+
+    def test_blocked_dotnet_is_not_called_missing_webview2(self):
+        """Портативная из скачанного zip: WebView2 есть, а .NET не поднялся -
+        звать ставить WebView2 значило бы врать"""
+        fake_webview = types.ModuleType('webview')
+        with mock.patch.dict(sys.modules, {'webview': fake_webview}), \
+             mock.patch.object(webview2_check, 'engine_problem', return_value='blocked'), \
+             mock.patch.object(webview2_check, 'offer_install') as offered, \
+             mock.patch.object(webview2_check, 'explain_blocked') as explained:
+            self.assertFalse(app._open_pywebview('http://127.0.0.1:1/?', {'theme': 'dark'}))
+        explained.assert_called_once()
+        offered.assert_not_called()
+
+    def test_failed_import_is_blocked(self):
+        broken = types.ModuleType('webview.platforms')
+
+        def fail(_name):
+            # Так падает pythonnet на сборке с меткой «скачано из интернета»
+            raise RuntimeError('Failed to resolve Python.Runtime.Loader.Initialize')
+        broken.__getattr__ = fail
+        with mock.patch.dict(sys.modules, {'webview.platforms': broken}):
+            sys.modules.pop('webview.platforms.winforms', None)
+            self.assertEqual(webview2_check.engine_problem(), 'blocked')
+
+
+class UnblockTests(unittest.TestCase):
+    def test_internet_mark_is_removed_from_own_dotnet_libraries(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            dll = Path(d, 'pythonnet', 'runtime', 'Python.Runtime.dll')
+            other = Path(d, 'numpy', 'x.dll')
+            for path in (dll, other):
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b'MZ')
+                Path(f'{path}:Zone.Identifier').write_text('[ZoneTransfer]\nZoneId=3')
+            self.assertEqual(webview2_check.unblock_own_libraries(d), 1)
+            self.assertFalse(os.path.exists(f'{dll}:Zone.Identifier'))
+            self.assertTrue(dll.exists())
+            # Чужое не трогаем: метка снимается только там, где без неё нет окна
+            self.assertTrue(os.path.exists(f'{other}:Zone.Identifier'))
+
+    def test_source_run_does_nothing(self):
+        with mock.patch.object(sys, '_MEIPASS', None, create=True):
+            self.assertEqual(webview2_check.unblock_own_libraries(), 0)
 
 
 class _Server:

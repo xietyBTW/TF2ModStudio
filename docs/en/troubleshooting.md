@@ -61,6 +61,8 @@ Keep in mind:
 
 The interface runs in Microsoft Edge WebView2. Some stripped-down Windows builds remove it. Then the app says so in a message, offers the download page and opens in your browser instead, so you can keep working. To get the normal window back, install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft and start the app again. In the browser the app closes about a minute after you close its tab.
 
+If the app says Windows didn't let it load the components of its window, WebView2 isn't the problem. Windows marks a downloaded archive, and the portable version removes that mark from its own files by itself. If that fails (for example, the folder is read-only), right-click the downloaded zip, open Properties, tick Unblock and extract it again.
+
 If the window opens but the catalog stays empty, close the app and start it again. The page already retries loading a few times by itself, so this is rare. If a line starting with `JS:` appears where the list should be, that's an error in the app: please [report it](#reporting-a-bug) together with `tf2sg.log` from `%LOCALAPPDATA%\Tf2SkinGenerator`.
 
 Only one copy of the app runs at a time. If nothing happens when you start it, look for a running `Tf2SkinGenerator.exe` in Task Manager.

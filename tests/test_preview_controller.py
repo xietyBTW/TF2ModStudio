@@ -32,6 +32,7 @@ class _FakeWorker(BaseWorker):
     australium_ready = Signal(str, str)
     render_hints = Signal(object)
     scene_extra = Signal(object)
+    eye_materials = Signal(object)
     skin_textures = Signal(object)
     failed = Signal(str)
 

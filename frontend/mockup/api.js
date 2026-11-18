@@ -392,6 +392,7 @@ export const removePartRegion = (material, region) =>
   call('remove_part_region', { material, region });
 export const loadSkybox   = (sky_name) => call('load_skybox', { sky_name });
 export const setTexture   = (material, path) => call('set_texture', { material, path });
+export const setBluChoice = (material, choice) => call('set_blu_choice', { material, choice });
 export const build        = (params) => call('build', { params });
 //: Сборка шапки на девять классов идёт минуты - передумать надо давать
 export const cancelBuild  = () => call('cancel_build');

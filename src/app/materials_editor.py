@@ -293,6 +293,15 @@ class MaterialsEditor:
         self._host._autosave()
         return self._host.view_state()
 
+    def set_blu_choice(self, material: str = '', choice: str = 'game') -> Dict[str, Any]:
+        """Синяя командной карточки: 'game' - игровая, 'red' - как красная"""
+        if choice not in ('game', 'red'):
+            return {'error': 'Неизвестный выбор синей текстуры'}
+        with self._host._lock:
+            self._host.preview.textures.set_blu_choice(material, choice)
+        self._host._autosave()
+        return self._host.view_state()
+
     def texture_settings(self, material: str = '') -> Dict[str, Any]:
         """Свои настройки материала или пусто, если он собирается как все"""
         key = self._host._card_key(material)

@@ -187,6 +187,50 @@ class SharedMaterialWarningTests(StyleTexturesTests):
                 written_textures=seen, ctx=self.ctx)
         self.assertEqual(self.warnings, [])
 
+    def test_like_red_writes_blue_with_red_picture(self):
+        """«Как красная» у стиля: синяя пишется картинкой красной"""
+        entry = {"textures": {Team.RED: {"hat_style2_1": self._img("band.png")}},
+                 "blu_like_red": ["hat_style2_1"]}
+        self._write(self._qc(QC_MULTI), entry, main_img=self._img("body.png"))
+        self.assertIn(("hat_style2_1_blue", "band.png"), self.calls)
+        # Главная без отметки - синяя остаётся игровой
+        self.assertNotIn("hat_style2_blue", [n for n, _ in self.calls])
+
+
+class UntouchedStyleMaterialsTests(unittest.TestCase):
+    """Модель стиля ищет все материалы в папке обхода: нетронутые обязаны
+    лечь туда родным VMT, иначе часть стиля в игре фиолетово-чёрная"""
+
+    def test_missing_materials_get_game_vmt_and_edited_stay(self):
+        from unittest.mock import patch
+        from src.services.texture_build import game_source
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            qc = root / "hat_style2.qc"
+            qc.write_text(QC_MULTI, encoding="utf-8")
+            out = root / "mat"
+            out.mkdir()
+            (out / "hat_style2.vmt").write_text("edited")
+            asked = []
+
+            def fake(cd, name, tex_vpk, misc_vpk, dest):
+                asked.append((cd, name))
+                path = Path(dest) / f"{name}.vmt"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("game " + name)
+                return str(path)
+
+            with patch.object(game_source, "extract_original_vmt", fake):
+                kept = VpkModelPipeline._keep_untouched_style_materials(
+                    str(qc), f"models{BS}workshop{BS}player{BS}items{BS}heavy{BS}hat_style2{BS}",
+                    out, "tex.vpk", "misc.vpk", str(root / "x"))
+
+            self.assertEqual(kept, ["hat_style2_1", "hat_style2_1_blue", "hat_style2_blue"])
+            self.assertEqual((out / "hat_style2.vmt").read_text(), "edited")
+            self.assertEqual((out / "hat_style2_1.vmt").read_text(), "game hat_style2_1")
+            self.assertEqual(asked[0][0], "models/workshop/player/items/heavy/hat_style2")
+
 
 if __name__ == "__main__":
     unittest.main()

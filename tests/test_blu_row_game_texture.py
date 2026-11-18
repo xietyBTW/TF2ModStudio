@@ -35,8 +35,9 @@ def build(folder, game_texture, red_row=("c_gun",), blu_row=("c_gun_blue",), ask
             asked.append(material)
         return EXTRA_TEX_USE_GAME_ORIGINAL
 
+    copy = game_source.GameVtf(b"VTF-copy", "models/x/c_gun")
     with patch.object(game_source, "game_texture", return_value=game_texture), \
-            patch.object(game_source, "get_original_vtf_bytes", return_value=b"VTF-copy"):
+            patch.object(game_source, "find_original_vtf", return_value=copy):
         VpkTextureBuilder._build_blu_row_textures(
             list(blu_row), {"red_row": list(red_row)}, "c_gun", "c_gun.vtf", None, slots, None,
             answer, "c_gun", None, False, {})

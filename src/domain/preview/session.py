@@ -150,6 +150,9 @@ class PreviewSession:
 
     # «Прочее»: служебные материалы, скрытые блэклистом
     misc_materials: List[str] = field(default_factory=list)
+    #: Глаза (EyeRefract): картинка карточки - радужка `$iris`, а не
+    #: $basetexture. В сборку идут, только если на них своя картинка
+    eye_materials: List[str] = field(default_factory=list)
     misc_mode: bool = False
     #: Нормальный набор карточек, чтобы вернуться из «Прочее»
     cards_before_misc: List[str] = field(default_factory=list)
@@ -777,6 +780,7 @@ class PreviewSession:
                             for skin, mats in self.skin_chosen.items()},
             'australium_user_tex': t.australium_user_tex,
             'force_team': bool(t.force_team),
+            'blu_like_red': sorted(t.blu_like_red),
             'texture_maps': {mat: dict(maps)
                              for mat, maps in self.texture_maps.items()},
             'texture_overrides': {mat: dict(settings)
@@ -878,6 +882,7 @@ class PreviewSession:
 
         t.australium_user_tex = edits.get('australium_user_tex') or None
         t.force_team = bool(edits.get('force_team'))
+        t.blu_like_red = {str(m) for m in edits.get('blu_like_red') or ()}
         self.texture_maps = {mat: dict(maps) for mat, maps
                              in (edits.get('texture_maps') or {}).items()}
         self.texture_overrides = {mat: dict(settings) for mat, settings
@@ -960,6 +965,7 @@ class PreviewSession:
         self.textures.skin_overrides = {}
         self.textures.australium_user_tex = None
         self.textures.force_team = False
+        self.textures.blu_like_red = set()
         self.skin_chosen = {}
         self.texture_maps = {}
         self.texture_overrides = {}
@@ -1033,6 +1039,7 @@ class PreviewSession:
         от прошлой модели имя привязало бы команду и вариант к чужой карточке
         """
         self.misc_materials = []
+        self.eye_materials = []
         self.misc_mode = False
         self.textures.main_material = None
         # Имена материалов принадлежат конкретной модели: пережив переход, они
@@ -1080,6 +1087,7 @@ class PreviewSession:
 
         t = self.textures
         t.textures = {Team.RED: {}, Team.BLU: {}}
+        t.blu_like_red = set()
         t.material_names = []
         t.main_material = None
         t.reset_skybox()

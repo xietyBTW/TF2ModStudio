@@ -86,6 +86,11 @@ def build_extra_material_textures(
             continue
 
         vtf_paths[name] = slots.vtf(name)
+        if game_source.is_eye_vmt(orig_vmt):
+            # Глаз: картинка - радужка, а шейдер, роговица и блик игровые
+            game_source.write_eye_vmt(
+                slots.vmt(name), orig_vmt, slots.patched_cdmaterials_path, name)
+            continue
         # VMT для дополнительного материала: у обычных (гильза, прицел) -
         # по образцу главного, у служебных из «Прочего» - родной, иначе
         # зомби-кожа потеряет $alphatest и дыры зальются текстурой
@@ -122,24 +127,22 @@ def _from_game(name, orig_vmt, editable, slots, ctx, strip_paints, vtf_paths) ->
     bt = game_source.read_vmt_basetexture(orig_vmt) if orig_vmt else None
     if bt:
         bt_dir, bt_name = os.path.split(bt.replace('\\', '/').strip().strip('/'))
-        game_vtf = game_source.get_original_vtf_bytes(
+        game_vtf = game_source.find_original_vtf(
             bt_name,
             ([bt_dir] if bt_dir else []) + list(slots.original_cdmaterials_paths or []),
             slots.tf2_textures_vpk, slots.tf2_misc_vpk,
             log_not_found=False,
         )
     if game_vtf is None:
-        game_vtf = game_source.get_original_vtf_bytes(
+        game_vtf = game_source.find_original_vtf(
             name, slots.original_cdmaterials_paths,
             slots.tf2_textures_vpk, slots.tf2_misc_vpk,
             log_not_found=False,
         )
     if game_vtf:
-        # Пишем самодостаточно (VTF + VMT) - тогда и BLU-цикл скопирует
-        # RED-вариант
-        with open(slots.vtf(name), "wb") as f:
-            f.write(game_vtf)
-        slots.game_copies.add(name.lower())
+        # Копия нужна BLU-циклу (он снимает с неё RED-вариант); в мод она
+        # не попадёт - game_links переведёт VMT на игру
+        slots.put_game_vtf(name, game_vtf)
         # VMT: родной (сохраняет шейдер/детейл) с $basetexture,
         # перенаправленным на наш console-VTF
         base = Path(orig_vmt) if orig_vmt else slots.vmt_path
@@ -319,7 +322,7 @@ def write_blacklisted_materials(
             else:
                 # Нет родного VMT - производный от главного.
                 # Он смотрит в console-путь, значит текстуру надо положить
-                _bl_orig = game_source.get_original_vtf_bytes(
+                _bl_orig = game_source.find_original_vtf(
                     _bl_mat, slots.original_cdmaterials_paths,
                     slots.tf2_textures_vpk, slots.tf2_misc_vpk,
                 )
@@ -328,8 +331,7 @@ def write_blacklisted_materials(
                 game_source.write_material_vmt(
                     _bl_vmt, slots.vmt_path, slots.patched_cdmaterials_path,
                     _bl_mat)
-                with open(slots.vtf(_bl_mat), "wb") as _f:
-                    _f.write(_bl_orig)
+                slots.put_game_vtf(_bl_mat, _bl_orig)
             logger.info(f"Служебный материал записан оригиналом: {_bl_mat}")
         except Exception as _e:
             logger.warning(f"Не удалось записать служебный материал {_bl_mat}: {_e}")
@@ -362,13 +364,12 @@ def write_shoulder_iso_materials(shoulder_iso, ctx, slots, tex) -> None:
             else:
                 # По умолчанию - оригинальная текстура тела из игры
                 # (по ОРИГИНАЛЬНОМУ имени), чтобы плечи не стали фиолетовыми
-                _orig_vtf = game_source.get_original_vtf_bytes(
+                _orig_vtf = game_source.find_original_vtf(
                     _orig_name, slots.original_cdmaterials_paths,
                     slots.tf2_textures_vpk, slots.tf2_misc_vpk
                 )
                 if _orig_vtf:
-                    with open(_sh_vtf, "wb") as _f:
-                        _f.write(_orig_vtf)
+                    slots.put_game_vtf(_new_name, _orig_vtf)
                 else:
                     ctx.warn(
                         f"Не найдена оригинальная текстура плеч '{_orig_name}' - "

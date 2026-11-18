@@ -25,10 +25,14 @@ export async function runExport(choice, save) {
 }
 
 /** Меню карточки альбома (оружие, шапки, части). `hasOwn` - на карточке не
- *  игровой оригинал (view_state.own_cards). Пустой карточке (стиль без своей
- *  текстуры) экспортировать нечего - меню нет вовсе */
-export async function cardMenu(e, name, hasOwn, hasImage = true) {
+ *  игровой оригинал (view_state.own_cards). `onReset` - на карточке своя
+ *  картинка, и её можно снять. Пустой карточке (стиль без своей текстуры)
+ *  экспортировать нечего - меню нет вовсе */
+export async function cardMenu(e, name, hasOwn, hasImage = true, onReset = null) {
   if (!hasImage) { e.preventDefault(); return; }
-  const chosen = await contextMenu(e, exportItems(hasOwn));
+  const items = exportItems(hasOwn);
+  if (onReset) items.push({ label: 'Вернуть игровую текстуру', value: 'reset' });
+  const chosen = await contextMenu(e, items);
+  if (chosen === 'reset') { onReset(); return; }
   await runExport(chosen, (original) => api.exportCardTexture(name, original));
 }

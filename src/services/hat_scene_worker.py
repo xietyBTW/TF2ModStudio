@@ -304,7 +304,7 @@ class HatScenePreviewWorker(BaseWorker):
         # игровая папка забирала их раньше
         own = os.path.dirname(self.custom_smd) if self.custom_smd else ''
         textures, hints = scene_textures.resolve(
-            MaterialResolver(reader, self._preview_dir),
+            MaterialResolver(reader, self._preview_dir, eyes=True),
             [(names, _cdmaterials(d)) for d in (own, *dirs) if d])
 
         self.render_hints.emit(hints)

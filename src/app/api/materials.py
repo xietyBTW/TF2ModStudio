@@ -175,6 +175,13 @@ def add_to_style(material: str = '') -> Dict[str, object]:
 
 
 @endpoint
+def set_blu_choice(material: str = '', choice: str = 'game') -> Dict[str, object]:
+    """Синяя командной карточки: 'game' - игровая, 'red' - как красная"""
+    from src.app.session import session
+    return session().materials.set_blu_choice(material, choice)
+
+
+@endpoint
 def drop_from_style(material: str = '') -> Dict[str, object]:
     """Убирает материал из стиля - он вернётся к базовой текстуре"""
     from src.app.session import session

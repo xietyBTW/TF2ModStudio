@@ -97,6 +97,9 @@ class Preview3DWorker(BaseWorker):
     # одноматериальной модели текстура хранится под служебным ключом, меша с
     # таким именем нет, и без настоящего имени гирлянда осталась бы стоковой
     scene_extra = Signal(object)
+    # Какие из материалов - глаза (картинка из $iris, а не $basetexture):
+    # ДО multi_material, по ним сборка решает, спрашивать ли про них
+    eye_materials = Signal(object)
     # Ошибка
     failed   = Signal(str)
     # Текстовый прогресс для UI
@@ -362,6 +365,11 @@ class Preview3DWorker(BaseWorker):
         _misc_extras = self._extract_texturegroup_misc_extras(mat_names)
         if _misc_extras:
             tex_map.update(_misc_extras)
+        # Глаза - карточками «Прочего», как убер: радужку можно заменить
+        eyes = texture_locator.eye_textures(self._reader, self._preview_dir, mat_names, tex_map,
+                                            self._get_qc_cdmaterials())
+        tex_map.update(eyes)
+        self.eye_materials.emit(list(eyes))
         self.ready.emit(obj_path, "")
         if tex_map:
             self.multi_material.emit(tex_map)
@@ -423,6 +431,8 @@ class Preview3DWorker(BaseWorker):
         # не остались серыми, а вторым в паре называем тот меш, который маску и
         # носит: какую из девяти на нём показать, решает альбом (см. card_mesh)
         scene = self._extract_multi_textures(mat_names) if mat_names else {}
+        scene.update(texture_locator.eye_textures(self._reader, self._preview_dir, mat_names, scene,
+                                                  self._get_qc_cdmaterials()))
         if scene:
             worn = [m for m in mat_names if m in set(SPY_MASK_VTF_NAMES)]
             self.scene_extra.emit((scene, worn))
@@ -986,8 +996,8 @@ class Preview3DWorker(BaseWorker):
         if not variant_tex:
             return None, None
         try:
-            vtf_data = texture_locator.read_in_cdmaterials(
-                self._reader.paks, model.cdmaterials, variant_tex)[0]
+            found = self.materials.find_vtf(variant_tex, model.cdmaterials)
+            vtf_data = found.data if found else None
             if not vtf_data:
                 return None, None
             out = self._vtf_data_to_png(vtf_data, "texture_variant")
@@ -1250,8 +1260,9 @@ class Preview3DWorker(BaseWorker):
             # версии, а развёртка была от мастерской. Текстура не совпадала с
             # моделью. $cdmaterials из QC указывает на материалы именно той
             # модели, поэтому спрашиваем его первым
+            qc_mat = None
             if self._decomp_dir:
-                vtf_data = texture_locator.red_vtf_via_qc(
+                vtf_data, qc_mat = texture_locator.red_vtf_via_qc(
                     paks_tex, self._model(self._decomp_dir), self.weapon_key, mat_names)
                 if vtf_data:
                     logger.debug("3D Preview текстура: по $cdmaterials из QC")
@@ -1267,8 +1278,11 @@ class Preview3DWorker(BaseWorker):
 
             frame_paths = self._frames(vtf_data, "texture")
 
-            # Краска из VMT: без неё окрашиваемые места показываются чёрными
-            tint = texture_locator.tint_from_vmt_paths(paks_tex, vmt_search)
+            # Краска из VMT: без неё окрашиваемые места показываются чёрными.
+            # Из VMT того же материала, чья текстура нашлась: у оружия с двумя
+            # версиями в игре угаданный по имени VMT - от другой модели
+            tint = (self.materials.tint_for(qc_mat, self._model(self._decomp_dir).cdmaterials)
+                    if qc_mat else texture_locator.tint_from_vmt_paths(paks_tex, vmt_search))
             if tint is not None:
                 for frame in frame_paths:
                     vmt_tint.apply_to_png(frame, tint)

@@ -68,13 +68,6 @@ def build_blu_row_textures(
                          animated_fps, is_normal_map, extra_materials_vtf_paths)
 
 
-def _put_game_copy(slots, name, data) -> None:
-    """VTF материала - байтами игровой текстуры, помечается копией игры"""
-    with open(slots.vtf(name), "wb") as f:
-        f.write(data)
-    slots.game_copies.add(name.lower())
-
-
 def _variant_column(blu_tex_name, col_idx, ask, main_vtf, texture_filename,
                     slots, tex, animated_fps) -> None:
     """
@@ -94,12 +87,12 @@ def _variant_column(blu_tex_name, col_idx, ask, main_vtf, texture_filename,
         img = ask(blu_tex_name)
         if img == EXTRA_TEX_USE_GAME_ORIGINAL:
             logger.info(f"Извлекаем оригинал варианта из игры: {blu_tex_name}")
-            game_vtf = game_source.get_original_vtf_bytes(
+            game_vtf = game_source.find_original_vtf(
                 blu_tex_name, slots.original_cdmaterials_paths,
                 slots.tf2_textures_vpk, slots.tf2_misc_vpk
             )
             if game_vtf:
-                _put_game_copy(slots, blu_tex_name, game_vtf)
+                slots.put_game_vtf(blu_tex_name, game_vtf)
             elif main_vtf.exists():
                 copy_file_safe(main_vtf, variant_vtf_path)
                 if texture_filename.lower() in slots.game_copies:
@@ -139,14 +132,14 @@ def _shared_column(blu_tex_name, ask, main_vtf, slots, tex, animated_fps) -> Non
     if not shared_vtf_path.exists() and not shared_vmt_path.exists():
         img = ask(blu_tex_name)
         if img == EXTRA_TEX_USE_GAME_ORIGINAL:
-            game_vtf = game_source.get_original_vtf_bytes(
+            game_vtf = game_source.find_original_vtf(
                 blu_tex_name, slots.original_cdmaterials_paths,
                 slots.tf2_textures_vpk, slots.tf2_misc_vpk, log_not_found=False
             )
             if not game_vtf:
                 logger.debug(f"Shared VTF не найден в игре, пропуск: {blu_tex_name}")
                 return
-            _put_game_copy(slots, blu_tex_name, game_vtf)
+            slots.put_game_vtf(blu_tex_name, game_vtf)
             logger.info(f"Shared VTF из игры: {blu_tex_name}.vtf")
         elif img == EXTRA_TEX_USE_MAIN:
             tex.wait_vtfs()
@@ -199,12 +192,12 @@ def _team_column(blu_tex_name, red_tex_name, col_idx, ask, ctx, slots, tex,
         logger.info(f"BLU {blu_tex_name}: текстура из игры по ссылке {game_tex}")
         img = None
     if img in (EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN):
-        game_vtf = (game_source.get_original_vtf_bytes(
+        game_vtf = (game_source.find_original_vtf(
             blu_tex_name, slots.original_cdmaterials_paths,
             slots.tf2_textures_vpk, slots.tf2_misc_vpk
         ) if img == EXTRA_TEX_USE_GAME_ORIGINAL else None)
         if game_vtf:
-            _put_game_copy(slots, blu_tex_name, game_vtf)
+            slots.put_game_vtf(blu_tex_name, game_vtf)
             logger.info(f"Извлечён VTF из игры для BLU текстуры: {blu_tex_name}.vtf")
         else:
             # «Скопировать главную» у BLU - это его RED-пара, сюда же

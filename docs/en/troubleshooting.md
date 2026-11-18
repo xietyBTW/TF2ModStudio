@@ -93,7 +93,7 @@ Usually a broken VMT or missing model files. **Diagnostics** reports both. With 
 
 ### A cosmetic or weapon turns one solid color in game
 
-The material takes its color from the VMT wherever the texture's alpha is white, and your image has no alpha. Rebuild and answer **As in the image** when the build asks about paint, or give the image a proper alpha mask. See [Cosmetics](cosmetics.md#team-colors-and-game-paints).
+The material takes its color from the VMT wherever the texture's alpha is white, and your image has no alpha. Rebuild and answer **No paint** when the build asks about paint, or give the image a proper alpha mask. See [Cosmetics](cosmetics.md#team-colors-and-game-paints).
 
 ### The build fails
 

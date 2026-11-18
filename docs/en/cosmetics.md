@@ -43,8 +43,7 @@ The app takes this into account in three places.
 
 | Answer | Result |
 |---|---|
-| **As in the image** | The game won't paint the item. It looks like the preview. |
-| **Remove paint from the VMT** | Same look, and the paint parameters are also removed from the material. |
+| **No paint** | The item looks like the preview: the paint parameters are removed from the material. Materials whose image has its own mask keep their paint. |
 | **Paint like the game** | The color goes only where the game puts it on the original: the app takes the alpha mask from the game texture. |
 | **Build as is** | The whole item gets painted. |
 

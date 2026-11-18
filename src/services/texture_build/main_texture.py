@@ -49,21 +49,19 @@ def build_main_material(
 
         if image_path in (EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN) or not image_path:
             # «Из игры», «главную» (это и есть главная) или ничего - оригинал
-            _orig_red = game_source.get_original_vtf_bytes(
+            _orig_red = game_source.find_original_vtf(
                 texture_filename, slots.original_cdmaterials_paths,
                 slots.tf2_textures_vpk, slots.tf2_misc_vpk
             )
             ensure_directory_exists(slots.vtf_output_path)
-            vtf_file_path = slots.vtf_output_path / vtf_filename
             if _orig_red:
-                with open(vtf_file_path, "wb") as _f:
-                    _f.write(_orig_red)
+                slots.put_game_vtf(Path(vtf_filename).stem, _orig_red)
                 slots.game_copies.add(texture_filename.lower())
                 logger.info(f"Оригинальная RED VTF из игры: {vtf_filename}")
                 # Normal Map без своей текстуры - рельеф из игровой: превью
                 # его показывает, и мод без него расходился бы с превью
                 is_normal_map = _normal_from_game_vtf(
-                    _orig_red, texture_filename, original_cdmaterials_path,
+                    _orig_red.data, texture_filename, original_cdmaterials_path,
                     _game_vmt_name, ctx, slots, tex, _eff)
             else:
                 ctx.warn(

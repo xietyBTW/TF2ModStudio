@@ -193,6 +193,33 @@
 /* Шестерёнка материала в правке: горит и не прячется, пока правка открыта */
 .frame__tool.is-on { color: var(--accent); border-color: var(--accent); }
 .frame:has(.frame__tool.is-on) .frame__tools { opacity: 1; }
+
+/* Чем станет синяя команда: всегда на виду, это состояние, а не инструмент.
+   Наверху: внизу по центру альбома стоит стрелка листания */
+.frame__blu {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: flex;
+}
+.frame__img:has(.frame__badge) .frame__blu { top: 36px; }
+.frame__blu button {
+  padding: 3px 8px;
+  margin-left: -1px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color var(--dur), border-color var(--dur);
+}
+.frame__blu button:hover { color: var(--ink); border-color: var(--ink); position: relative; }
+.frame__blu button.is-active {
+  background: var(--chosen);
+  color: var(--chosen-ink);
+  border-color: var(--ink);
+  position: relative;
+}
 /* Одна текстура - её настройки и есть общие: вторая дверь в то же место
    только путает. Своя запись (значок) у неё бывает от прошлых правок -
    тогда шестерёнка остаётся, иначе запись не сбросить */

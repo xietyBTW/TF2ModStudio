@@ -250,7 +250,7 @@ class DeathScenePreviewWorker(BaseWorker):
         # Реквизита в сцене нет, персонаж идёт «руками» - его материалы
         # приходят вторым списком
         _weapon_names, names = _scene_materials(scene)
-        resolver = MaterialResolver(reader, self._preview_dir)
+        resolver = MaterialResolver(reader, self._preview_dir, eyes=True)
         cdmaterials = _cdmaterials(player_dir)
         textures = {name: png for name, png
                     in resolver.texture_map(names, cdmaterials).items() if png}

@@ -6,7 +6,7 @@ import * as api from './api.js';
 import { t } from './i18n.js';
 import { stage } from './stage.js';
 import { bindAlbum, goTo, SINGLE_TEX } from './album.js';
-import { lastView } from './preview.js';
+import { lastView, applyView } from './preview.js';
 import { cardMenu } from './texture-export.js';
 
 /**
@@ -59,9 +59,13 @@ export function frameNode(name) {
                      </div>
                    </div>
                    <figcaption class="frame__name"></figcaption>`;
+  // Своя картинка снимается тем же путём, что и кладётся: куда именно
+  // (команда, стиль), решает домен
+  const reset = async () => applyView(await api.setTexture(name, null));
   fig.addEventListener('contextmenu',
     (e) => cardMenu(e, name, (lastView?.own_cards || []).includes(name),
-                    Boolean(fig.querySelector('.frame__img img'))));
+                    Boolean(fig.querySelector('.frame__img img')),
+                    (lastView?.uploaded_cards || []).includes(name) ? reset : null));
   return fig;
 }
 

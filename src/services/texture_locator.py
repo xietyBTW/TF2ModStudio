@@ -13,16 +13,12 @@ QC (QcModel). Отдают байты VTF и имена материалов, к
 
 from typing import Iterator, Optional
 
-from src.services import qc_skin_parser, vmt_tint
+from src.services import qc_skin_parser, texture_guess, vmt_tint
 from src.services.game_vpk_reader import GameVpkReader
+from src.services.material_resolver import MaterialResolver
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-#: Командный суффикс головы персонажа: VTF один, тонируется в VMT
-_TEAM_SUFFIXES = ("_red", "_blue")
-#: Оверлей-меши рук (киллстрик): своего VTF нет, рисуются базовым
-_OVERLAY_SUFFIXES = ("_sheen2", "_sheen", "_overlay", "_fresnel")
 
 
 def read_first(pak, paths: list) -> tuple:
@@ -59,113 +55,44 @@ def player_folder(mode: str, weapon_key: str) -> Optional[str]:
     return None
 
 
-def vtf_candidates(mat_name: str, arm_folder: Optional[str],
-                   cdmaterials: Optional[list] = None) -> list:
-    """Пути VTF для имени материала из SMD в порядке приоритета"""
-    paths: list = []
-    mat_lower = mat_name.lower()
-
-    # Приоритет: папка рук игрока (materials/models/player/{folder}/)
-    # Пробуем оба варианта: оригинальный регистр и lowercase,
-    # т.к. SMD может использовать mixed-case (engineer_handL), а VTF в VPK
-    # хранится в lowercase (engineer_handl)
-    if arm_folder:
-        paths += _player_paths(arm_folder, mat_name)
-        # SMD ссылается на {class}_head_red, а реальный VTF - {class}_head.vtf
-        # (scout_head_red -> scout_head.vtf). Sheen/overlay-меши рук рендерятся
-        # эффектом киллстрика поверх той же геометрии: hvyweapon_hands_sheen ->
-        # hvyweapon_hands.vtf
-        for suffixes in (_TEAM_SUFFIXES, _OVERLAY_SUFFIXES):
-            for suf in suffixes:
-                if mat_lower.endswith(suf):
-                    paths += _player_paths(arm_folder, mat_name[: -len(suf)])
-                    break
-
-    # Пути из QC ($cdmaterials) - авторитетные: текстура лежит ровно там,
-    # куда указывает модель. Покрывает вторую/третью текстуру оружия в
-    # нестандартных папках (parts/, общая папка модели и т.п.)
-    for cd in (cdmaterials or []):
-        paths.append(f"materials/{cd}/{mat_name}.vtf")
-        if mat_lower != mat_name:
-            paths.append(f"materials/{cd}/{mat_lower}.vtf")
-
-    # Стандартные пути оружий (fallback-угадывание)
-    paths += [
-        f"materials/models/workshop_partner/weapons/c_models/{mat_name}/{mat_name}.vtf",
-        f"materials/models/weapons/c_models/{mat_name}/{mat_name}.vtf",
-        f"materials/models/weapons/c_items/{mat_name}.vtf",
-        f"materials/models/workshop/weapons/c_models/{mat_name}/{mat_name}.vtf",
-    ]
-    return paths
+def guesses(mat_name: str, arm_folder: Optional[str]) -> list:
+    """Догадки для материала без VMT: папка персонажа, затем папки оружия"""
+    return (texture_guess.player_paths(arm_folder, mat_name)
+            + texture_guess.weapon_paths(mat_name))
 
 
-def _player_paths(folder: str, name: str) -> list:
-    paths = [f"materials/models/player/{folder}/{name}.vtf"]
-    if name.lower() != name:
-        paths.append(f"materials/models/player/{folder}/{name.lower()}.vtf")
-    return paths
-
-
-def find_vtf_for_mat(pak, mat_name: str, arm_folder: Optional[str],
-                     cdmaterials: Optional[list] = None) -> Optional[bytes]:
-    """VTF-данные для имени материала из SMD в одном архиве"""
-    return read_first(pak, vtf_candidates(mat_name, arm_folder, cdmaterials))[0]
-
-
-def resolve_vtf_via_vmt(paks: list, cdmaterials: list, mat_name: str) -> Optional[bytes]:
-    """
-    VTF материала через его VMT: {cdmat}/{mat}.vmt -> $basetexture -> VTF
-
-    Нужно для материалов, у которых текстура задаётся через VMT, а не лежит
-    по «угадываемому» пути (напр. центральная вставка Dead Ringer
-    'pocket_watch_fg'). VMT и VTF могут быть в разных VPK - ищем по всем
-    """
-    mat_lower = mat_name.lower()
-    for pak in paks:
-        info = GameVpkReader.find_vmt_in_pak(pak, cdmaterials, mat_lower)
-        if not info:
-            continue
-        base = GameVpkReader.parse_basetexture(info[1])
-        if not base:
-            continue
-        for pak2 in paks:
-            data = GameVpkReader.find_vtf_in_pak(pak2, base)
-            if data:
-                logger.debug(f"[3D] '{mat_name}' резолвлен через VMT → {base}")
-                return data
-    return None
+def _resolver(paks: list) -> MaterialResolver:
+    return MaterialResolver(GameVpkReader.over(paks), "", apply_tint=False)
 
 
 def material_vtf(paks: list, mat_name: str, arm_folder: Optional[str],
                  cdmaterials: list) -> Optional[bytes]:
-    """VTF материала: прямые пути по всем архивам, затем через его VMT"""
-    # 1) Прямой поиск VTF по угадываемым путям и $cdmaterials
-    vtf_data = None
-    for pak in paks:
-        vtf_data = find_vtf_for_mat(pak, mat_name, arm_folder, cdmaterials)
-        if vtf_data:
-            break
-    # 2) Fallback: материал -> его VMT -> $basetexture -> VTF
-    #    (покрывает материалы без прямого VTF, напр. pocket_watch_fg)
-    if not vtf_data and cdmaterials:
-        vtf_data = resolve_vtf_via_vmt(paks, cdmaterials, mat_name)
-    return vtf_data
+    """VTF материала той же цепочкой, что у сборки (MaterialResolver.find_vtf)"""
+    found = _resolver(paks).find_vtf(
+        mat_name, cdmaterials or [], guesses(mat_name, arm_folder))
+    return found.data if found else None
 
 
-def read_in_cdmaterials(paks: list, cdmaterials: list, name: str) -> tuple:
-    """materials/{cdmat}/{name}.vtf по папкам QC -> (байты, путь) или (None, None)"""
-    for cdmat in cdmaterials:
-        path = f"materials/{cdmat}/{name}.vtf"
-        data = None
-        for pak in paks:
-            try:
-                data = pak[path].read()
-                break
-            except KeyError:
-                continue
-        if data:
-            return data, path
-    return None, None
+def eye_textures(reader, out_dir: str, mat_names: list, found: dict,
+                 cdmaterials: list) -> dict:
+    """{глаз: PNG радужки} для материалов, которым не нашлось $basetexture
+
+    Игра рисует глаз шейдером EyeRefract: $basetexture у него нет, картинка -
+    радужка $iris. Её и показываем, и меняет сборка тоже её
+    (texture_build.game_source.write_eye_vmt). Без своей картинки в сборку
+    глаза не идут (BuildEditor._misc_to_ask): «скопировать главную» на
+    радужку не имеет смысла
+    """
+    left = [m for m in mat_names if m not in found]
+    if not left:
+        return {}
+    resolver = MaterialResolver(reader, out_dir, eyes=True)
+    out = {}
+    for mat in left:
+        res = resolver.resolve(mat, cdmaterials, out_name=f"eye_{mat.lower()}")
+        if res.ok and not res.basetexture:
+            out[mat] = res.png_path
+    return out
 
 
 # RED: одна текстура оружия
@@ -173,33 +100,20 @@ def read_in_cdmaterials(paks: list, cdmaterials: list, name: str) -> tuple:
 def weapon_vtf_search(weapon_key: str) -> list:
     """Пути главной текстуры оружия: нестандартные первыми, затем стандартные"""
     from src.data.weapon_quirks import WEAPON_TEXTURE_PATHS
-    wk = weapon_key
-    return WEAPON_TEXTURE_PATHS.get(wk, []) + [
-        f"materials/models/workshop_partner/weapons/c_models/{wk}/{wk}.vtf",
-        f"materials/models/weapons/c_models/{wk}/{wk}.vtf",
-        # c_items оружия хранят текстуру плоско: c_items/{name}.vtf (без подпапки)
-        f"materials/models/weapons/c_items/{wk}.vtf",
-        f"materials/models/workshop/weapons/c_models/{wk}/{wk}.vtf",
-    ]
+    return WEAPON_TEXTURE_PATHS.get(weapon_key, []) + [
+        f"materials/{p}.vtf" for p in texture_guess.weapon_paths(weapon_key)]
 
 
 def weapon_blu_vtf_search(weapon_key: str) -> list:
     """Пути BLU-текстуры оружия по суффиксу _blue"""
-    from src.data.weapon_quirks import WEAPON_TEXTURE_PATHS
-    wk = weapon_key
-    return [p.replace(".vtf", "_blue.vtf") for p in WEAPON_TEXTURE_PATHS.get(wk, [])] + [
-        f"materials/models/workshop_partner/weapons/c_models/{wk}/{wk}_blue.vtf",
-        f"materials/models/weapons/c_models/{wk}/{wk}_blue.vtf",
-        # c_items оружия хранят текстуру плоско: c_items/{name}_blue.vtf
-        f"materials/models/weapons/c_items/{wk}_blue.vtf",
-        f"materials/models/workshop/weapons/c_models/{wk}/{wk}_blue.vtf",
-    ]
+    return [p[:-len(".vtf")] + "_blue.vtf" for p in weapon_vtf_search(weapon_key)]
 
 
 def red_vtf_via_qc(paks: list, model, weapon_key: str,
-                   mat_names: Optional[list] = None) -> Optional[bytes]:
+                   mat_names: Optional[list] = None) -> tuple:
     """
-    RED (skin 0) текстура через QC $cdmaterials
+    RED (skin 0) текстура через QC $cdmaterials -> (байты, имя материала)
+    или (None, None). Имя - чтобы краску брать из VMT ЭТОГО же материала
 
     Читает первую строку $texturegroup (или weapon_key, если группы нет).
     ``mat_names`` - материалы геометрии в кадре: их имена ищем ПЕРВЫМИ.
@@ -208,10 +122,10 @@ def red_vtf_via_qc(paks: list, model, weapon_key: str,
     карточка часов показывала руки шпиона
     """
     if model is None or not paks:
-        return None
+        return None, None
     cdmaterials = model.cdmaterials
     if not cdmaterials:
-        return None
+        return None, None
 
     rows = model.layout.all_rows
     red_tex_names = [t for t in rows[0] if t] if rows else [weapon_key]
@@ -225,23 +139,13 @@ def red_vtf_via_qc(paks: list, model, weapon_key: str,
         f"red_tex_names={red_tex_names}"
     )
 
+    resolver = _resolver(paks)
     for tex_name in red_tex_names:
-        tex_lower = tex_name.lower()
-        for cdmat in cdmaterials:
-            vtf_candidate = f"materials/{cdmat}/{tex_lower}.vtf"
-            for pak in paks:
-                try:
-                    data = pak[vtf_candidate].read()
-                    logger.info(f"[3D] RED texture via QC: {vtf_candidate}")
-                    return data
-                except KeyError:
-                    continue
-        # Прямой путь не нашёл - через VMT -> $baseTexture
-        data = resolve_vtf_via_vmt(paks, cdmaterials, tex_lower)
-        if data:
-            logger.info(f"[3D] RED texture via QC→VMT: {tex_lower}")
-            return data
-    return None
+        found = resolver.find_vtf(tex_name, cdmaterials)
+        if found:
+            logger.info(f"[3D] RED texture via QC: {tex_name} -> {found.path}")
+            return found.data, tex_name
+    return None, None
 
 
 def tint_from_vmt_paths(paks: list, vmt_search: list):
@@ -341,33 +245,14 @@ def blu_tex_names(model, mat_names: Optional[list], weapon_key: str) -> list:
 def blu_vtf(paks: list, cdmaterials: list, tex_name: str) -> tuple:
     """VTF синей текстуры -> (байты | None, вид из VMT | None)
 
-    Вид - (basetexture, краска) из VMT, если до VTF дошли через него: синий
-    материал может отличаться от красного только краской
+    Вид - (basetexture, краска) из VMT: синий материал может отличаться от
+    красного только краской
     """
-    tex_lower = tex_name.lower()
-    # Метод 1: прямой путь materials/{cdmat}/{name}.vtf
-    vtf_data, path = read_in_cdmaterials(paks, cdmaterials, tex_lower)
-    if vtf_data:
-        logger.debug(f"[3D] BLU прямой VTF: {path}")
-        return vtf_data, None
-
-    # Метод 2: VMT -> $baseTexture -> VTF (первый архив, где есть VMT)
-    if cdmaterials:
-        for pak in paks:
-            vmt_info = GameVpkReader.find_vmt_in_pak(pak, cdmaterials, tex_lower)
-            if not vmt_info:
-                continue
-            _, vmt_content = vmt_info
-            basetexture = GameVpkReader.parse_basetexture(vmt_content)
-            blu_look = (basetexture, vmt_tint.preview_tint(vmt_content))
-            if basetexture:
-                for pak2 in paks:
-                    vtf_data = GameVpkReader.find_vtf_in_pak(pak2, basetexture)
-                    if vtf_data:
-                        logger.debug(f"[3D] BLU через VMT: {basetexture}")
-                        break
-            return vtf_data, blu_look
-    return None, None
+    resolver = _resolver(paks)
+    info = resolver.describe(tex_name, cdmaterials or [])
+    found = resolver.find_vtf(tex_name, cdmaterials or [])
+    look = (info.basetexture, info.tint) if info.vmt_path else None
+    return (found.data if found else None), look
 
 
 def blu_multi_sources(paks: list, model, mat_names: list,
@@ -406,34 +291,9 @@ def _column_of(red_family: list, mat_lower: str) -> int:
 
 def _blu_multi_vtf(paks: list, cdmaterials: list, blu_tex_name: str,
                    arm_folder: Optional[str]) -> Optional[bytes]:
-    blu_lower = blu_tex_name.lower()
-    vtf_data, path = read_in_cdmaterials(paks, cdmaterials, blu_lower)
-    if vtf_data:
-        logger.debug(f"[3D] BLU multi VTF: {path}")
-        return vtf_data
-
-    # Fallback через arm_folder
-    if arm_folder:
-        candidate = f"materials/models/player/{arm_folder}/{blu_lower}.vtf"
-        for pak in paks:
-            try:
-                vtf_data = pak[candidate].read()
-                logger.debug(f"[3D] BLU multi VTF (arm_folder): {candidate}")
-                break
-            except KeyError:
-                continue
-        if vtf_data:
-            return vtf_data
-
-    # Fallback: тот же поиск, что и для RED (find_vtf_for_mat умеет
-    # отрезать суффикс _red/_blue -> scout_head_blue ищет scout_head.vtf,
-    # т.к. голова персонажа - общий файл, тонируемый под команду в VMT)
-    for pak in paks:
-        vtf_data = find_vtf_for_mat(pak, blu_tex_name, arm_folder)
-        if vtf_data:
-            logger.debug(f"[3D] BLU multi VTF (find_vtf_for_mat): {blu_tex_name}")
-            return vtf_data
-    return vtf_data
+    found = _resolver(paks).find_vtf(
+        blu_tex_name, cdmaterials or [], guesses(blu_tex_name, arm_folder))
+    return found.data if found else None
 
 
 # Вариант (Australium/Gold/Festive)

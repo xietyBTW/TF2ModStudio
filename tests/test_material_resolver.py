@@ -218,6 +218,20 @@ class ResolverTests(unittest.TestCase):
         blu = r.resolve("hat_blue", CD, out_name="blu_hat")
         self.assertNotEqual(red.png_path, blu.png_path)
 
+    def test_eyes_take_their_iris_only_in_scenes(self):
+        """У EyeRefract нет $basetexture: сцене нужна радужка, сборке - ничего"""
+        files = {
+            f"materials/{CD[0]}/eyeball_l.vmt":
+                vmt(shader="EyeRefract", Iris="models/player/shared/eye-iris-blue"),
+            "materials/models/player/shared/eye-iris-blue.vtf": _png_bytes(),
+        }
+        self.assertFalse(self._resolver(files).resolve("eyeball_l", CD).ok)
+        scene = MaterialResolver(fake_reader(files), self.out, eyes=True)
+        res = scene.resolve("eyeball_l", CD)
+        self.assertTrue(res.ok)
+        self.assertIsNone(res.basetexture, "сборка не должна принять радужку за текстуру")
+        self.assertIsNone(scene.vtf_bytes("eyeball_l", CD))
+
     def test_slashes_in_name_do_not_escape_out_dir(self):
         """Имя материала с путём не должно уводить запись из папки превью"""
         files = {

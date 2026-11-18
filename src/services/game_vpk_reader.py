@@ -19,12 +19,37 @@
 """
 
 import os
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from src.services import vmt_parse
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class GameVtf:
+    """VTF из архивов игры и где он там лежит"""
+
+    data: bytes
+    #: Путь текстуры в игре, как его пишут в VMT: от materials/, без .vtf.
+    #: Пусто - откуда взят файл, неизвестно (сослаться на него нельзя)
+    path: str
+
+
+def texture_path(basetexture: str) -> str:
+    """Значение $baseTexture так, как его читает движок: от materials/,
+    прямые слэши, нижний регистр, без расширения"""
+    path = (basetexture or "").replace("\\", "/").lower().strip().strip("/")
+    if path.startswith("materials/"):
+        path = path[len("materials/"):]
+    # В VMT встречается ИСХОДНОЕ расширение: у праздничного Правосудия и
+    # Уберпилы Valve оставила `$baseTexture "..._xmas.psd"`. Движок читает
+    # такой путь без расширения, и мы тоже - иначе текстуры у них нет
+    stem, dot, ext = path.rpartition(".")
+    return stem if dot and "/" not in ext else path
+
 
 # Подмены workshop-путей: одна и та же текстура может лежать под
 # models/player/items ИЛИ models/workshop[_partner]/player/items
@@ -48,6 +73,13 @@ class GameVpkReader:
         # Сохраняем порядок (он задаёт приоритет при дублях ключей в разных VPK)
         self._paths = [p for p in vpk_paths if p]
         self._paks: Optional[list] = None
+
+    @classmethod
+    def over(cls, paks: list) -> "GameVpkReader":
+        """Читатель поверх уже открытых архивов (порядок = приоритет)"""
+        reader = cls([])
+        reader._paks = list(paks or [])
+        return reader
 
     @property
     def paks(self) -> list:
@@ -134,26 +166,27 @@ class GameVpkReader:
         return vmt_parse.basetexture(vmt_content)
 
     @staticmethod
+    def texture_path(basetexture: str) -> str:
+        """Значение $baseTexture так, как его читает движок (см. texture_path)"""
+        return texture_path(basetexture)
+
+    @staticmethod
     def find_vtf_in_pak(pak, basetexture: str) -> Optional[bytes]:
         """Находит VTF в ОДНОМ pak по значению $baseTexture (путь относительно materials/)"""
-        if not basetexture:
+        path = texture_path(basetexture)
+        if not path:
             return None
-        path = basetexture.replace("\\", "/").lower().strip("/")
-        if not path.startswith("materials/"):
-            path = "materials/" + path
-        # В VMT встречается ИСХОДНОЕ расширение: у праздничного Правосудия и
-        # Уберпилы Valve оставила `$baseTexture "..._xmas.psd"`. Движок читает
-        # такой путь без расширения, и мы тоже - иначе текстуры у них нет
-        stem, dot, ext = path.rpartition(".")
-        if dot and "/" not in ext:
-            path = stem
-        path += ".vtf"
         try:
-            return pak[path].read()
+            return pak[f"materials/{path}.vtf"].read()
         except KeyError:
             return None
         except Exception:
             return None
+
+    def find_texture(self, basetexture: str) -> Optional[GameVtf]:
+        """VTF по значению $baseTexture вместе с путём, под которым он лежит"""
+        data = self.find_vtf_for_basetexture(basetexture)
+        return GameVtf(data, self.texture_path(basetexture)) if data is not None else None
 
     def find_vtf_for_basetexture(self, basetexture: str) -> Optional[bytes]:
         """Находит VTF по значению $baseTexture во всех открытых pak"""

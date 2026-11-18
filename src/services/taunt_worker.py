@@ -482,7 +482,7 @@ class TauntPreviewWorker(BaseWorker):
         prop_names, player_names = ((weapon_names, arms_names) if player_dir
                                     else (arms_names, []))
         textures, hints = scene_textures.resolve(
-            MaterialResolver(reader, self._preview_dir),
+            MaterialResolver(reader, self._preview_dir, eyes=True),
             [(names, _cdmaterials(d)) for names, d in ((prop_names, prop_dir),
                                                        (player_names, player_dir)) if d])
 

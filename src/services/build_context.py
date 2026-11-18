@@ -2,10 +2,11 @@
 Контекст сборки для управления временными путями
 """
 
+import hashlib
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from src.shared.logging_config import get_logger
 from src.shared.file_utils import ensure_directory_exists, safe_remove, copy_file_safe
 
@@ -132,6 +133,17 @@ class MaterialSlots:
     #: (ответ «из игры»). «Скопировать главную» у убер/зомби-варианта такую
     #: пару не копирует: вариант остаётся игровым
     game_copies: set = field(default_factory=set)
+    #: {sha1 игрового VTF: его путь в игре}. Общий словарь сборки
+    #: (BuildContext.game_textures): в конце game_links убирает такие файлы
+    #: из мода, а VMT переводит на игру
+    game_textures: Dict[str, str] = field(default_factory=dict)
+
+    def put_game_vtf(self, name: str, found) -> None:
+        """VTF материала байтами игры (game_source.GameVtf), помечается копией"""
+        self.vtf(name).write_bytes(found.data)
+        self.game_copies.add(name.lower())
+        if found.path:
+            self.game_textures[hashlib.sha1(found.data).hexdigest()] = found.path
 
     def vtf(self, name: str) -> Path:
         """Путь VTF материала внутри мода"""
@@ -159,6 +171,8 @@ class BuildContext:
     # (текстура/материал не найдены -> в игре будет фиолет). Показываются после
     # сборки, чтобы пользователь не искал причину «успешного» но битого мода
     warnings: List[str] = field(default_factory=list)
+    #: Игровые VTF, положенные в мод по ходу сборки (MaterialSlots.put_game_vtf)
+    game_textures: Dict[str, str] = field(default_factory=dict)
 
     def warn(self, message: str) -> None:
         """Добавляет предупприждение пользователю (без дублей) + лог"""

@@ -7,7 +7,11 @@
  */
 
 /* Параметры эффекта */
-.params { overflow: auto; }
+/* Список параметров длинный, и полоса прокрутки идёт во всю высоту панели:
+   общая шириной 6 px здесь читалась отдельной толстой колонкой. Отступ
+   справа - чтобы числа не упирались в неё */
+.params { overflow: auto; padding-right: 10px; }
+.params::-webkit-scrollbar { width: 3px; }
 .params__note { margin: 0; color: var(--ink-mute); font-size: 12px; }
 .params__list { display: flex; flex-direction: column; gap: 18px; }
 
@@ -326,7 +330,7 @@
 [data-section="particles"][data-panels="float"] .params {
   position: static;
   max-height: none;
-  padding: 0 0 0 var(--gap);
+  padding: 0 10px 0 var(--gap);
   border-top: 0;
   border-left: 1px solid var(--hairline);
   background: none;

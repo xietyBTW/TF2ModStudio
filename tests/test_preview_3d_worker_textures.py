@@ -555,5 +555,5 @@ def test_single_texture_prefers_the_material_that_is_on_screen():
         hands = texture_locator.red_vtf_via_qc(w._reader.paks, model, w.weapon_key)
         watch = texture_locator.red_vtf_via_qc(
             w._reader.paks, model, w.weapon_key, ["c_pocket_watch"])
-        assert hands == _png_bytes((200, 30, 30, 255))
-        assert watch == _png_bytes((220, 180, 40, 255))
+        assert hands == (_png_bytes((200, 30, 30, 255)), "spy_hands_red")
+        assert watch == (_png_bytes((220, 180, 40, 255)), "c_pocket_watch")

@@ -1313,7 +1313,7 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
             m(patch("src.services.texture_service.TextureService.process_image", side_effect=fake_process_image))
             if red_not_found:
                 # Имитируем «игровая RED-текстура не найдена» -> должно дать warning
-                m(patch("src.services.texture_build.game_source.get_original_vtf_bytes", return_value=None))
+                m(patch("src.services.texture_build.game_source.find_original_vtf", return_value=None))
             for target, kw in (extra_patches or {}).items():
                 self.mocks[target] = m(patch(target, **kw))
             ok, msg = VPKService.build_vpk(
@@ -1722,8 +1722,10 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
         # Все ответы на вопросы доп. материалов и столбцов BLU: своя картинка,
         # «из игры» (есть и нет в игре), «скопировать главную», пропуск;
         # общий столбец, вариант без RED-пары, нормаль у синего
+        from src.services.texture_build.game_source import GameVtf
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL as GAME, EXTRA_TEX_USE_MAIN as MAIN
-        orig = "src.services.texture_build.game_source.get_original_vtf_bytes"
+        orig = "src.services.texture_build.game_source.find_original_vtf"
+        scope = GameVtf(b"VTF\x00game", "models/weapons/c_scattergun/c_scattergun_scope")
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             Image.new("RGB", (4, 4), color="green").save(base / "own.png")
@@ -1742,13 +1744,15 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
                 extra_texture_callback=lambda name, *a: answers.get(name),
                 vtf_options={"normal": True},
                 extra_patches={orig: {"side_effect": lambda name, *a, **k:
-                                      b"VTF\x00game" if name == "c_scattergun_scope" else None},
+                                      scope if name == "c_scattergun_scope" else None},
                                "src.services.texture_service.TextureService.render_image_to_vtf":
                                {"side_effect": lambda img, **k: (
                                    Path(k["out_vtf_path"]).write_bytes(self.VTF), (None, True))[1]}})
         self.assertTrue(ok, msg)
         d = "materials/models/weapons/c_scattergun/"
-        game = b"VTF\x00game"
+        # Прицел «из игры» и синий прицел («главная» = его красная пара) в мод
+        # не попадают: их VMT смотрят на игру (game_links)
+        game = None
 
         def vmt(normal=None):
             bump = (f'\t"$bumpmap" "models/weapons/c_scattergun/{normal}"\n'.encode()
@@ -1767,7 +1771,7 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
         }
         self.assertEqual(self.tree, {
             f"{d}{name}.{ext}": data for name, pair in expected.items()
-            for ext, data in zip(("vmt", "vtf"), pair)})
+            for ext, data in zip(("vmt", "vtf"), pair) if data is not None})
 
     def test_snapshot_hat_extra_classes_and_styles(self):
         P = "src.services.vpk_service."
@@ -1805,7 +1809,9 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
         self.assertEqual(s.args[7:11], ((4, 4), "DXT1", [], {}))
         self.assertEqual(s.kwargs, {
             "bypass_prefix": "console",
-            "written_textures": {"console/models/player/items/all_class/hat_scout": img}})
+            "written_textures": {"console/models/player/items/all_class/hat_scout": img},
+            "textures_vpk": "tf2_textures_dir.vpk",
+            "template_cdmaterials": ["models/player/items/all_class"]})
 
     def test_snapshot_decor_and_parts_plumbing(self):
         P = "src.services.vpk_service."
@@ -1887,7 +1893,6 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
     def test_snapshot_spy_masks(self):
         from src.data.player_characters import SPY_MASK_MODE_KEY
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
-        orig = "src.services.texture_build.game_source.get_original_vtf_bytes"
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             Image.new("RGB", (4, 4), color="red").save(base / "scout.png")
@@ -1897,16 +1902,15 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
                        "mask_pyro": str(base / "pyro.vtf")}
             ok, msg, _ = self._run_build(
                 base, mode=SPY_MASK_MODE_KEY, weapon_key="spy",
-                extra_texture_callback=lambda name, wk: answers.get(name),
-                extra_patches={orig: {"return_value": b"VTF\x00game"}})
+                extra_texture_callback=lambda name, wk: answers.get(name))
             self.assertEqual((ok, msg), (True, str(base / "out.vpk")))
         vmt = lambda n: ('"VertexLitGeneric"\n{\n\t"$basetexture" '  # noqa: E731
                          f'"models/player/spy/{n}"\n}}\n').replace("\n", "\r\n").encode()
         d = "materials/models/player/spy/"
+        # Маска «из игры» лежала бы по своему же игровому пути - её в моде нет
         self.assertEqual(self.tree, {
             d + "mask_pyro.vmt": vmt("mask_pyro"), d + "mask_pyro.vtf": b"VTF\x00pyro",
             d + "mask_scout.vmt": vmt("mask_scout"), d + "mask_scout.vtf": self.VTF,
-            d + "mask_soldier.vmt": vmt("mask_soldier"), d + "mask_soldier.vtf": b"VTF\x00game",
         })
 
         with tempfile.TemporaryDirectory() as tmp:

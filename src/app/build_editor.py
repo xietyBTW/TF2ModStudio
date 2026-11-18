@@ -34,6 +34,13 @@ def _part_kind(smd_name: str) -> str:
     return ''
 
 
+def _tint_mode(params: Dict[str, Any]) -> str:
+    """Ответ про краску игры. «strip» - прежнее «Убрать покраску из VMT»,
+    теперь это и есть «Без покраски»"""
+    mode = str(params.get('tint_mode') or '')
+    return 'none' if mode == 'strip' else mode
+
+
 class BuildEditor:
     """Сборка VPK, её отмена и ответы на вопросы воркера"""
 
@@ -154,23 +161,33 @@ class BuildEditor:
         Спрашиваем до сборки, ответ приходит тем же вызовом (`tint_mode`).
         У шапки со снятой галкой «Краски из игры» красить нечего
 
-        Вопрос странице ({'confirm_tint'}) или None; ответ «none»/«mask»
-        подменяет картинки исправленными
+        Вопрос странице ({'confirm_tint'}) или None. Ответы: «none» - без
+        покраски (снимает её сборка, tint_strip), «mask» - маска игрового
+        оригинала в картинках, «keep» - как есть
         """
-        tint_mode = str(params.get('tint_mode') or '')
+        tint_mode = _tint_mode(params)
         if mode == 'hat' and not params.get('hat_paints', True):
             return None
         risks = self._host._tint_risks(images.own_paths())
-        if risks and tint_mode not in ('none', 'mask', 'strip', 'keep'):
+        if risks and tint_mode not in ('none', 'mask', 'keep'):
             from src.services import vmt_tint
             spec = next(iter(risks.values()))[0]
             return {'confirm_tint': {
                 'color': vmt_tint.color_name(spec.color, params.get('lang') or 'ru'),
                 'hex': '#%02x%02x%02x' % spec.color}}
-        if tint_mode in ('none', 'mask'):
+        if tint_mode == 'mask':
             fixed = self._host._fix_tint(risks, tint_mode)
             images.remap(lambda p: fixed.get(p, p))
         return None
+
+    def _misc_to_ask(self) -> List[str]:
+        """«Прочее», о котором сборка спросит. Глаза - только со своей
+        картинкой: без неё они остаются игровыми молча, а «скопировать
+        главную» на радужку не имеет смысла"""
+        p = self._host.preview
+        eyes = {e.lower() for e in p.eye_materials}
+        return [m for m in p.misc_materials
+                if m.lower() not in eyes or p.textures.uploaded_for_mat(m)]
 
     def _build_request(self, images: Any, mode: str, paths: Dict[str, str],
                        params: Dict[str, Any]) -> Any:
@@ -178,8 +195,8 @@ class BuildEditor:
         from src.data.skyboxes import SKYBOX_MODE
         from src.services.build_request import BuildRequest
 
-        tint_mode = str(params.get('tint_mode') or '')
-        hat_primary, hat_models = (self._hat_build_models(params.get('hat_classes'))
+        tint_mode = _tint_mode(params)
+        hat_primary, hat_models =(self._hat_build_models(params.get('hat_classes'))
                                    if mode == 'hat' else (None, None))
         size = int(params.get('size') or 512)
         image = images.image
@@ -203,7 +220,7 @@ class BuildEditor:
             panel_extra_textures=images.extra or None,
             # «Прочее» со страницы: сборка спрашивает про эти материалы так
             # же, как про доп. материалы геометрии
-            misc_materials=list(self._host.preview.misc_materials) or None,
+            misc_materials=self._misc_to_ask() or None,
             panel_blu_textures=images.blu or None,
             force_team=bool(self._host.preview.textures.force_team),
             isolate_shoulders=bool(params.get('isolate_shoulders')),
@@ -243,7 +260,7 @@ class BuildEditor:
             # Краски из игры: с ними текстура красится командным цветом, как у
             # стоковой шапки. Спрашивает страница - умолчание «да», как в окне
             hat_apply_game_paints=bool(params.get('hat_paints', True)),
-            strip_game_tint=(tint_mode == 'strip'),
+            strip_game_tint=(tint_mode == 'none'),
             # Своя геометрия: включает замену сама фактом загрузки - отдельной
             # галочки на странице нет, как и в кнопке приложения
             replace_model_enabled=bool(self._host.preview.custom_smd_path),
@@ -537,7 +554,15 @@ class BuildEditor:
         if uploaded:
             self._answer_texture_request(self._host.parts.baked_path(uploaded))
             return
-        from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
+        from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
+        # Синяя командной карточки решена заранее, под кнопкой BLU: «Как
+        # красная» - копия красной, иначе игровая. Спрашивать не о чем
+        t = self._host.preview.textures
+        red = None if t.force_team else t.red_of_blu(material)
+        if red is not None:
+            self._answer_texture_request(
+                EXTRA_TEX_USE_MAIN if red in t.blu_like_red else EXTRA_TEX_USE_GAME_ORIGINAL)
+            return
         # Мод из VPK: текстура материала уже лежит в моде и видна на
         # карточке - своей нет, значит остаётся его. Спрашивать не о чем.
         # Синий двойник красного без правки - тоже: карточки у него нет, а

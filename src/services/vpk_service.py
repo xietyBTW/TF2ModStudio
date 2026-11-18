@@ -156,6 +156,7 @@ class VPKService:
                     bypass_method=r.bypass_method,
                     material_maps=r.material_maps,
                     material_settings=r.material_settings,
+                    strip_game_tint=r.strip_game_tint,
                 )
                 emit_progress(100 if success else 0,
                               t.get('build_completed', 'Build completed') if success
@@ -649,6 +650,9 @@ class VPKService:
             VPKService._drop_stray_blue(
                 ctx, weapon_key, plan.blu_is_team, plan.texture_filename,
                 out.vtf_output_path, src.original_cdmaterials_path)
+            # Последним: до этого стадии читают и копируют игровые VTF
+            from src.services.texture_build.game_links import link_to_game
+            link_to_game(ctx.vpkroot_dir / "materials", ctx.game_textures)
 
         except Exception as e:
             error_msg = str(e)
@@ -873,6 +877,7 @@ class VPKService:
             original_cdmaterials_paths=src.original_cdmaterials_paths,
             tf2_textures_vpk=tf2_textures_vpk,
             tf2_misc_vpk=tf2_misc_vpk,
+            game_textures=ctx.game_textures,
         )
         tex_ctx = TextureBuildContext(
             vtf_output_path=out.vtf_output_path,
@@ -959,6 +964,14 @@ class VPKService:
         # Синие убер/зомби с «Скопировать главную»: их пара появилась только сейчас
         VpkTextureBuilder._finish_variant_copies(
             _variant_copies, ctx, slots, strip_paints=strip_paints)
+        # Синие VMT записаны копиями красного - командный вид игры возвращается
+        # одним проходом, до зеркал: те копируют уже готовые VMT
+        from src.services.texture_build.team_look import inherit_pairs
+        inherit_pairs(out.vtf_output_path,
+                      zip(plan.tg_structure.get('red_row') or [],
+                          plan.tg_structure.get('blu_row') or []),
+                      slots.original_cdmaterials_paths,
+                      (slots.tf2_textures_vpk, slots.tf2_misc_vpk))
 
         # Зеркальные VMT по оригинальному пути (руки / spy-watch и т.п.).
         # Для all-class %s-шапок зеркало НЕ создаём (его заменила пер-классовая
@@ -1064,6 +1077,8 @@ class VPKService:
                 r.size, r.format_type, flags, vtf_options, out.vmt_path,
                 bypass_prefix=bypass_prefix,
                 written_textures=_written,
+                textures_vpk=tf2_textures_vpk,
+                template_cdmaterials=src.original_cdmaterials_paths,
             )
 
         # Гирлянды поверх оружия - своими моделями в тот же мод
@@ -1154,30 +1169,15 @@ class VPKService:
     @staticmethod
     def _strip_game_tint(vpkroot) -> None:
         """
-        Снимает покраску игры с материалов мода, чья текстура - своя
+        «Без покраски»: снимает краску игры с материалов, у текстуры которых
+        в моде нет своей маски (tint_strip)
 
         Одним проходом по готовому vpkroot, а не в каждом месте записи VMT:
         главный, BLU, доп. и «вторичные» материалы пишутся разными путями, и
-        пропустить хоть один значило бы оставить, например, BLU красным.
-        Своя текстура - та, чей VTF лежит в моде: служебные материалы пишутся
-        оригиналом и ссылаются на игровой путь, их покраску не трогаем
+        пропустить хоть один значило бы оставить, например, BLU красным
         """
-        from src.services import vmt_parse, vmt_tint
-        from src.services.vmt_service import VMTService
-
-        root = Path(vpkroot)
-        for vmt in root.rglob('*.vmt'):
-            try:
-                text = vmt.read_text(encoding='utf-8', errors='replace')
-            except OSError:
-                continue
-            if vmt_tint.parse_tint(text) is None:
-                continue
-            base = vmt_parse.parse(text).path('basetexture')
-            if not base or not (root / 'materials' / f'{base}.vtf').exists():
-                continue
-            VMTService.remove_paint_proxies(str(vmt))
-            logger.info(f"[tint] покраска игры снята: {vmt.name}")
+        from src.services.tint_strip import strip_unmasked
+        strip_unmasked(vpkroot)
 
     @staticmethod
     def build_vpk(

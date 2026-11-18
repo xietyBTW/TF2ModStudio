@@ -266,6 +266,7 @@ class CustomVPKService:
         bypass_method: str = "console",
         material_maps: Optional[Dict] = None,
         material_settings: Optional[Dict] = None,
+        strip_game_tint: bool = False,
     ) -> Tuple[bool, str]:
         """
         Полный пайплайн редактирования кастомного мода:
@@ -340,6 +341,9 @@ class CustomVPKService:
 
             # Что сделала замена: {name: (картинка, fps, есть ли нормаль)}
             replaced: Dict[str, Tuple[str, Optional[float], bool]] = {}
+            # Куда легли заменённые VTF: «Без покраски» трогает только их,
+            # остальные текстуры - работа автора мода
+            written: List[Path] = []
 
             def _stock(tex: Dict):
                 # Родную нормаль мода читаем ДО рендера всех текстур: наша
@@ -377,6 +381,7 @@ class CustomVPKService:
                             vtf_dest.parent / f"{tex_name}.png", tex_name,
                             tex_size, tex_format, tex_flags, tex_opts, stock)
                     replaced[tex['name']] = (src_img, fps, is_normal)
+                    written.append(vtf_dest)
                     logger.info(f"Текстура заменена: {vtf_dest}")
                     return True
                 except Exception as e:
@@ -433,6 +438,10 @@ class CustomVPKService:
                     decor_builds, temp_root, vpkroot_dir, tf2_root_dir, size,
                     format_type, flags or [], vtf_options or {}, bypass_method,
                     emit, language)
+
+            if strip_game_tint and written:
+                from src.services.tint_strip import strip_unmasked
+                strip_unmasked(vpkroot_dir, only=written)
 
             # 6. Перепаковка
             emit(-1, "Packing VPK..." if language == "en" else "Упаковка VPK...")

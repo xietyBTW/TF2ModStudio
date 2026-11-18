@@ -72,7 +72,7 @@ def reference_smd(w, directory):
 
 
 def vtf_for_mat(w, pak, mat, arm_folder, cdmaterials=None):
-    return texture_locator.find_vtf_for_mat(pak, mat, arm_folder, cdmaterials)
+    return texture_locator.material_vtf([pak], mat, arm_folder, cdmaterials or [])
 
 
 # Reference SMD
@@ -129,17 +129,16 @@ def test_vtf_candidates_order_for_player_material():
         pak = FakePak({})
         assert vtf_for_mat(w, pak, "Scout_Head_red", "scout",
                            ["models/weapons/c_items"]) is None
-        assert pak.reads == [
-            "materials/models/player/scout/Scout_Head_red.vtf",
-            "materials/models/player/scout/scout_head_red.vtf",
-            "materials/models/player/scout/Scout_Head.vtf",
-            "materials/models/player/scout/scout_head.vtf",
-            "materials/models/weapons/c_items/Scout_Head_red.vtf",
+        # VMT первым (так ищет игра), затем догадки - в архивах всё в нижнем регистре
+        assert pak.reads[0] == "materials/models/weapons/c_items/scout_head_red.vmt"
+        assert [r for r in pak.reads if r.endswith(".vtf")] == [
             "materials/models/weapons/c_items/scout_head_red.vtf",
-            "materials/models/workshop_partner/weapons/c_models/Scout_Head_red/Scout_Head_red.vtf",
-            "materials/models/weapons/c_models/Scout_Head_red/Scout_Head_red.vtf",
-            "materials/models/weapons/c_items/Scout_Head_red.vtf",
-            "materials/models/workshop/weapons/c_models/Scout_Head_red/Scout_Head_red.vtf",
+            "materials/models/player/scout/scout_head_red.vtf",
+            "materials/models/player/scout/scout_head.vtf",
+            "materials/models/workshop_partner/weapons/c_models/scout_head_red/scout_head_red.vtf",
+            "materials/models/weapons/c_models/scout_head_red/scout_head_red.vtf",
+            "materials/models/weapons/c_items/scout_head_red.vtf",
+            "materials/models/workshop/weapons/c_models/scout_head_red/scout_head_red.vtf",
         ]
 
 
@@ -148,7 +147,7 @@ def test_vtf_candidates_strip_overlay_suffix():
         w = _worker(tmp)
         pak = FakePak({"materials/models/player/hvyweapon/hvyweapon_hands.vtf": b"X"})
         assert vtf_for_mat(w, pak, "hvyweapon_hands_sheen", "hvyweapon") == b"X"
-        assert pak.reads == [
+        assert [r for r in pak.reads if r.endswith(".vtf")] == [
             "materials/models/player/hvyweapon/hvyweapon_hands_sheen.vtf",
             "materials/models/player/hvyweapon/hvyweapon_hands.vtf",
         ]

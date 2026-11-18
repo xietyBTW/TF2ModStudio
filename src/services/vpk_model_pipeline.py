@@ -562,6 +562,8 @@ class VpkModelPipeline:
         base_vmt_path: Path,
         bypass_prefix: str = "console",
         written_textures: Optional[dict] = None,
+        textures_vpk: Optional[str] = None,
+        template_cdmaterials: Optional[List[str]] = None,
     ) -> None:
         """
         Собирает доп. ИЗМЕНЁННЫЕ стили-модели шапки - каждый со СВОЕЙ моделью и
@@ -644,21 +646,74 @@ class VpkModelPipeline:
                     vtf_dir = ctx.vpkroot_dir
                     for part in materials_rel.split('/'):
                         vtf_dir = vtf_dir / part
+                    before = {p.stem.lower() for p in vtf_dir.glob('*.vtf')}
                     written = VpkModelPipeline._write_style_textures(
                         qc_p, entry, img, tex_name, vtf_dir, base_vmt_path,
                         patched_cd, size, format_type, flags, vtf_options,
                         written_textures=written_textures, ctx=ctx, label=wk,
                     )
-                    if written:
-                        logger.info(
-                            f"[HAT STYLE] стиль {wk}: модель и текстур: {written}")
-                    else:
-                        logger.info(f"[HAT STYLE] стиль {wk}: модель добавлена (без своей текстуры)")
+                    # Их VMT - копии главного: свой вид стиля (и его синей
+                    # команды) возвращается тем же правилом, что у синих
+                    if template_cdmaterials:
+                        from src.services.texture_build.team_look import inherit_pairs
+                        inherit_pairs(
+                            vtf_dir,
+                            [(base_vmt_path.stem, p.stem) for p in vtf_dir.glob('*.vtf')
+                             if p.stem.lower() not in before],
+                            template_cdmaterials, (textures_vpk, tf2_misc_vpk),
+                            own_cds=[cdmat0])
+                    kept = VpkModelPipeline._keep_untouched_style_materials(
+                        qc_p, cdmat0, vtf_dir, textures_vpk, tf2_misc_vpk,
+                        str(st_root / "orig_vmt"))
+                    logger.info(f"[HAT STYLE] стиль {wk}: своих текстур {written}, "
+                                f"игровых материалов {kept}")
                 except Exception as exc:
                     logger.warning(
                         f"[HAT STYLE] {wk}: ошибка сборки стиля - пропуск: {exc}",
                         exc_info=True,
                     )
+
+    @staticmethod
+    def _keep_untouched_style_materials(
+        qc_path: str,
+        cdmaterials: str,
+        vtf_dir: Path,
+        textures_vpk: Optional[str],
+        misc_vpk: str,
+        extract_dir: str,
+    ) -> List[str]:
+        """
+        Материалы стиля без правки - родным VMT по новому пути модели
+
+        Модель стиля собрана заново с $cdmaterials в папке обхода и ищет там
+        все свои материалы, а не только правленые. Без копии родного VMT
+        нетронутая часть стиля в игре фиолетово-чёрная (у Wanderer's Wool -
+        вторая часть «Merry..? - Bloodless»). Текстура в родном VMT указана
+        игровым путём, поэтому VTF не копируем
+
+        Returns:
+            Имена записанных материалов
+        """
+        from src.services.texture_build import game_source
+
+        model = qc_skin_parser.load_model(os.path.dirname(qc_path))
+        names = {m for row in (model.layout.all_rows if model else []) for m in row}
+        kept: List[str] = []
+        for name in sorted(names, key=str.lower):
+            target = vtf_dir / f"{name}.vmt"
+            if target.exists():
+                continue
+            for cd in qc_skin_parser.resolve_cdmaterials([cdmaterials]):
+                src = game_source.extract_original_vmt(
+                    cd, name, textures_vpk, misc_vpk, extract_dir)
+                if src and os.path.exists(src):
+                    ensure_directory_exists(vtf_dir)
+                    copy_file_safe(src, str(target))
+                    kept.append(name)
+                    break
+            else:
+                logger.warning(f"[HAT STYLE] нет родного VMT материала {name}")
+        return kept
 
     @staticmethod
     def _write_style_textures(
@@ -699,6 +754,11 @@ class VpkModelPipeline:
                      for k, v in (textures.get(Team.RED) or {}).items()}
         blu_edits = {str(k).lower(): v
                      for k, v in (textures.get(Team.BLU) or {}).items()}
+        like_red = {str(m).lower() for m in entry.get('blu_like_red') or ()}
+        # Карточка одноматериальной модели живёт под служебным ключом
+        from src.domain.preview.texture_state import SINGLE_TEX_KEY
+        if SINGLE_TEX_KEY in like_red and main_tex:
+            like_red.add(main_tex.lower())
 
         model = qc_skin_parser.load_model(os.path.dirname(qc_path))
         mats = list(model.skin0) if model else []
@@ -740,7 +800,9 @@ class VpkModelPipeline:
 
             blu_mat = team_map.get(mat)
             if blu_mat and not qc_skin_parser.is_shared_column(mat, blu_mat):
-                if _render(blu_mat, blu_edits.get(low)):
+                # «Как красная» - синяя той же картинкой, что красная
+                blu_img = blu_edits.get(low) or (img if low in like_red else None)
+                if _render(blu_mat, blu_img):
                     written += 1
         return written
 

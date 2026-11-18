@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from src.services import vmt_parse, vmt_render, vmt_tint
-from src.services.game_vpk_reader import GameVpkReader
+from src.services.game_vpk_reader import GameVpkReader, GameVtf
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +38,8 @@ class ResolvedMaterial:
     name: str                          # имя материала как в модели
     vmt_path: Optional[str] = None     # путь VMT внутри VPK
     basetexture: Optional[str] = None  # значение $basetexture (rel. materials/)
+    #: Радужка глаза ($iris у EyeRefract): своей $basetexture у глаз нет
+    iris: Optional[str] = None
     png_path: Optional[str] = None     # готовая картинка для превью
     tint: Optional[vmt_tint.TintSpec] = None
     shader: str = ""
@@ -62,13 +64,17 @@ class MaterialResolver:
         out_dir: куда класть PNG.
         apply_tint: впечатывать ли командную краску из VMT (для превью - да;
             для экспорта исходной текстуры - нет, в игре её накладывает движок)
+        eyes: рисовать глаза их радужкой. Только для сцен, где картинка
+            ложится на меш и дальше никуда не идёт: из карточки радужка ушла
+            бы в сборку текстурой материала, который игра рисует без неё
     """
 
     def __init__(self, reader: GameVpkReader, out_dir: str,
-                 apply_tint: bool = True):
+                 apply_tint: bool = True, eyes: bool = False):
         self._reader = reader
         self._out_dir = out_dir
         self._apply_tint = apply_tint
+        self._eyes = eyes
         self._cache: Dict[tuple, ResolvedMaterial] = {}
         self._described: Dict[tuple, ResolvedMaterial] = {}
 
@@ -130,6 +136,31 @@ class MaterialResolver:
             return None
         return self._reader.find_vtf_for_basetexture(info.basetexture)
 
+    def find_vtf(self, mat_name: str, cdmaterials: List[str],
+                 guesses=()) -> Optional[GameVtf]:
+        """Текстура материала так, как её найдёт игра
+
+        Игра идёт только через VMT -> $basetexture, и мы тоже первым делом.
+        Файл с именем материала рядом бывает НЕ тем: у Valve c_skullbat_hats
+        и c_skullbat_hats_blue смотрят друг на друга, gold_wrench рисуется
+        текстурой c_wrench, у шапок с краской в VMT файл *_red игре не нужен.
+        Имя материала в папках модели и `guesses` (texture_guess) - только
+        когда VMT нет. VMT без $basetexture (глаза) - своей текстуры нет
+        """
+        info = self.describe(mat_name, cdmaterials)
+        if info.vmt_path:
+            if not info.basetexture:
+                return None
+            found = self._reader.find_texture(info.basetexture)
+            if found:
+                return found
+        name = mat_name.strip().lower()
+        for path in [f"{cd}/{name}" for cd in cdmaterials or ()] + list(guesses):
+            found = self._reader.find_texture(path)
+            if found:
+                return found
+        return None
+
     def texture_map(self, mat_names: List[str],
                     cdmaterials: List[str]) -> Dict[str, str]:
         """{имя материала: путь PNG} - то, что ждут превью и карточки
@@ -176,6 +207,7 @@ class MaterialResolver:
             logger.info(f"[mat] нет $basetexture в {vmt_path}")
         return ResolvedMaterial(
             name=mat_lower, vmt_path=vmt_path, basetexture=basetexture,
+            iris=doc.path("iris"),
             tint=vmt_tint.preview_tint(vmt_text), shader=doc.shader,
             render=vmt_render.from_doc(doc),
             params=vmt_parse.fingerprint(doc, skip=("basetexture",)))
@@ -183,13 +215,14 @@ class MaterialResolver:
     def _resolve_uncached(self, mat_name: str, cdmaterials: List[str],
                           out_name: Optional[str]) -> ResolvedMaterial:
         info = self.describe(mat_name, cdmaterials)
-        if not info.basetexture:
+        texture = info.basetexture or (info.iris if self._eyes else None)
+        if not texture:
             return info
 
-        vtf_data = self._reader.find_vtf_for_basetexture(info.basetexture)
+        vtf_data = self._reader.find_vtf_for_basetexture(texture)
         if not vtf_data:
             logger.info(
-                f"[mat] VTF не найден: {info.basetexture} (VMT={info.vmt_path})")
+                f"[mat] VTF не найден: {texture} (VMT={info.vmt_path})")
             return info
 
         png_path = self._to_png(vtf_data, out_name or info.name)
@@ -197,7 +230,7 @@ class MaterialResolver:
             vmt_tint.apply_to_png(png_path, info.tint)
         return ResolvedMaterial(
             name=info.name, vmt_path=info.vmt_path,
-            basetexture=info.basetexture, png_path=png_path,
+            basetexture=info.basetexture, iris=info.iris, png_path=png_path,
             tint=info.tint, shader=info.shader, render=info.render,
             params=info.params)
 

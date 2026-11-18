@@ -153,6 +153,7 @@ class Preview3DController:
         w.australium_ready.connect(self._on_australium_ready)
         w.render_hints.connect(lambda hints: self.render_hints.emit(hints or {}))
         w.scene_extra.connect(self._on_scene_extra)
+        w.eye_materials.connect(self._on_eye_materials)
         w.skin_textures.connect(self._on_skin_textures)
         w.failed.connect(self.failed.emit)
 
@@ -274,6 +275,9 @@ class Preview3DController:
             return
         self._session.adopt_style_textures(skin_textures)
         self.skin_textures.emit(skin_textures)
+
+    def _on_eye_materials(self, names) -> None:
+        self._session.eye_materials = [str(n) for n in names or ()]
 
     def _on_multi_material(self, tex_map: dict) -> None:
         if not tex_map:

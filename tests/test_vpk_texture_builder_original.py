@@ -49,13 +49,22 @@ def _via_vmt(files, mat_name, cdmaterials):
 
 class OriginalVtfTests(unittest.TestCase):
 
-    def test_texture_next_to_the_material_wins(self):
-        """Прямой путь дешевле и точнее - порядок менять нельзя"""
+    def test_the_vmt_wins_over_a_file_with_the_same_name(self):
+        """Игра рисует то, на что смотрит VMT, а не файл с именем материала
+
+        В игре таких расхождений сотня: c_skullbat_hats и
+        c_skullbat_hats_blue смотрят друг на друга, gold_wrench рисуется
+        текстурой c_wrench. Файл рядом угадал бы чужую команду или вещь
+        """
         files = {
             "materials/models/player/spy/spy_red.vtf": b"DIRECT",
             "materials/models/player/spy/spy_red.vmt": vmt(basetexture="other/thing"),
             "materials/other/thing.vtf": b"VIA_VMT",
         }
+        self.assertEqual(_run(files, "spy_red", ["models\\player\\spy\\"]), b"VIA_VMT")
+
+    def test_without_a_vmt_the_file_with_the_name_is_used(self):
+        files = {"materials/models/player/spy/spy_red.vtf": b"DIRECT"}
         self.assertEqual(_run(files, "spy_red", ["models\\player\\spy\\"]), b"DIRECT")
 
     def test_texture_that_lives_elsewhere_is_found_through_the_vmt(self):

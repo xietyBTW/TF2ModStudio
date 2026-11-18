@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional, Tuple
 
 from src.services import qc_skin_parser
+from src.services.game_vpk_reader import GameVtf  # noqa: F401 - часть контракта модуля
 from src.services.tf2_vpk_extract_service import TF2VPKExtractService
 from src.services.vmt_service import VMTService
 from src.shared.file_utils import copy_file_safe
@@ -31,139 +32,124 @@ def write_material_vmt(target_vmt_path, base_vmt_path, cdmaterials_path: str, te
     logger.info(f"Создан VMT вторичного материала: {target_vmt_path.name}")
 
 
+def is_eye_vmt(vmt_path) -> bool:
+    """Глаз персонажа: шейдер EyeRefract, картинка в нём - радужка $iris"""
+    from src.services import vmt_parse
+
+    if not vmt_path or not Path(vmt_path).is_file():
+        return False
+    text = Path(vmt_path).read_text(encoding='utf-8', errors='replace')
+    return vmt_parse.parse(text).shader.lower() == 'eyerefract'
+
+
+def write_eye_vmt(target_vmt_path, eye_vmt_path, cdmaterials_path: str, tex_name: str) -> None:
+    """Глаз со своей радужкой: игровой VMT, где $iris смотрит на текстуру мода
+
+    $basetexture шейдер глаза не читает, и ставить его нельзя - поэтому не
+    write_material_vmt. Ключ правится только в корне: $iris внутри запасного
+    блока Eyes_dx8 - для DirectX 8, его не трогаем
+    """
+    from src.services import vmt_spread
+
+    text = Path(eye_vmt_path).read_bytes().decode('utf-8', errors='replace')
+    texture = VMTService._get_texture_path_from_cdmaterials(cdmaterials_path, tex_name)
+    Path(target_vmt_path).write_bytes(
+        vmt_spread.set_key(text, '$iris', f'"{texture}"').encode('utf-8'))
+    logger.info(f"Глаз '{tex_name}': своя радужка {texture}")
+
+
 def get_original_vtf_bytes(
+    mat_name: str,
+    cdmaterials_paths,
+    textures_vpk: Optional[str],
+    misc_vpk: Optional[str],
+    log_not_found: bool = True,
+) -> Optional[bytes]:
+    """Байты оригинального VTF (см. find_original_vtf)"""
+    found = find_original_vtf(
+        mat_name, cdmaterials_paths, textures_vpk, misc_vpk, log_not_found)
+    return found.data if found else None
+
+
+def find_original_vtf(
     mat_name: str,
     cdmaterials_paths,          # str | list[str] | None
     textures_vpk: Optional[str],
     misc_vpk: Optional[str],
     log_not_found: bool = True,
-) -> Optional[bytes]:
+) -> Optional[GameVtf]:
     """
-    Извлекает оригинальный VTF из игровых VPK-файлов
+    Оригинальный VTF материала из игры - той же цепочкой, что у превью
+    (MaterialResolver.find_vtf): VMT -> $basetexture, без VMT - догадки
 
-    Crowbar добавляет префикс ``console\\`` ко всем $cdmaterials путям.
-    В реальных VPK этого префикса нет, поэтому мы его снимаем.
-    Пути вида ``console\\..\\..\\effects`` (для частиц) пропускаются
-
-    Args:
-        mat_name:          Имя материала (без расширения).
-        cdmaterials_paths: Один путь или список путей из $cdmaterials QC.
-                           Crowbar-префикс ``console/`` снимается автоматически.
-        textures_vpk:      Путь к tf2_textures_dir.vpk.
-        misc_vpk:          Путь к tf2_misc_dir.vpk
+    Пути $cdmaterials разрешаются общей нормализацией: Crowbar-префикс
+    ``console\\`` снимается, '../../effects' рядом с 'models/player/spy' -
+    это 'models/effects', где лежит убер-эффект
 
     Returns:
-        Байты VTF или None если не найдено
+        GameVtf или None если не найдено
     """
-    try:
-        from src.services.tf2_vpk_extract_service import _open_vpk_cached
-
-        mat_lower = mat_name.lower()
-
-        # Нормализуем cdmaterials_paths в список
-        if cdmaterials_paths is None:
-            raw_paths: list = []
-        elif isinstance(cdmaterials_paths, str):
-            raw_paths = [cdmaterials_paths]
-        else:
-            raw_paths = list(cdmaterials_paths)
-
-        candidates: list = []
-
-        # Кандидаты из QC ($cdmaterials) - общей нормализацией: она же
-        # разрешает относительные пути ('../../effects' рядом с
-        # 'models/player/spy' - это 'models/effects', где лежит убер-эффект)
-        cdmats = qc_skin_parser.resolve_cdmaterials(raw_paths)
-        candidates += [f"materials/{cdmat}/{mat_lower}.vtf" for cdmat in cdmats]
-
-        # Стандартные fallback-пути для оружий и персонажей
-        candidates += [
-            f"materials/models/weapons/c_models/{mat_lower}/{mat_lower}.vtf",
-            f"materials/models/weapons/c_items/{mat_lower}.vtf",
-            f"materials/models/workshop_partner/weapons/c_models/{mat_lower}/{mat_lower}.vtf",
-            f"materials/models/workshop/weapons/c_models/{mat_lower}/{mat_lower}.vtf",
-            f"materials/models/player/{mat_lower}/{mat_lower}.vtf",
-        ]
-
-        for vpk_path in filter(None, [textures_vpk, misc_vpk]):
-            if not os.path.exists(vpk_path):
-                continue
-            try:
-                pak = _open_vpk_cached(vpk_path)
-                if pak is None:
-                    continue
-                for vtf_path in candidates:
-                    try:
-                        data = pak[vtf_path].read()
-                        logger.debug(f"Оригинальный VTF из игры: {vtf_path}")
-                        return data
-                    except KeyError:
-                        continue
-            except Exception as _e:
-                logger.debug(f"VPK ошибка при поиске оригинала {mat_name}: {_e}")
-
-        # Прямые пути угадывают не всё: у служебных материалов персонажей
-        # (глаза, убер-скин, зомби) VTF лежит не рядом со своим VMT, а в
-        # общей папке - `models/player/spy/eyeball_r.vmt` указывает на
-        # `models/player/shared/eyeball_r`. Знает об этом только сам VMT,
-        # поэтому последним шагом идём общей цепочкой VMT -> $basetexture
-        data, has_own_texture = vtf_via_vmt(
-            mat_lower, cdmats, textures_vpk, misc_vpk)
-        if data:
-            return data
-        if not has_own_texture:
-            # Не потеря, а неверный вопрос: у EyeRefract (глаза персонажей)
-            # $basetexture нет вовсе - картинка собирается из $Iris и
-            # $CorneaTexture. Копировать в мод тут нечего
-            logger.info(
-                f"У материала '{mat_name}' нет своей текстуры "
-                f"($basetexture в VMT отсутствует) - оригинал не нужен"
-            )
-            return None
-
-        if log_not_found:
-            logger.warning(
-                f"Оригинальный VTF не найден в игре для '{mat_name}' "
-                f"(cdmaterials={cdmaterials_paths})"
-            )
-        else:
-            logger.debug(
-                f"Shared texture не в основном cdmaterials, пропускаем: '{mat_name}'"
-            )
-        return None
-
-    except Exception as exc:
-        logger.warning(f"get_original_vtf_bytes: {exc}")
-        return None
+    found, has_own_texture = _find(mat_name, cdmaterials_paths, textures_vpk, misc_vpk)
+    if found:
+        return found
+    if not has_own_texture:
+        # Не потеря, а неверный вопрос: у EyeRefract (глаза персонажей)
+        # $basetexture нет вовсе - картинка собирается из $Iris и
+        # $CorneaTexture. Копировать в мод тут нечего
+        logger.info(
+            f"У материала '{mat_name}' нет своей текстуры "
+            f"($basetexture в VMT отсутствует) - оригинал не нужен"
+        )
+    elif log_not_found:
+        logger.warning(
+            f"Оригинальный VTF не найден в игре для '{mat_name}' "
+            f"(cdmaterials={cdmaterials_paths})"
+        )
+    else:
+        logger.debug(f"Shared texture не в основном cdmaterials, пропускаем: '{mat_name}'")
+    return None
 
 
 def vtf_via_vmt(mat_lower: str, cdmaterials: list,
                  textures_vpk: str, misc_vpk: str) -> Tuple[Optional[bytes], bool]:
-    """Сырые байты VTF через цепочку VMT -> $basetexture -> VTF
-
-    Та же единая цепочка, что у превью (MaterialResolver), но БЕЗ краски и
-    без PNG: в мод должен лечь ровно тот файл, что лежит в игре - командный
-    цвет из VMT движок накладывает сам
+    """Сырые байты VTF материала - без краски и без PNG: в мод ложится ровно
+    тот файл, что в игре, командный цвет из VMT движок накладывает сам
 
     Returns:
         (байты | None, есть ли у материала своя текстура). Второе нужно
         ради лога: у шейдеров вроде EyeRefract $basetexture нет вовсе, и
         «оригинал не найден» для них - не потеря, а неверный вопрос
     """
+    found, has_own = _find(mat_lower, cdmaterials, textures_vpk, misc_vpk)
+    return (found.data if found else None), has_own
+
+
+def _find(mat_name, cdmaterials_paths, textures_vpk, misc_vpk) -> Tuple[Optional[GameVtf], bool]:
+    from src.services import texture_guess
+    from src.services.game_vpk_reader import GameVpkReader
+    from src.services.material_resolver import MaterialResolver
+
+    if cdmaterials_paths is None:
+        raw: list = []
+    elif isinstance(cdmaterials_paths, str):
+        raw = [cdmaterials_paths]
+    else:
+        raw = list(cdmaterials_paths)
+    cdmats = qc_skin_parser.resolve_cdmaterials(raw)
+    name = mat_name.lower()
     try:
-        from src.services.game_vpk_reader import GameVpkReader
-        from src.services.material_resolver import MaterialResolver
         reader = GameVpkReader([textures_vpk, misc_vpk])
         try:
             resolver = MaterialResolver(reader, "", apply_tint=False)
-            info = resolver.describe(mat_lower, list(cdmaterials))
-            if info.vmt_path and not info.basetexture:
-                return None, False
-            return resolver.vtf_bytes(mat_lower, list(cdmaterials)), True
+            found = resolver.find_vtf(
+                name, cdmats, guesses=(texture_guess.weapon_paths(name)
+                                       + [f"models/player/{name}/{name}"]))
+            info = resolver.describe(name, cdmats)
+            return found, not (info.vmt_path and not info.basetexture)
         finally:
             reader.close()
     except Exception as exc:                       # noqa: BLE001
-        logger.debug(f"VTF через VMT не найден для '{mat_lower}': {exc}")
+        logger.warning(f"Поиск оригинала '{mat_name}': {exc}")
         return None, True
 
 

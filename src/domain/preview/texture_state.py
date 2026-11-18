@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from src.shared.constants import Team
 
@@ -109,6 +109,9 @@ class PreviewTextureState:
     #: выглядит в точности как красный. Карточки у такого нет, поэтому
     #: сборка отдаёт ему правку красного, иначе синие видели бы сток
     blu_twins: Dict[str, str] = field(default_factory=dict)
+    #: Командные карточки, у которых синяя берёт картинку красной («Как
+    #: красная»). Без отметки и без своей синей - игровая синяя
+    blu_like_red: Set[str] = field(default_factory=set)
     #: Игровые оригиналы из VPK: {red_mat: png} по командам (ключи - RED-имена)
     vpk_red_tex_map: Dict[str, str] = field(default_factory=dict)
     vpk_blu_tex_map: Dict[str, str] = field(default_factory=dict)
@@ -262,6 +265,57 @@ class PreviewTextureState:
                 self.textures.setdefault(team, {})[mat] = path
             else:
                 self.textures.get(team, {}).pop(mat, None)
+        # Своя синяя заменяет выбор «Как красная»: снимешь её - вернётся игровая
+        if path and self.active_team == Team.BLU:
+            self.blu_like_red.discard(mat)
+
+    # Синяя текстура командной карточки: игровая, как красная или своя
+
+    def blu_choices(self) -> Dict[str, str]:
+        """{карточка: 'game' | 'red' | 'own'} у командных карточек, пока
+        показана синяя команда. Под «сделать командным» синие свои по
+        определению, выбора там нет"""
+        if self.active_team != Team.BLU or self.force_team:
+            return {}
+        red = self.textures.get(Team.RED, {})
+        blu = self.textures.get(Team.BLU, {})
+        out: Dict[str, str] = {}
+        for mat in self.material_names:
+            if is_decor(mat) or not self.is_team_material(mat):
+                continue
+            own = _existing(blu.get(mat))
+            out[mat] = ('own' if own and own != red.get(mat)
+                        else 'red' if mat in self.blu_like_red else 'game')
+        return out
+
+    def has_upload(self, mat: str) -> bool:
+        """Лежит ли на карточке своя картинка там, где она сейчас показана:
+        в открытом стиле - его правка, иначе правка показанной команды"""
+        if self.skin_info and self.active_skin != 0 and not is_decor(mat):
+            return bool(_existing(self.skin_overrides.get(self.active_skin, {}).get(mat)))
+        return bool(_existing(self.textures.get(self.active_team, {}).get(mat)))
+
+    def set_blu_choice(self, mat: str, choice: str) -> None:
+        """«Игровая» или «Как красная» у синей карточки. Своя синяя при этом
+        снимается: выбор и есть отказ от неё"""
+        self.textures.get(Team.BLU, {}).pop(mat, None)
+        if choice == 'red':
+            self.blu_like_red.add(mat)
+        else:
+            self.blu_like_red.discard(mat)
+
+    def red_of_blu(self, blu_mat: str) -> Optional[str]:
+        """Красная карточка синего материала сборки (``…_blue``), иначе None"""
+        low = (blu_mat or '').lower()
+        for red, blu in self.blu_name_map.items():
+            if blu.lower() == low and red.lower() != low:
+                return self._card_of(red)
+        for suf in ('_blue', '_blu'):
+            if low.endswith(suf) and self.blu_frames:
+                base = blu_mat[:-len(suf)]
+                if base in self.material_names or self.material_names == [SINGLE_TEX_KEY]:
+                    return self._card_of(base)
+        return None
 
     # Разрешение (что показывать)
 
@@ -360,6 +414,10 @@ class PreviewTextureState:
             return p
 
         team_specific = self.is_team_material(mat)
+        # «Как красная»: синяя показывает то же, что красная карточка
+        if active == Team.BLU and team_specific and mat in self.blu_like_red:
+            return (_existing(self.textures.get(Team.RED, {}).get(mat))
+                    or self.game_base(mat, Team.RED))
         # Наследование чужой команды - одностороннее, когда команды РАЗДЕЛЕНЫ.
         # Под «сделать командным» человек задаёт RED и BLU порознь: красная
         # карточка, подхватившая синюю текстуру, читалась как «загрузка на BLU
@@ -598,6 +656,7 @@ class PreviewTextureState:
             'force_team': self.force_team,
             'blu_name_map': dict(self.blu_name_map),
             'blu_twins': dict(self.blu_twins),
+            'blu_like_red': sorted(self.blu_like_red),
             'vpk_red_tex_map': dict(self.vpk_red_tex_map),
             'vpk_blu_tex_map': dict(self.vpk_blu_tex_map),
             'red_frames': list(self.red_frames),
@@ -620,6 +679,7 @@ class PreviewTextureState:
         self.force_team = snap.get('force_team', False)
         self.blu_name_map = dict(snap.get('blu_name_map') or {})
         self.blu_twins = dict(snap.get('blu_twins') or {})
+        self.blu_like_red = set(snap.get('blu_like_red') or ())
         self.vpk_red_tex_map = dict(snap.get('vpk_red_tex_map') or {})
         self.vpk_blu_tex_map = dict(snap.get('vpk_blu_tex_map') or {})
         self.red_frames = list(snap.get('red_frames') or [])

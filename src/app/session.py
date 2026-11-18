@@ -583,6 +583,7 @@ class AppSession:
                 'keep_materials': bool(edits.get('custom_keep_materials')),
                 'image_path': snap.get('image_path'),
                 'textures': textures,
+                'blu_like_red': list(edits.get('blu_like_red') or ()),
                 # Материалы частей черновик не переносит - сборка скажет об этом
                 'part_materials': bool(edits.get('part_materials')),
             })
@@ -1727,6 +1728,8 @@ class AppSession:
             # Где на карточке не игровой оригинал - там меню предлагает
             # экспортировать и его
             'own_cards': self.tools.changed_cards(shown),
+            # Где лежит своя картинка - меню предлагает вернуть игровую
+            'uploaded_cards': [m for m in shown if t.has_upload(m)],
             # Меши красятся ПОЛНЫМ набором: карточки отфильтрованы, а служебная
             # геометрия без текстуры осталась бы серой
             'scene': scene,
@@ -1754,6 +1757,8 @@ class AppSession:
                              and not is_hands),
             'misc_mode': self.preview.misc_mode,
             'force_team': t.force_team,
+            # Чем станет синяя у командных карточек: выбор под кнопкой BLU
+            'blu_choices': t.blu_choices(),
             'can_force_team': self.preview.can_force_team(),
             # Правка QC имеет смысл только у СВОЕЙ готовой модели: у замены
             # геометрии сборка собирает QC сама под игровые материалы

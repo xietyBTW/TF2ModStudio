@@ -164,7 +164,11 @@ class EffectCatalog:
         # Без запроса список отдаём весь (необычных тысяча с небольшим, его
         # листают), поиск - первые двести: дальше уточняют запрос
         page = items if not words else items[:self.EFFECTS_PAGE]
+        from src.services.particle_editor_service import ParticleEditorService
         return {'ready': ready,
+                # Сколько файлов игры индекс уже прошёл: [пройдено, всего]
+                'progress': (None if ready
+                             else list(ParticleEditorService.catalog_progress() or ())),
                 'items': [self._listed(it, inline=bool(words) or it['open']) for it in page],
                 'total': len(items), 'facets': facets, 'categories': categories}
 

@@ -495,6 +495,12 @@
 
 /* Каталог эффектов игры: имя, система, файл */
 .fx__head { margin: 14px 0 4px; }
+
+/* Пока строится индекс эффектов - сколько файлов игры уже пройдено */
+.fxindex { margin: 4px 0 10px; }
+.fxindex__label { margin: 0 0 6px; color: var(--ink-mute); font-size: 12px; }
+.fxindex__bar { height: 3px; background: var(--hairline); overflow: hidden; }
+.fxindex__bar > i { display: block; height: 100%; background: var(--accent); }
 /* Число при кнопке фильтра: «Лицо 212» */
 .underlined__n { margin-left: 5px; font-style: normal; font-size: 10px;
                  color: var(--ink-mute); }

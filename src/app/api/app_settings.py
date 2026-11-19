@@ -337,6 +337,7 @@ def set_settings(values: Optional[Dict[str, object]] = None,
     with AppConfig.lock:
         cfg = AppConfig.load_config()
         was_cap = _cache_cap(cfg.get('model_cache_mb'))
+        was_root = (cfg.get('tf2_game_folder') or '').strip()
         for key, value in (values or {}).items():
             if key not in _SETTINGS_KEYS:
                 continue
@@ -368,4 +369,9 @@ def set_settings(values: Optional[Dict[str, object]] = None,
         threading.Thread(target=enforce_cache_limit, daemon=True).start()
     from src.app.session import session
     session().parts.refresh_parts_animation()
+    if (cfg.get('tf2_game_folder') or '').strip() != was_root:
+        # На новом ПК папку игры выбирают уже после старта, и прогрев при
+        # запуске прошёл впустую: индексы (эффекты частиц - 13 с) строились
+        # бы только при первом входе в раздел
+        session().warm_up()
     return settings(lang)

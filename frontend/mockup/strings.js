@@ -1030,6 +1030,8 @@ export const EN = {
     'The effect index is still being built - searching game names only for now.',
   'Индекс эффектов ещё строится - попробуйте через несколько секунд':
     'The effect index is still being built - try again in a few seconds',
+  'Индекс эффектов: {} из {} файлов': 'Effect index: {} of {} files',
+  'Индекс эффектов строится': 'Building the effect index',
   'В файле нет такой системы': 'The file has no such system',
   'эффект': 'effect',
   'эффекта': 'effects',

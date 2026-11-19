@@ -193,6 +193,7 @@ export async function showEffects(query = '') {
   els.fFxCat.hidden = !cats.length;
 
   els.grid.innerHTML = '';
+  if (!res.ready) els.grid.append(indexProgress(res.progress));
   // Без запроса список идёт группами: необычные - по разделам, другой
   // источник - по предмету («Огнемёт», «Турель»), подписываем границы
   const byItem = source && source !== 'unusual';
@@ -236,6 +237,40 @@ export async function showEffects(query = '') {
   els.note.textContent = res.ready
     ? 'Ничего не найдено.'
     : 'Индекс эффектов ещё строится - пока ищем только по именам из игры.';
+  // Индекс достраивается в фоне (с запуска приложения): список обновится
+  // сам, а не после «попробуйте ещё раз». Ушли в файл или сменили запрос -
+  // этот повтор уже не нужен
+  if (!res.ready) {
+    setTimeout(async () => {
+      if (mine !== fxTurn || treeShown) return;
+      const top = els.grid.scrollTop;
+      await showEffects(lastQuery);
+      els.grid.scrollTop = top;
+    }, 1000);
+  }
+}
+
+/**
+ * Полоса над списком, пока строится индекс эффектов: сколько файлов игры
+ * уже пройдено. Скан с нуля идёт секунд пятнадцать, и без счёта непонятно,
+ * сколько ещё ждать. Скан ещё не начал файлы - полоса пустая
+ */
+function indexProgress(progress) {
+  const [done, total] = progress?.length === 2 ? progress : [0, 0];
+  const box = document.createElement('div');
+  box.className = 'fxindex';
+  const label = document.createElement('p');
+  label.className = 'fxindex__label';
+  label.textContent = total
+    ? t('Индекс эффектов: {} из {} файлов').replace('{}', done).replace('{}', total)
+    : t('Индекс эффектов строится');
+  const bar = document.createElement('div');
+  bar.className = 'fxindex__bar';
+  const fill = document.createElement('i');
+  fill.style.width = (total ? Math.round(100 * done / total) : 0) + '%';
+  bar.append(fill);
+  box.append(label, bar);
+  return box;
 }
 
 /**

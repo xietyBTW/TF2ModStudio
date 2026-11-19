@@ -338,6 +338,8 @@ class ParticleEditorService:
     _system_roots: Dict[str, str] = {}
     #: Поток фонового скана каталога - один на процесс
     _catalog_thread = None
+    #: (пройдено файлов, всего) у идущего скана, None - скана нет
+    _catalog_progress = None
 
     list_game_pcfs = staticmethod(catalog.list_game_pcfs)
     game_effect_materials = classmethod(catalog.game_effect_materials)
@@ -348,6 +350,7 @@ class ParticleEditorService:
     build_attr_catalog = classmethod(catalog.build_attr_catalog)
     system_roots = classmethod(catalog.system_roots)
     system_index = classmethod(catalog.system_index)
+    catalog_progress = classmethod(catalog.catalog_progress)
     _track_range = staticmethod(catalog.track_range)
     attr_stats = classmethod(catalog.attr_stats)
     module_attr_catalog = classmethod(catalog.module_attr_catalog)

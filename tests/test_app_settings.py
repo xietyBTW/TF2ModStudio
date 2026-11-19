@@ -64,6 +64,20 @@ class SettingsRoundTripTests(unittest.TestCase):
                 after = api.set_settings(dict(before), 'ru')['values']
                 self.assertEqual(before, after)
 
+    def test_new_game_folder_starts_the_warm_up(self):
+        """На новом ПК папку выбирают после старта: индексы (эффекты частиц -
+        13 с) строились бы только при первом входе в раздел"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_file = self._isolated(tmp)
+            with patch.object(AppConfig, 'CONFIG_FILE', config_file), \
+                 patch('src.app.warm_up.start') as warm:
+                api.set_settings({'export_folder': 'out'}, 'ru')
+                warm.assert_not_called()
+                api.set_settings({'tf2_game_folder': tmp}, 'ru')
+                warm.assert_called_once()
+                api.set_settings({'tf2_game_folder': tmp}, 'ru')
+                warm.assert_called_once()
+
     def test_unknown_keys_are_ignored(self):
         """Страница правит только свои ключи: геометрия окна ей не принадлежит"""
         with tempfile.TemporaryDirectory() as tmp:

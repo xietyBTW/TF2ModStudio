@@ -255,34 +255,14 @@ def build_attr_catalog(cls, tf2_root_dir: str) -> None:
     materials: set = set()
     systems: Dict[str, str] = {}
     roots: Dict[str, str] = {}
-    for pcf in cls.list_game_pcfs(tf2_root_dir):
-        try:
-            other = cls()
-            other.load_from_game(tf2_root_dir, pcf)
-        except Exception:
-            continue
-        _collect_catalog(cls, other, catalog, canon)
-        for m in other.material_names():
-            if _is_particle_material(m):
-                materials.add(m)
-        # Первый файл побеждает: `_dx80`-копии идут следом по алфавиту и
-        # несут те же имена
-        sys_json = other.systems_json()
-        for name in sys_json:
-            systems.setdefault(name, pcf)
-        # Корень - верхний уровень дерева файла, потомку достаётся
-        # первый корень, под которым он встретился: одна система бывает
-        # ребёнком у нескольких эффектов
-        tree = system_hierarchy(sys_json, order=other.system_names())
-        tops = {name for name, _ in tree}
-
-        def walk(kids, top):
-            for name, sub in kids:
-                if name not in tops:
-                    roots.setdefault(name, top)
-                walk(sub, top)
-        for name, sub in tree:
-            walk(sub, name)
+    pcfs = cls.list_game_pcfs(tf2_root_dir)
+    try:
+        for done, pcf in enumerate(pcfs):
+            # Счёт для полосы в списке эффектов: скан с нуля идёт 13 с
+            cls._catalog_progress = (done, len(pcfs))
+            _scan_pcf(cls, tf2_root_dir, pcf, catalog, canon, materials, systems, roots)
+    finally:
+        cls._catalog_progress = None
     if catalog:
         cls._attr_catalog = catalog
         cls._system_index = systems
@@ -294,6 +274,42 @@ def build_attr_catalog(cls, tf2_root_dir: str) -> None:
             for key, names in canon.items()}
         cls._game_materials_cache = sorted(materials, key=str.lower)
         _save_disk_catalog(cls, tf2_root_dir)
+
+
+def catalog_progress(cls):
+    """(пройдено файлов, всего) у идущего скана каталога, None - скана нет"""
+    return cls._catalog_progress
+
+
+def _scan_pcf(cls, tf2_root_dir, pcf, catalog, canon, materials, systems, roots) -> None:
+    """Один PCF в каталог: параметры, материалы, системы и их корни"""
+    try:
+        other = cls()
+        other.load_from_game(tf2_root_dir, pcf)
+    except Exception:
+        return
+    _collect_catalog(cls, other, catalog, canon)
+    for m in other.material_names():
+        if _is_particle_material(m):
+            materials.add(m)
+    # Первый файл побеждает: `_dx80`-копии идут следом по алфавиту и несут
+    # те же имена
+    sys_json = other.systems_json()
+    for name in sys_json:
+        systems.setdefault(name, pcf)
+    # Корень - верхний уровень дерева файла, потомку достаётся первый
+    # корень, под которым он встретился: одна система бывает ребёнком у
+    # нескольких эффектов
+    tree = system_hierarchy(sys_json, order=other.system_names())
+    tops = {name for name, _ in tree}
+
+    def walk(kids, top):
+        for name, sub in kids:
+            if name not in tops:
+                roots.setdefault(name, top)
+            walk(sub, top)
+    for name, sub in tree:
+        walk(sub, name)
 
 
 def system_roots(cls, tf2_root_dir: str) -> Dict[str, str]:

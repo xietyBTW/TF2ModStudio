@@ -191,3 +191,23 @@ def test_model_textures_need_game_path():
     """Без пути к игре текстуры не ищем - модель просто останется серой"""
     from src.services.model_materials import resolve_model_textures
     assert resolve_model_textures("nope.qc", ["mat"], "") == {}
+
+
+def test_default_parts_join_the_body(tmp_path):
+    """У игроков ноги, шапка и наушники - в `$bodygroup`: сцена точек без
+    них показывала разведчика без ног. Берётся вариант по умолчанию, само
+    тело и его уровни детализации не задваиваются"""
+    from src.services.model_attachments import default_part_smds
+
+    for name in ("scout_morphs_low.smd", "scout_morphs_low_lod1.smd",
+                 "shoes_socks_bodygroup.smd", "hat_bodygroup.smd", "hat_alt.smd"):
+        (tmp_path / name).write_text("version 1\n", encoding="utf-8")
+    qc = tmp_path / "scout.qc"
+    qc.write_text(
+        '$model "scout" "scout_morphs_low.smd"\n'
+        '$bodygroup "shoes_socks"\n{\n\tstudio "shoes_socks_bodygroup.smd"\n\tblank\n}\n'
+        '$bodygroup "hat"\n{\n\tstudio "hat_bodygroup.smd"\n\tstudio "hat_alt.smd"\n}\n',
+        encoding="utf-8")
+    parts = default_part_smds(str(qc), str(tmp_path / "scout_morphs_low_lod1.smd"))
+    names = sorted(p.replace(chr(92), "/").rsplit("/", 1)[-1] for p in parts)
+    assert names == ["hat_bodygroup.smd", "shoes_socks_bodygroup.smd"]

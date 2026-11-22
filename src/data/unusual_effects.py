@@ -35,6 +35,8 @@ _SUB = re.compile(r'"([a-z_]+)"\s*\{')
 #: Запись эффекта: номер и тело без вложенных скобок
 _ENTRY = re.compile(r'"(\d+)"\s*\{([^{}]*)\}')
 _SYSTEM = re.compile(r'"system"\s+"([^"]+)"')
+_ATTACHMENT = re.compile(r'"attachment"\s+"([^"]*)"')
+_ROOTBONE = re.compile(r'"attach_to_rootbone"\s+"(\d+)"')
 
 
 def _block(text: str) -> str:
@@ -52,7 +54,12 @@ def _block(text: str) -> str:
 
 
 def parse(items_game_text: str, loc: Dict[str, str]) -> List[dict]:
-    """[{id, system, name, category}] - эффекты с именами из локализации
+    """[{id, system, name, category, attachment, rootbone}] - эффекты с
+    именами из локализации
+
+    `attachment` и `rootbone` - куда игра вешает точку 0 (econ_entity.cpp,
+    UpdateSingleParticleSystem): на attachment модели, если он у неё есть,
+    иначе на корневую кость, если `rootbone`, иначе в начало предмета
 
     Без имени эффект тоже остаётся: у полусотни записей токена в
     локализации нет (служебные, вроде `burningplayer_red`), но система у
@@ -77,11 +84,15 @@ def parse(items_game_text: str, loc: Dict[str, str]) -> List[dict]:
                 continue
             num = int(entry.group(1))
             token = f'Attrib_Particle{num}'
+            attachment = _ATTACHMENT.search(entry.group(2))
+            rootbone = _ROOTBONE.search(entry.group(2))
             out.append({
                 'id': num,
                 'system': system.group(1),
                 'name': loc.get(token, loc.get(token.lower(), '')),
                 'category': category,
+                'attachment': attachment.group(1) if attachment else '',
+                'rootbone': bool(rootbone and int(rootbone.group(1))),
             })
         pos = end
     return out

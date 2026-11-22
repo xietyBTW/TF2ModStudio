@@ -16,6 +16,7 @@ import wave
 from types import SimpleNamespace
 
 from src.data import sound_catalog as sc
+from src.data import sound_items as si
 from src.services import sound_build_service as builder
 
 SCRIPT = '''
@@ -400,13 +401,93 @@ class BindingTests(unittest.TestCase):
     """Чей звук, знает только items_game: дробовик носят трое"""
 
     def test_item_and_its_classes_are_found(self):
-        bound = sc.item_bindings(ITEMS_GAME)
+        bound = si.item_bindings(ITEMS_GAME)
         items, classes = bound['Weapon_Shotgun.Single']
         self.assertEqual(items, {'TF_TestGun'})
         self.assertEqual(classes, {'scout', 'soldier'})
 
     def test_item_without_sounds_is_ignored(self):
-        self.assertEqual(sc.item_bindings('"items_game" { }'), {})
+        self.assertEqual(si.item_bindings('"items_game" { }'), {})
+
+    def test_classes_from_prefab(self):
+        """У Мачины и AWP классы только в prefab - по блоку предмета их
+        звуки уходили в «прочие»"""
+        bound = si.item_bindings(PREFAB_ITEMS_GAME)
+        self.assertEqual(bound['Weapon_SniperRailgun.Single'],
+                         ({'TF_SniperRailgun'}, {'sniper'}))
+
+    def test_classes_by_item_name(self):
+        """`Weapon_CowMangler` находит имя по токену локализации, а класс
+        знает предмет с тем же item_name"""
+        from src.data.items_game_kv import ItemsGame
+
+        got = si.classes_by_item_name(ItemsGame.parse(PREFAB_ITEMS_GAME))
+        self.assertEqual(got['tf_cowmangler'], {'soldier'})
+        self.assertEqual(got['tf_sniperrailgun'], {'sniper'})
+
+
+PREFAB_ITEMS_GAME = '''
+"items_game"
+{
+    "prefabs"
+    {
+        "sniper_primary"
+        {
+            "used_by_classes"
+            {
+                "sniper"    "1"
+            }
+        }
+    }
+    "items"
+    {
+        "526"
+        {
+            "item_name"    "#TF_SniperRailgun"
+            "prefab"    "sniper_primary"
+            "visuals"
+            {
+                "sound_single_shot"    "Weapon_SniperRailgun.Single"
+            }
+        }
+        "441"
+        {
+            "item_name"    "#TF_CowMangler"
+            "used_by_classes"
+            {
+                "soldier"    "1"
+            }
+        }
+    }
+}
+'''
+
+
+class WeaponGuessTests(unittest.TestCase):
+    """Последняя догадка о классе - по словам имени оружия"""
+
+    def test_known_weapon_words(self):
+        self.assertEqual(sc.weapon_class_guess('Weapon_RPG_DirectHit'), ('soldier',))
+        self.assertEqual(sc.weapon_class_guess('Weapon_Grenade_Pipebomb'), ('demoman',))
+        self.assertEqual(sc.weapon_class_guess('Weapon_bm_sapper'), ('spy',))
+        self.assertEqual(sc.weapon_class_guess('cow_mangler_explosion_charge_06'),
+                         ('soldier',))
+
+    def test_rocket_pack_is_pyro_not_soldier(self):
+        self.assertEqual(sc.weapon_class_guess('Weapon_RocketPack'), ('pyro',))
+
+    def test_short_word_only_whole(self):
+        """`fist` - слово целиком, иначе «Fisticuffs» был бы хеви"""
+        self.assertEqual(sc.weapon_class_guess('Weapon_Fist'), ('heavy',))
+        self.assertEqual(sc.weapon_class_guess('Weapon_Fisticuffs'), ())
+
+    def test_ambiguous_stays_unknown(self):
+        self.assertEqual(sc.weapon_class_guess('Weapon_Medikit'), ())
+        self.assertEqual(sc.weapon_class_guess('WeaponGrapplingHook'), ())
+
+    def test_bumper_car_is_halloween(self):
+        self.assertEqual(sc.speaker_of('BumperCar', 'BumperCar.Bump', ()),
+                         ('halloween',))
 
 
 class OrphanTests(unittest.TestCase):
@@ -432,6 +513,20 @@ class OrphanTests(unittest.TestCase):
         one = self._found()[0]
         self.assertEqual((one.name, one.subject, one.event),
                          ('weapons/lonely.wav', 'lonely', ''))
+
+    def test_file_only_in_hl2_is_marked(self):
+        """Гравипушка лежит только в архиве hl2 - это Half-Life 2, а не
+        «прочие» TF2. Из списка не пропадает"""
+        hl2 = ['sound/weapons/physcannon/pickup.wav', 'sound/weapons/lonely.wav']
+        got = {e.name: e.who for e in sc._orphan_files([self.PAK], {'weapons/known.wav'}, [hl2])}
+        self.assertEqual(got['weapons/physcannon/pickup.wav'], ('hl2',))
+        # Тот же файл есть и в архиве TF2 - он TF2
+        self.assertEqual(got['weapons/lonely.wav'], ())
+
+    def test_hl2_vpk_is_told_by_its_folder(self):
+        import os
+        self.assertTrue(sc._is_hl2_vpk(os.path.join('steam', 'hl2', 'hl2_sound_misc_dir.vpk')))
+        self.assertFalse(sc._is_hl2_vpk(os.path.join('steam', 'tf', 'tf2_sound_misc_dir.vpk')))
 
 
 class SearchTests(unittest.TestCase):

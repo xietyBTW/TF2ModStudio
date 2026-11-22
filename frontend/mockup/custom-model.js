@@ -10,9 +10,10 @@ import * as api from './api.js';
 import { ask } from './ask.js';
 import { chooseFiles } from './util.js';
 import { t } from './i18n.js';
-import { say, sayError, viewer, withViewer } from './stage.js';
+import { say, sayBusy, sayError, viewer, withViewer } from './stage.js';
 import { applyView, lastView, refreshView, reloadSceneIfFp } from './preview.js';
 import { closeParts } from './parts.js';
+import { contextMenu } from './menu.js';
 
 //: Гирлянды оружия - отдельные модели, и заменить можно каждую
 const GARLANDS = { xmas: 'Праздничная гирлянда', festivizer: 'Гирлянда фестивайзера' };
@@ -167,7 +168,7 @@ async function replaceGarland(kind, path) {
 // Значения - в осях SMD оружия (Y вверх, ствол по +Z), теми же, что запекает
 // Python. Вьювер крутит модель сам и сразу (гизмо в кадре, как в Blender);
 // SMD пересобирается после паузы в правке - он нужен только сборке и виду от
-// первого лица. Кнопка «Масштабировать» включает режим: призрак оригинала в
+// первого лица. Значок «Подогнать модель» в кадре включает режим: призрак оригинала в
 // кадре, гизмо и палитра поверх кадра, как у частей. Режимы частей и
 // подгонки взаимоисключающие: у обоих свой захват мыши в кадре
 //
@@ -252,6 +253,23 @@ export function toggleDecorFit() {
   setFitMode(true, 'decor');
 }
 
+//: «Обтянуть» есть только у гирлянды на своей модели (preview-variants.js)
+let decorWrap = false;
+
+export function setDecorWrap(on) {
+  decorWrap = Boolean(on);
+  syncDecorButtons();
+}
+
+/** «Гнуть», «Выпрямить» и «Обтянуть» - только у гирлянды, автоподгонка к
+ *  оригиналу - только у своей модели */
+function syncDecorButtons() {
+  fitPanel.querySelectorAll('[data-decor]').forEach((b) => {
+    b.hidden = fitTarget !== 'decor' || (b.dataset.decor === 'custom' && !decorWrap);
+  });
+  fitPanel.querySelectorAll('[data-model]').forEach((b) => { b.hidden = fitTarget !== 'model'; });
+}
+
 /** Кнопки режимов: каждая прячется, пока включён другой режим */
 function fitButtons() {
   fitBtn.hidden = !fitAvailable || partsOpen();
@@ -266,9 +284,7 @@ function setFitMode(on, target = 'model') {
     fitTarget = target === 'decor' ? 'decor' : 'model';
     closeParts();
     fitWrite(fitValues[fitTarget]);
-    // «Гнуть» и «Выпрямить» - только у гирлянды
-    fitPanel.querySelectorAll('[data-decor]').forEach(
-      (b) => { b.hidden = fitTarget !== 'decor'; });
+    syncDecorButtons();
     if (fitTarget !== 'decor' && currentTool() === 'bend') markTool('scale');
   }
   fitPanel.hidden = !fitOn;
@@ -367,6 +383,19 @@ function fitPush(save = true, animate = false) {
 for (const id of FIT_FIELDS) fitEl(id).addEventListener('input', () => fitPush());
 // Сброс - с движением: видно, откуда и куда вернулась модель
 fitEl('fit-reset').addEventListener('click', () => { fitWrite(null); fitPush(true, true); });
+// Автоподгонка к оригиналу: числа считает Python и сам их записывает, сюда
+// они приходят ответом - с движением, как сброс. Отложенная ручная правка
+// больше не нужна: её перекрывает расчёт
+fitEl('fit-auto').addEventListener('click', async () => {
+  dropFitSave();
+  sayBusy('Подгоняю модель к оригиналу…');
+  const res = await api.autoFitCustomModel();
+  if (res.error) { sayError(res.error); return; }
+  fitValues.model = res.fit;
+  fitWrite(res.fit);
+  fitPush(false, true);
+  say('Модель встала на место оригинала - подправьте, если нужно');
+});
 
 // Те же клавиши на странице: фокус после щелчка по кнопке остаётся у неё, а
 // не у кадра. Как в Blender: G/R/S начинают операцию - модель идёт за
@@ -493,11 +522,24 @@ qcText.addEventListener('keydown', (e) => {
   }
 });
 
-// Действия над моделью под вьюпортом
-document.getElementById('model-acts').addEventListener('click', (e) => {
-  const btn = e.target.closest('.textbtn');
-  if (!btn) return;
-  if (btn.id === 'dropmodel') { dropModel(); return; }
-  if (btn.dataset.cond === 'replace') replaceModel();
-  else if (btn.dataset.cond === 'qc') openQcEditor();
+// Меню «Модель» под вьюпортом. Его пункты - спрятанные кнопки: видимость
+// каждой по-прежнему решают data-cond и applyView, меню берёт видимые
+const menuBtn = document.getElementById('modelmenu');
+const menuItems = [...document.querySelectorAll('#modelmenu-items > .textbtn')];
+const MODEL_ACTIONS = { replace: replaceModel, qc: openQcEditor, drop: dropModel };
+const actionOf = (b) => (b.id === 'dropmodel' ? 'drop' : b.dataset.cond);
+
+const syncModelMenu = () => { menuBtn.hidden = menuItems.every((b) => b.hidden); };
+new MutationObserver(syncModelMenu).observe(
+  document.getElementById('modelmenu-items'), { attributes: true, subtree: true,
+                                                attributeFilter: ['hidden'] });
+syncModelMenu();
+
+menuBtn.addEventListener('click', async () => {
+  const r = menuBtn.getBoundingClientRect();
+  // Меню - под кнопкой, а не там, где щёлкнули
+  const at = { preventDefault() {}, clientX: r.left, clientY: r.bottom + 4 };
+  const chosen = await contextMenu(at, menuItems.filter((b) => !b.hidden).map(
+    (b) => ({ label: b.textContent.trim(), value: actionOf(b), hint: b.title || '' })));
+  MODEL_ACTIONS[chosen]?.();
 });

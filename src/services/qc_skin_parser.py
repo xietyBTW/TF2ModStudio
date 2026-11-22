@@ -330,10 +330,9 @@ def resolve_cdmaterials(raw_paths: List[str]) -> List[str]:
     """
     cleaned: List[str] = []
     for raw in raw_paths or []:
-        p = (raw or '').replace('\\', '/').strip('/')
-        if p.lower().startswith('console/'):
-            p = p[len('console/'):]
-        p = p.strip('/')
+        from src.shared.constants import strip_bypass_console
+
+        p = strip_bypass_console((raw or '').replace('\\', '/').strip('/')).strip('/')
         if p:
             cleaned.append(p)
 

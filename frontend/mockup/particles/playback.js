@@ -8,6 +8,7 @@
 
 import * as api from '../api.js';
 import { say, sayError, withParticles } from '../stage.js';
+import { t } from '../i18n.js';
 import { root } from '../layout.js';
 import { pSystem } from './state.js';
 import { applyStructure, PACTS } from './actions.js';
@@ -79,12 +80,16 @@ let pLoop = true;
 
 function togglePause() {
   pPaused = !pPaused;
-  document.getElementById('ppause').textContent = pPaused ? 'Продолжить' : 'Пауза';
+  const btn = document.getElementById('ppause');
+  // Круг как у плеера звуков: пауза перетекает в треугольник и обратно
+  btn.classList.toggle('is-playing', !pPaused);
+  btn.setAttribute('aria-label', t(pPaused ? 'Продолжить' : 'Пауза'));
+  btn.title = t(pPaused ? 'Продолжить (пробел)' : 'Пауза (пробел)');
   withParticles((w) => w.setPaused(pPaused));
 }
 document.getElementById('ppause').addEventListener('click', togglePause);
 
-//: Скорость времени по кругу: 1× -> ½ -> ¼ -> 1×. Быстрые эффекты (крит,
+//: Скорость времени по кругу: 100% -> 50% -> 25% -> 100%. Быстрые эффекты (крит,
 //: вспышка) на глаз не разобрать без замедления
 const SPEEDS = [1, 0.5, 0.25];
 let pSpeed = 0;
@@ -92,7 +97,9 @@ function cycleSpeed() {
   pSpeed = (pSpeed + 1) % SPEEDS.length;
   const k = SPEEDS[pSpeed];
   const btn = document.getElementById('pspeed');
-  btn.textContent = { 1: '1×', 0.5: '½×', 0.25: '¼×' }[k];
+  // Процентами: значки дробей «½×», «¼×» в этом шрифте мелкие и читались
+  // как опечатка
+  btn.textContent = `${k * 100}%`;
   btn.classList.toggle('is-active', k !== 1);
   withParticles((w) => w.setTimeScale && w.setTimeScale(k));
 }
@@ -122,6 +129,8 @@ document.getElementById('pbg').addEventListener('click', () => {
 
 document.getElementById('ploop').addEventListener('click', (e) => {
   pLoop = !pLoop;
-  e.target.classList.toggle('is-off', !pLoop);
+  // currentTarget: щелчок приходит на линию значка внутри кнопки
+  e.currentTarget.classList.toggle('is-active', pLoop);
+  e.currentTarget.setAttribute('aria-pressed', String(pLoop));
   withParticles((w) => w.setLoop(pLoop));
 });

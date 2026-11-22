@@ -116,6 +116,12 @@ def _own_file(path: Optional[str], files_dir: Path) -> Optional[str]:
                 break
     if not target.exists():
         shutil.copy2(src, target)
+    # Покрашенная склейка без исходника с маской после перезапуска красилась
+    # бы банкой целиком
+    from src.services import vmt_tint
+    for side, copy in zip(vmt_tint.sidecars(str(src)), vmt_tint.sidecars(str(target))):
+        if os.path.isfile(side) and not os.path.exists(copy):
+            shutil.copy2(side, copy)
     return str(target)
 
 
@@ -229,7 +235,10 @@ def _sweep(files_dir: Path, owned: Dict[str, object],
     # Сравниваем разрешёнными путями: `_own_file` отдаёт resolve(), а обход
     # папки - то, что склеено из WORK_DIR (он относительный). Одна и та же
     # копия в двух видах выглядела бы разными файлами - и была бы удалена
-    alive = {_same(p) for p in list(_strings(owned)) + [k for k in keep if k]}
+    from src.services import vmt_tint
+
+    paths = list(_strings(owned)) + [k for k in keep if k]
+    alive = {_same(p) for path in paths for p in (path, *vmt_tint.sidecars(path))}
     dropped = 0
     for file in files_dir.iterdir():
         if not file.is_file():

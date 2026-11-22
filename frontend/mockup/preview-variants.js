@@ -10,8 +10,8 @@ import { t } from './i18n.js';
 import { say, sayError, sayBusy, viewer, withViewer } from './stage.js';
 import { work } from './layout.js';
 import { closeParts, syncParts } from './parts.js';
-import { toggleDecorFit, isDecorFitOn, leaveDecorFit, flushFitSave, flushBends }
-  from './custom-model.js';
+import { toggleDecorFit, isDecorFitOn, leaveDecorFit, flushFitSave, flushBends,
+  setDecorWrap } from './custom-model.js';
 import { applyView, refreshView } from './preview.js';
 import { reloadSceneIfFp } from './preview-scenes.js';
 
@@ -28,13 +28,17 @@ export function showBodygroups(groups) {
   bar.hidden = !groups.length || work.dataset.scene !== 'item';
   if (bar.hidden) return;
   for (const g of groups) {
+    // Группа - своим блоком: в панели кадра между группами черта
+    const part = document.createElement('span');
+    part.className = 'vcorner__part';
     const label = document.createElement('span');
     label.className = 'label label--inline';
     // Снаряд в оружии - не состояние, а деталь: виден, пока его правят
     label.textContent = g.projectile
       ? (g.custom ? 'Свой снаряд в оружии' : 'Снаряд в оружии')
       : groups.length > 1 ? `Состояние · ${g.name}` : 'Состояние модели';
-    bar.appendChild(label);
+    part.appendChild(label);
+    bar.appendChild(part);
     g.variants.forEach((name, i) => {
       const b = document.createElement('button');
       b.className = 'tag' + (i === g.chosen ? ' is-active' : '');
@@ -47,7 +51,7 @@ export function showBodygroups(groups) {
         if (res.error) { sayError(res.error); return; }
         applyView(res);
       });
-      bar.appendChild(b);
+      part.appendChild(b);
     });
   }
 }
@@ -75,6 +79,7 @@ export function showFestive(st) {
   bar.querySelectorAll('.tag, .festive__note').forEach((n) => n.remove());
   bar.hidden = !options.length || !(scene === 'item' || scene === 'fp');
   showBakeButton(st, options);
+  showDecorTools(st, scene, !bar.hidden);
   withViewer((w) => w.setDecorTeam && w.setDecorTeam(st.team));
   if (bar.hidden) return;
 
@@ -112,39 +117,39 @@ export function showFestive(st) {
     });
     bar.appendChild(b);
   }
-  // Подгонка гирлянды под модель - тем же инструментом, что и своя модель.
-  // Только при своей модели: на стоковой гирлянда уже стоит на месте. Уже
-  // сделанную подгонку оставляем доступной и без неё - иначе, убрав свою
-  // модель, сдвинутую гирлянду было бы не вернуть, и она ушла бы в мод
-  if (st.festive && scene === 'item' && decorFittable(st)) {
-    const fit = document.createElement('button');
-    fit.className = 'tag festive__fit' + (isDecorFitOn() ? ' is-active' : '');
-    fit.textContent = 'Подогнать гирлянду';
-    fit.title = t('Сдвинуть, повернуть и растянуть гирлянду под свою модель (G/R/S)');
-    fit.addEventListener('click', () => {
-      toggleDecorFit();
-      fit.classList.toggle('is-active', isDecorFitOn());
-    });
-    bar.appendChild(fit);
-  }
-  if (st.festive && scene === 'item' && st.custom_geometry) {
-    const auto = document.createElement('button');
-    auto.className = 'tag festive__fit';
-    auto.textContent = 'Обтянуть модель';
-    auto.title = t('Посадить гирлянду на свою модель так, как она сидит на стоковой');
-    auto.addEventListener('click', autofitDecor);
-    bar.appendChild(auto);
-  }
-  // На своей модели гирлянда стоит по стоковой, пока её не подогнали: так её
-  // и повесит игра, и огоньки будут висеть мимо
-  if (st.festive && st.custom_geometry && !st.decor_fit && !st.decor_wrapped
-      && !(st.decor_bends || []).length) {
-    const note = document.createElement('span');
-    note.className = 'label label--inline festive__note';
-    note.textContent = 'Висит как на стоковой модели - подгоните под свою';
-    bar.appendChild(note);
-  }
 }
+
+const decorBtn = document.getElementById('decorfit');
+
+/**
+ * Подгонка гирлянды - значок в колонке подгонки (vtools), «Обтянуть» - в её
+ * палитре. Только при своей модели: на стоковой гирлянда уже стоит на месте.
+ * Уже сделанную подгонку оставляем доступной и без неё - иначе, убрав свою
+ * модель, сдвинутую гирлянду было бы не вернуть, и она ушла бы в мод
+ */
+function showDecorTools(st, scene, shown) {
+  const here = shown && Boolean(st.festive) && scene === 'item';
+  decorBtn.hidden = !(here && decorFittable(st));
+  decorBtn.classList.toggle('is-active', isDecorFitOn());
+  setDecorWrap(here && Boolean(st.custom_geometry));
+  // На своей модели гирлянда стоит по стоковой, пока её не подогнали: так её
+  // и повесит игра, и огоньки будут висеть мимо. Точка на значке и подсказка
+  const unfitted = Boolean(st.custom_geometry) && !st.decor_fit && !st.decor_wrapped
+    && !(st.decor_bends || []).length;
+  document.getElementById('decorfit-dot').hidden = !unfitted;
+  decorBtn.title = t(unfitted ? 'Висит как на стоковой модели - подгоните под свою'
+                              : 'Подогнать гирлянду под свою модель (G/R/S)');
+}
+
+decorBtn.addEventListener('click', () => {
+  toggleDecorFit();
+  decorBtn.classList.toggle('is-active', isDecorFitOn());
+});
+document.getElementById('fit-wrap').addEventListener('click', autofitDecor);
+// Подгонку закрыли «Готово» или другим режимом - значок гаснет вместе с ней
+document.addEventListener('fit:changed', () => {
+  decorBtn.classList.toggle('is-active', isDecorFitOn());
+});
 
 //: Обтягивание идёт: второй щелчок не запускает ещё один тяжёлый расчёт
 let wrapping = false;

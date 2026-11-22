@@ -19,15 +19,163 @@
 .catalog__head { flex: none; display: flex; align-items: center; gap: var(--gap); }
 .catalog__search { flex: 1; }
 
-.catalog__filters {
+/* Вкладки: что это за вещь. Мельче и тише навигации приложения, чтобы не
+   читаться второй такой же. Не влезают - едут вбок, край гаснет */
+.catalog__tabs {
   flex: none;
   display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--hairline);
 }
+.catalog__tabs::-webkit-scrollbar { display: none; }
+[data-panels="pinned"] .catalog__tabs {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.catalog__tabs .catalog__filters { flex: none; }
+.catalog__tabs .label--inline { display: none; }
+.catalog__tabs .catalog__opts { display: flex; gap: 20px; padding-right: 28px; }
+.catalog__tabs .underlined {
+  margin-bottom: -1px;
+  padding-bottom: 8px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* Фильтры: для кого и какая. Текстом «Класс  Scout ▾», список под ним.
+   Справа сколько нашлось */
+.catalog__fbox {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 22px;
+  position: relative;
+  z-index: 25;
+}
+.catalog__fbox .catalog__filters { position: relative; }
+.catalog__fbox .label--inline { display: none; }
+/* Открытый ряд поверх соседей: в узкой колонке фильтры переносятся, и
+   нижние ложились на список */
+.catalog__fbox .catalog__filters.is-open { z-index: 2; }
+.catalog__fbox .catalog__count { margin: 0 0 0 auto; padding: 0; }
+
+.fdrop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fdrop__label { color: var(--ink-mute); }
+.fdrop::after {
+  content: "";
+  align-self: center;
+  width: 4px;
+  height: 4px;
+  margin: -3px 0 0 1px;
+  border-right: 1px solid var(--ink-mute);
+  border-bottom: 1px solid var(--ink-mute);
+  transform: rotate(45deg);
+}
+.fdrop:hover .fdrop__name,
+.fdrop[aria-expanded="true"] .fdrop__name,
+.fdrop.is-set .fdrop__name { color: var(--ink); }
+.fdrop__x {
+  order: 3;
+  padding: 0 2px;
+  color: var(--ink-mute);
+  font-size: 14px;
+  line-height: 1;
+}
+.fdrop__x:hover { color: var(--accent); }
+/* Крестик после стрелки: снять фильтр - отдельное от «открыть» действие */
+.fdrop:has(.fdrop__x:not([hidden]))::after { order: 2; }
+
+/* Список под фильтром */
+.catalog__fbox .catalog__opts { display: none; }
+.catalog__fbox .catalog__filters.is-open .catalog__opts {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -14px;
+  min-width: 200px;
+  max-height: min(380px, calc(100vh - 200px));
+  overflow: auto;
+  padding: 6px 0;
+  border: 1px solid var(--hairline-strong);
+  background: var(--overlay);
+  animation: fdrop-in var(--dur) ease-out;
+}
+/* Поиск в длинном списке: прилипает к верху, пункты едут под ним */
+.catalog__opts:has(.fdrop__find) { padding-top: 0; }
+.fdrop__find {
+  position: sticky;
+  top: 0;
+  margin-bottom: 4px;
+  background: var(--overlay);
+  border-bottom: 1px solid var(--hairline);
+}
+.fdrop__search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+.fdrop__search::placeholder { color: var(--ink-mute); }
+.fdrop__empty { margin: 0; padding: 8px 14px; color: var(--ink-mute); font-size: 12px; }
+@keyframes fdrop-in { from { opacity: 0; transform: translateY(-3px); } }
+.catalog__fbox .catalog__opts .underlined {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 7px 14px;
+  border: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: nowrap;
+}
+.catalog__fbox .catalog__opts .underlined:hover { background: var(--viewport); color: var(--ink); }
+.catalog__fbox .catalog__opts .underlined.is-active {
+  color: var(--ink);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.catalog__fbox .catalog__opts .underlined__n { margin-left: auto; }
+
+/* «Скрыть» - флажками: включённый закрашен */
+#f-hat .catalog__opts .underlined::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--hairline-strong);
+}
+#f-hat .catalog__opts .underlined.is-active { box-shadow: none; }
+#f-hat .catalog__opts .underlined.is-active::before {
+  border-color: var(--ink);
+  background: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--overlay);
+}
+
+/* Файл и коллекция: родной select только хранит значение, показан тот же
+   список, что у остальных */
+.catalog__fbox .select,
+.catalog__fbox .field__label { display: none; }
+.catalog__fbox .field { display: block; }
+
 .catalog__grid {
   flex: 1;
   min-height: 0;
@@ -160,7 +308,6 @@
    Компонент тот же, меняется только плотность */
 [data-panels="pinned"] .catalog { border-right: 1px solid var(--hairline); padding-right: var(--gap); }
 [data-panels="pinned"] #closecat { display: none; }
-[data-panels="pinned"] .catalog__filters { gap: 10px; }
 [data-panels="pinned"] .catalog__grid {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;

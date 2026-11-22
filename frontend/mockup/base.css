@@ -269,6 +269,15 @@ button, input, select, textarea { color: inherit; }
 .textbtn--sm { flex: none; font-size: 10px; }
 .textbtn.is-off { color: var(--ink-mute); border-bottom-color: transparent; }
 .textbtn.is-active { color: var(--ink); border-bottom-color: var(--accent); }
+/* Недоступная - тусклая и без отклика: «Вернуть», когда возвращать нечего,
+   выглядела такой же нажимаемой, как рабочая, и молча ничего не делала */
+.textbtn:disabled,
+.textbtn:disabled:hover {
+  color: var(--ink-mute);
+  border-bottom-color: transparent;
+  opacity: .45;
+  cursor: default;
+}
 
 /* Кнопка без рамки: только цвет и подчёркивание при наведении */
 .iconbtn {

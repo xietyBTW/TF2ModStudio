@@ -59,6 +59,12 @@ def test_effects_come_with_names_and_categories():
     ]
 
 
+def test_attach_rule_comes_with_effect():
+    fx = {f["system"]: f for f in ue.parse(ITEMS_GAME, LOC)}
+    assert (fx["superrare_burning1"]["attachment"], fx["superrare_burning1"]["rootbone"]) == ("muzzle", True)
+    assert (fx["superrare_burning2"]["attachment"], fx["superrare_burning2"]["rootbone"]) == ("", False)
+
+
 def test_missing_table_is_empty():
     assert ue.parse('"items_game" { "items" { } }', LOC) == []
 

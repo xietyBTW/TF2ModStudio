@@ -47,7 +47,7 @@ const partsField = q('.wpanel__parts');
 const matsField = q('.wpanel__mats');
 const matList = q('.wpanel__matlist');
 const matNote = q('.wpanel__matnote');
-const matCount = q('.wpanel__matcount');
+const peekBtn = q('.wpanel__peek');
 const returnBtn = document.getElementById('parts-return');
 
 //: Уровни износа War Paint по порядку игры (1…5): полное имя и сокращение
@@ -74,6 +74,16 @@ let preview = null;
 //: умолчанию: так новая карточка (материал части) встаёт отмеченной сама
 let mats = [];
 let flipped = new Set();
+//: Последние нанесённые (id) - разделом сверху списка, помнит Python
+let recent = [];
+//: Удерживают «Без War Paint»: на модели то, что было до него
+let peeking = false;
+//: Миниатюры строк: {`id_item`: url или ''}
+const thumbs = new Map();
+let thumbQueue = [];
+let thumbBusy = false;
+//: Чьи детали открывает «Настроить»: выбор держится, пока материал отмечен
+let layoutCard = '';
 
 /**
  * Предпросмотр для раздачи текстур: {карточка: png} или null
@@ -84,7 +94,7 @@ let flipped = new Set();
  * настоящей текстуре. Панель при этом продолжала бы обещать предпросмотр.
  */
 export function warpaintPreview() {
-  return preview;
+  return peeking ? null : preview;
 }
 
 /**
@@ -94,8 +104,7 @@ export function warpaintPreview() {
 export async function refreshWarpaint(weaponKey) {
   items = null;
   itemsFor = weaponKey || '';
-  mats = [];
-  flipped = new Set();
+  forgetMaterials();
   button.hidden = true;
   // Модель перезагрузили: вьювер снова свой, карты деталей раскладки в нём нет
   closeLayout();
@@ -109,6 +118,7 @@ export async function refreshWarpaint(weaponKey) {
   if (itemsFor !== (weaponKey || '')) return;     // пока ждали, выбрали другое
   items = res.items || [];
   generic = Boolean(res.generic);
+  recent = res.recent || [];
   // id раскраски общий у всех пушек, а item - свой у каждой: берём запись
   // НОВОГО списка, иначе ушёл бы рецепт прошлой пушки
   chosen = chosen ? (items.find((k) => k.id === chosen.id) || null) : null;
@@ -136,7 +146,17 @@ export function hideWarpaint() {
   close(false);
   items = null;
   itemsFor = '';
+  forgetMaterials();
   button.hidden = true;
+}
+
+/** Материалы прошлого оружия - вместе с плитками: оставшись на экране, они
+ *  не находили себя в новом списке, и открытие панели падало на первой же */
+function forgetMaterials() {
+  mats = [];
+  flipped = new Set();
+  matList.replaceChildren();
+  matsField.hidden = true;
 }
 
 // Панель
@@ -168,6 +188,7 @@ function close(restore = true) {
   clearTimeout(previewTimer);
   previewSeq++;
   previewDone();
+  peeking = false;
   if (panel.hidden) return;
   closeLayout();
   panel.hidden = true;
@@ -185,45 +206,26 @@ function rows() { return [...listEl.querySelectorAll('.wpanel__row')]; }
 function renderList() {
   const needle = search.value.trim().toLowerCase();
   listEl.innerHTML = '';
+  thumbObserver.disconnect();
+  const found = (items || []).filter((kit) => !needle || kit.name.toLowerCase().includes(needle)
+    || (kit.en || '').toLowerCase().includes(needle));
+  // Недавние - только без поиска: в найденном они и так на виду
+  const last = needle ? [] : recent.map((id) => found.find((k) => k.id === id)).filter(Boolean);
+  if (last.length) {
+    listEl.appendChild(sectionHead('Недавние'));
+    for (const kit of last) listEl.appendChild(row(kit));
+    listEl.appendChild(sectionHead('Все раскраски'));
+  }
   let section = false;
-  for (const kit of items || []) {
-    if (needle && !kit.name.toLowerCase().includes(needle)
-        && !(kit.en || '').toLowerCase().includes(needle)) continue;
+  for (const kit of found) {
     // Украшенное оружие с других пушек - своим разделом после War Paint
     if (kit.decorated && !section) {
       section = true;
-      const head = document.createElement('p');
-      head.className = 'wpanel__section';
-      head.setAttribute('role', 'presentation');
-      head.textContent = t('Украшенное оружие');
+      const head = sectionHead('Украшенное оружие');
       head.title = t('Скины коллекций, которые в игре есть только у своего оружия. Здесь узор ложится по деталям этой модели.');
       listEl.appendChild(head);
     }
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'wpanel__row';
-    b.dataset.id = kit.id;
-    b.setAttribute('role', 'option');
-    b.setAttribute('aria-selected', String(Boolean(chosen && chosen.id === kit.id)));
-    const name = document.createElement('span');
-    name.className = 'wpanel__name';
-    name.textContent = kit.name;
-    // Английское название - рядом: по нему скин и ищут
-    const en = document.createElement('span');
-    en.className = 'wpanel__en';
-    en.textContent = kit.en && kit.en !== kit.name ? kit.en : '';
-    b.append(name, en);
-    if (kit.decorated) b.title = t('В игре только у: {}').replace('{}', kit.weapons.join(', '));
-    if (kit.team) {
-      const tag = document.createElement('span');
-      tag.className = 'wpanel__tag';
-      tag.textContent = 'RED / BLU';
-      tag.title = t('Узор у команд разный - собирается под текущую команду');
-      b.appendChild(tag);
-    }
-    b.addEventListener('click', () => select(kit));
-    b.addEventListener('dblclick', () => { select(kit); apply(); });
-    listEl.appendChild(b);
+    listEl.appendChild(row(kit));
   }
   if (!listEl.children.length) {
     const empty = document.createElement('p');
@@ -233,6 +235,89 @@ function renderList() {
   }
   syncMaterials();
   syncParts();
+}
+
+function sectionHead(text) {
+  const head = document.createElement('p');
+  head.className = 'wpanel__section';
+  head.setAttribute('role', 'presentation');
+  head.textContent = t(text);
+  return head;
+}
+
+function row(kit) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'wpanel__row';
+  b.dataset.id = kit.id;
+  b.setAttribute('role', 'option');
+  b.setAttribute('aria-selected', String(Boolean(chosen && chosen.id === kit.id)));
+  const thumb = document.createElement('span');
+  thumb.className = 'wpanel__thumb';
+  const url = thumbs.get(thumbKey(kit));
+  if (url) thumb.style.backgroundImage = `url("${url}")`;
+  const name = document.createElement('span');
+  name.className = 'wpanel__name';
+  name.textContent = kit.name;
+  // Английское название - рядом: по нему скин и ищут
+  const en = document.createElement('span');
+  en.className = 'wpanel__en';
+  en.textContent = kit.en && kit.en !== kit.name ? kit.en : '';
+  b.append(thumb, name, en);
+  if (kit.decorated) b.title = t('В игре только у: {}').replace('{}', kit.weapons.join(', '));
+  if (kit.team) {
+    const tag = document.createElement('span');
+    tag.className = 'wpanel__tag';
+    tag.textContent = 'RED / BLU';
+    tag.title = t('Узор у команд разный - собирается под текущую команду');
+    b.appendChild(tag);
+  }
+  b.addEventListener('click', () => select(kit));
+  b.addEventListener('dblclick', () => { select(kit); apply(); });
+  if (!thumbs.has(thumbKey(kit))) { b.wpKit = kit; thumbObserver.observe(b); }
+  return b;
+}
+
+// Миниатюры: собираются в Python по одной на раскраску и лежат на диске.
+// Просятся только видимые строки и по нескольку за раз, чтобы предпросмотр
+// на модели не ждал за всем списком
+
+const thumbKey = (kit) => `${kit.id}_${kit.item}`;
+const thumbObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    thumbObserver.unobserve(e.target);
+    const kit = e.target.wpKit;
+    if (kit && !thumbs.has(thumbKey(kit)) && !thumbQueue.includes(kit)) thumbQueue.push(kit);
+  }
+  pumpThumbs();
+}, { root: listEl, rootMargin: '120px 0px' });
+
+async function pumpThumbs() {
+  if (thumbBusy || !thumbQueue.length) return;
+  thumbBusy = true;
+  const batch = thumbQueue.splice(0, 6);
+  let res;
+  try {
+    res = await api.paintkitThumbs(batch.map((k) => [k.id, k.item]));
+  } catch {
+    res = {};
+  }
+  for (const kit of batch) {
+    const png = res.thumbs?.[String(kit.id)];
+    // Не ответил весь вызов (игра не найдена) - не запоминаем, спросим потом
+    if (png === undefined) continue;
+    const url = png ? api.fileUrl(png) : '';
+    thumbs.set(thumbKey(kit), url);
+    if (!url) continue;
+    for (const el of listEl.querySelectorAll(`.wpanel__row[data-id="${kit.id}"] .wpanel__thumb`)) {
+      el.style.backgroundImage = `url("${url}")`;
+    }
+  }
+  thumbBusy = false;
+  // Панель закрыли - очередь подождёт следующего открытия
+  if (panel.hidden) { thumbQueue = []; return; }
+  pumpThumbs();
 }
 
 // Материалы
@@ -272,7 +357,7 @@ function picked() {
   return mats.length ? mats.filter(isOn).map((m) => m.card) : null;
 }
 
-/** Плитки материалов: миниатюра, имя и пометка «в игре» у War Paint игры */
+/** Чипы материалов: миниатюра и имя, почему так - в подсказке */
 function renderMaterials() {
   // Одна карточка - выбирать нечего
   matsField.hidden = mats.length < 2;
@@ -287,25 +372,15 @@ function renderMaterials() {
     swatch.className = 'wmat__swatch';
     const name = document.createElement('span');
     name.className = 'wmat__name';
-    // Длинное имя переносится по подчёркиваниям (c_bazaar_sniper_ | lens), а
-    // не посреди слова
-    name.textContent = cardTitle(m.card).replace(/_/g, '_\u200b');
+    name.textContent = cardTitle(m.card);
     tile.append(swatch, name);
-    // Пометки - только когда War Paint игры: у скина с другой пушки и в
-    // универсальном режиме по деталям ложится всё
-    if (!byParts() && canPaint(m)) {
-      const tag = document.createElement('span');
-      tag.className = 'wmat__tag';
-      tag.textContent = t(m.game ? 'в игре' : 'по деталям');
-      tile.append(tag);
-    }
     const why = !canPaint(m)
       ? (m.parts ? t('Этот War Paint нарисован под развёртку оружия: по другим материалам его не разложить')
         : t('У этого материала нет своей геометрии: узор по деталям на него не положить'))
       : byParts() ? ''
         : t(m.game ? 'Игра кладёт War Paint на этот материал сама'
           : 'Игра этот материал не красит: узор ляжет по его деталям');
-    // Имя материала целиком - в подсказке: на плитке оно может не влезть
+    // Имя материала целиком - в подсказке: на чипе оно может не влезть
     tile.title = why ? m.card + '\n' + why : m.card;
     tile.addEventListener('click', () => {
       if (flipped.has(m.card)) flipped.delete(m.card); else flipped.add(m.card);
@@ -325,15 +400,48 @@ function renderMaterials() {
 function syncMaterials() {
   for (const tile of matList.children) {
     const m = mats.find((x) => x.card === tile.dataset.card);
+    if (!m) continue;
     const on = isOn(m);
     tile.setAttribute('aria-checked', String(on));
     const shown = (on && preview?.[m.card]) || lastView?.textures?.[m.card];
     tile.firstChild.style.backgroundImage = shown ? `url("${api.opaqueUrl(shown)}")` : '';
   }
-  const count = picked()?.length ?? 0;
-  matCount.textContent = t('Выбрано {} из {}').replace('{}', count).replace('{}', mats.length);
+  peekBtn.hidden = !preview;
   matNote.hidden = byParts() || matsField.hidden || !mats.some((m) => !m.game && isOn(m));
   applyBtn.disabled = !chosen || picked()?.length === 0;
+}
+
+/**
+ * Что можно раскладывать: отмеченные материалы, каждый со своей раскладкой.
+ * У War Paint игры его карточки - одна раскладка (рецепт общий), её детали -
+ * главной карточки, если игра красит её; материал части идёт со своим
+ * исходным. Одноматериальной модели выбирать нечего - пусто
+ */
+function layoutTargets() {
+  if (mats.length < 2) return [];
+  const rep = mats.find((m) => m.game && m.main) || mats.find((m) => m.game);
+  const seen = new Map();
+  for (const m of mats.filter(isOn)) {
+    const card = !byParts() && m.game ? rep.card : (m.source || m.card);
+    if (seen.has(card)) continue;
+    const png = preview?.[card] || lastView?.textures?.[card];
+    seen.set(card, { card, label: cardTitle(card), url: png ? api.opaqueUrl(png) : '' });
+  }
+  return [...seen.values()];
+}
+
+/** Материал раскладки: прежний, если ещё отмечен, иначе главный, иначе первый */
+function layoutChoice(list) {
+  if (list.some((m) => m.card === layoutCard)) return layoutCard;
+  const main = mats.find((m) => m.main);
+  const pick = list.find((m) => main && m.card === (main.source || main.card)) || list[0];
+  layoutCard = pick ? pick.card : '';
+  return layoutCard;
+}
+
+function openTune() {
+  const list = layoutTargets();
+  openLayout(chosen, layoutCallbacks, list, layoutChoice(list));
 }
 
 /** Детали можно раскладывать, если War Paint разложен по группам шаблоном */
@@ -432,6 +540,7 @@ async function apply() {
   const seed = seedValue();
   seedEl.value = seed;
   const kit = chosen;
+  recent = [kit.id, ...recent.filter((id) => id !== kit.id)].slice(0, 5);
   // Раскладка по деталям могла ещё не уйти в Python - сборка её не увидела бы
   await flushLayout();
   // Предпросмотр остаётся на модели, пока не приедет полная сборка:
@@ -459,6 +568,7 @@ q('.wpanel__dice').addEventListener('click', () => { seedEl.value = randomSeed()
 //: Ответы экрана раскладки: пересобрать предпросмотр, вернуться, уйти резать
 const layoutCallbacks = {
   changed(kit) { if (chosen && kit.id === chosen.id) schedulePreview(0); },
+  pick(card) { layoutCard = card; },
   back() {
     closeLayout();
     status('');
@@ -476,7 +586,7 @@ returnBtn.addEventListener('click', async () => {
   returnBtn.hidden = true;
   closeParts();
   await open();
-  if (chosen && !panel.hidden) openLayout(chosen, layoutCallbacks);
+  if (chosen && !panel.hidden) openTune();
 });
 // Части закрыли сами - возвращаться уже неоткуда
 document.addEventListener('parts:changed', () => {
@@ -486,13 +596,43 @@ document.addEventListener('parts:changed', () => {
 q('.wpanel__shuffle').addEventListener('click', async () => {
   if (!chosen) return;
   status('Перемешиваю детали…');
-  const error = await shuffleLayout(chosen, layoutCallbacks);
+  const error = await shuffleLayout(chosen, layoutCallbacks, layoutChoice(layoutTargets()));
   if (error) status(error);
 });
 q('.wpanel__tune').addEventListener('click', () => {
-  if (chosen) openLayout(chosen, layoutCallbacks);
+  if (chosen) openTune();
 });
 seedEl.addEventListener('input', () => schedulePreview(500));
+// Соседний сид колесом и стрелками: перебирают обычно подряд
+function stepSeed(by) {
+  const next = BigInt(seedValue()) + BigInt(by);
+  if (next < 0n || next >= 1n << 64n) return;
+  seedEl.value = next.toString();
+  schedulePreview(150);
+}
+seedEl.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  stepSeed(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+seedEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  stepSeed(e.key === 'ArrowUp' ? 1 : -1);
+});
+
+// «Без War Paint»: пока держат, на модели прежние текстуры
+function peek(on) {
+  if (peeking === on) return;
+  peeking = on;
+  peekBtn.classList.toggle('is-active', on);
+  if (lastView) applyView(lastView);
+}
+peekBtn.addEventListener('pointerdown', (e) => { peekBtn.setPointerCapture(e.pointerId); peek(true); });
+for (const ev of ['pointerup', 'pointercancel', 'blur']) peekBtn.addEventListener(ev, () => peek(false));
+peekBtn.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); peek(true); }
+});
+peekBtn.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') peek(false); });
 search.addEventListener('input', renderList);
 
 // Стрелки двигают выбор по списку прямо из поиска, Enter - нанести, Esc -

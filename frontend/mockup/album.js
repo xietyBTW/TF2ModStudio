@@ -187,6 +187,13 @@ export function frameOf(material) {
       || frames.find((f) => f.dataset.mat === SINGLE_TEX && !material);
 }
 
+/** Прокручивает альбом к карточке материала. False - такой карточки нет */
+export function showMaterial(material) {
+  const f = frameOf(material);
+  if (f) goTo(frames.indexOf(f));
+  return Boolean(f);
+}
+
 export function currentMaterial() {
   const frame = frames[currentIndex()];
   const mat = frame && frame.dataset.mat;

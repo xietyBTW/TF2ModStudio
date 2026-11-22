@@ -44,9 +44,11 @@ import { startPreview, startHatWork, clearPreview, resetView, lastModel } from '
 import { flipList } from './motion.js';
 import { clearCovers, fillCover } from './catalog-cover.js';
 import { showWindowed } from './catalog-window.js';
+import { addDrop, refreshDrops, closeDrops } from './catalog-fold.js';
 
 export const els = {
   cat:   document.getElementById('cat'),
+  fCat:  document.getElementById('f-cat'),
   fClass:document.getElementById('f-class'),
   fHat:  document.getElementById('f-hat'),
   fRegion: document.getElementById('f-region'),
@@ -55,7 +57,6 @@ export const els = {
   fSource: document.getElementById('f-source'),
   fFxCat: document.getElementById('f-fxcat'),
   fType: document.getElementById('f-type'),
-  catLabel: document.getElementById('catlabel'),
   note:  document.getElementById('cat-note'),
   grid:  document.getElementById('grid'),
 };
@@ -64,9 +65,14 @@ export const sel = { section: 'weapons', category: 'weapon', cls: null,
               type: null, region: null, collection: null, mode: 'normal',
               query: '' };
 
-/** Рисует ряд фильтров; null-кнопка «Все» снимает ограничение */
-export function fillFilters(row, list, chosen, onPick) {
+/** Рисует ряд фильтров; null-кнопка «Все» снимает ограничение. Без all
+ *  «Все» нет: категория оружия - всегда одна */
+export function fillFilters(row, list, chosen, onPick, all = true) {
   row.querySelectorAll('.underlined').forEach((b) => b.remove());
+  // Варианты лежат в своём контейнере (он и есть список выпадашки), а у
+  // рядов без него - прямо в ряду: так строит классы окно модели для точек
+  // частиц, и без запасного пути его вкладки «Шапки» и «Оружие» падали
+  const into = row.querySelector('.catalog__opts') || row;
   const add = (key, name, count) => {
     const b = document.createElement('button');
     b.className = 'underlined' + (key === chosen ? ' is-active' : '');
@@ -79,12 +85,19 @@ export function fillFilters(row, list, chosen, onPick) {
       n.textContent = count;
       b.append(n);
     }
-    b.addEventListener('click', () => onPick(key));
-    row.appendChild(b);
+    // Отметка сразу, не дожидаясь ответа: вкладку перерисовывает не всякий
+    // выбор, а без неё щелчок выглядит пропавшим
+    b.addEventListener('click', () => {
+      into.querySelectorAll('.underlined').forEach((x) => x.classList.toggle('is-active', x === b));
+      refreshDrops();
+      onPick(key);
+    });
+    into.appendChild(b);
   };
-  add(null, 'Все');
+  if (all) add(null, 'Все');
   list.forEach((x) => add(x.key, x.name, x.count));
   row.hidden = list.length === 0;
+  refreshDrops();
 }
 
 //: Какие предметы сейчас в сетке: по нему видно, сменился ли набор
@@ -129,6 +142,9 @@ function gridCard(item) {
 export function makePick(item, onPick) {
   {
     const b = document.createElement('button');
+    // Внутри <form method="dialog"> кнопка по умолчанию закрыла бы окно
+    // раньше, чем мультиклассовая шапка дождётся выбора класса
+    b.type = 'button';
     b.className = 'pick';
     b.dataset.mode = item.mode;
     b.dataset.flip = `${item.mode}|${item.key ?? ''}`;
@@ -385,6 +401,12 @@ async function choose(button, item) {
   els.grid.querySelectorAll('.pick').forEach((p) => p.classList.remove('is-active'));
   button.classList.add('is-active');
   activePick = pickKey(button, item);
+  await openItem(item);
+}
+
+/** Открывает предмет каталога. Без карточки - так его открывает и обучение
+ *  («Показать снова» ведёт на случайное оружие), путь тот же, что по щелчку */
+export async function openItem(item) {
   document.querySelector('.title__name').textContent = item.name;
   document.querySelector('.title__meta').textContent =
     [item.label ?? item.key, item.cls].filter(Boolean).join(' · ');
@@ -442,33 +464,13 @@ export async function reload() {
 
   fillGrid(list);
   els.note.hidden = list.length > 0;
-  // Пусто по разной причине: у косметики фильтры просто ничего не нашли,
-  // у остальных категорий списка ещё нет
+  // Пусто по разной причине: фильтры или запрос ничего не нашли, или у
+  // категории списка ещё нет. Опечатки поиск прощает сам (text_search.py)
   if (!list.length) {
-    els.note.textContent = sel.section === 'hats'
+    els.note.textContent = sel.section === 'hats' || sel.query
       ? 'Ничего не найдено - попробуйте изменить фильтр или запрос.'
       : 'Для этой категории список ещё не подключён.';
-    if (hats && hats.suggest.length) els.note.append(...maybe(hats.suggest));
   }
-}
-
-/** «Возможно: …» - похожие имена кнопками, щелчок подставляет запрос */
-function maybe(words) {
-  const out = [document.createTextNode(' - возможно: ')];
-  words.forEach((word, i) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'textbtn textbtn--sm';
-    b.textContent = word;
-    b.addEventListener('click', () => {
-      document.querySelector('.catalog__search').value = word;
-      sel.query = word;
-      reload();
-    });
-    if (i) out.push(', ');
-    out.push(b);
-  });
-  return out;
 }
 
 /** Выпадающий список коллекций. Выбранная остаётся, даже если под текущим
@@ -481,9 +483,13 @@ function fillCollections(list) {
   els.collection.innerHTML = '';
   els.collection.append(new Option('Все коллекции', ''));
   for (const c of items) {
-    els.collection.append(new Option(`${c.name} (${c.count})`, c.key));
+    const o = new Option(`${c.name} (${c.count})`, c.key);
+    o.dataset.name = c.name;
+    o.dataset.count = c.count;
+    els.collection.append(o);
   }
   els.collection.value = sel.collection || '';
+  refreshDrops();
   els.fCollection.hidden = items.length === 0;
 }
 
@@ -491,6 +497,13 @@ els.collection.addEventListener('change', async () => {
   sel.collection = els.collection.value || null;
   await reload();
 });
+
+addDrop(els.fClass, { label: 'Класс' });
+addDrop(els.fType, { label: 'Тип' });
+addDrop(els.fFxCat, { label: 'Раздел' });
+addDrop(els.fCollection, { label: 'Коллекция', select: els.collection });
+addDrop(els.cat.closest('.catalog__cat'), { label: 'Файл', select: els.cat });
+addDrop(els.fHat, { label: 'Скрыть', multi: true });
 
 export async function pickRegion(key) {
   sel.region = key;
@@ -508,7 +521,6 @@ export async function pickRegion(key) {
 export async function relabel() {
   if (sel.section === 'particles') return;   // имена систем приходят из PCF
   await fillCategories();
-  els.cat.value = sel.category;
   if (sel.section === 'hats') {
     await fillHatFilters();
   } else {
@@ -589,7 +601,7 @@ export async function pickSection(name) {
   const это_частицы = sel.section === 'particles';
   showParticleFrame(это_частицы);
   cpBox.hidden = true;                 // точки живут только у эффекта
-  document.getElementById('pacts').hidden = !это_частицы;
+  document.getElementById('pcpbtn').classList.remove('is-active');
   document.getElementById('model-acts').hidden = это_частицы;
   applyRightPanel();      // правая панель зависит от раздела
   // Переключатель показа общий с оружием, но у эффекта правая половина -
@@ -602,7 +614,9 @@ export async function pickSection(name) {
   // Раздел открывается на «Вместе»: слева текстуры, справа эффект
   resetView();
 
-  els.cat.parentElement.parentElement.hidden = это_шапки;   // категорию прячем
+  // Список файлов PCF - только у частиц, категории оружия - вкладками
+  els.cat.parentElement.parentElement.hidden = !это_частицы;
+  if (это_шапки || это_частицы) els.fCat.hidden = true;
   els.fType.hidden = true;
   els.fRegion.hidden = !это_шапки;
   els.fCollection.hidden = !это_шапки;
@@ -610,6 +624,7 @@ export async function pickSection(name) {
   if (!это_частицы) els.fFxCat.hidden = true;
   els.fClass.hidden = это_частицы;
   els.fHat.hidden = !это_шапки;
+  closeDrops();
   catalog.classList.toggle('no-icons', это_частицы);
   catalog.classList.toggle('catalog--tree', это_частицы);
 
@@ -631,12 +646,12 @@ export async function pickSection(name) {
     // Два режима одним списком: вся игра (каталог по именам, источники,
     // поиск) или один файл (дерево систем). Смешивать их на экране нельзя:
     // выпадашка файла над фильтром источников читалась как две навигации
-    els.catLabel.textContent = 'Показать';
     els.cat.innerHTML = '';
     els.cat.append(new Option('Все эффекты игры', ''));
     for (const f of await api.particleFiles()) {
       els.cat.append(new Option(f.name, f.key));
     }
+    refreshDrops();
     clearCovers(els.grid);
     plist.innerHTML = '';
     pnote.hidden = false;
@@ -647,7 +662,6 @@ export async function pickSection(name) {
     return;
   }
 
-  els.catLabel.textContent = 'Категория';
 
   if (это_шапки) {
     sel.category = 'hat';
@@ -670,6 +684,7 @@ export async function pickSection(name) {
     els.note.textContent = `Раздел «${name}» ещё не подключён.`;
     return;
   }
+  sel.category = 'weapon';
   await fillCategories();
   await pickCategory('weapon');
 }
@@ -732,10 +747,12 @@ export async function fillHatFilters() {
       const state = await api.setHatFilter(f.key, !b.classList.contains('is-active'));
       const now = state.find((x) => x.key === f.key);
       b.classList.toggle('is-active', now.hidden);
+      refreshDrops();
       await reload();
     });
-    els.fHat.appendChild(b);
+    els.fHat.querySelector('.catalog__opts').appendChild(b);
   }
+  refreshDrops();
 }
 
 export async function pickClass(key) {
@@ -778,8 +795,7 @@ document.querySelector('.catalog__search').addEventListener('input', (e) => {
 
 /** Заполняет селектор категориями предметов (раздел частиц ставит туда PCF) */
 export async function fillCategories() {
-  els.cat.innerHTML = '';
-  for (const c of await api.categories()) els.cat.append(new Option(c.name, c.key));
+  fillFilters(els.fCat, await api.categories(), sel.category, pickCategory, false);
 }
 
 //: Пункт меню -> ключ в ответе controls_for. Извлечение и UV-шаблон есть
@@ -813,7 +829,6 @@ export async function boot() {
   showTf2Path();
   await fillCategories();
   els.cat.addEventListener('change', () => {
-    if (sel.section !== 'particles') return pickCategory(els.cat.value);
     if (!els.cat.value) return showEffects(sel.query);
     // Уже открытый файл (его открыли из списка эффектов) - только дерево:
     // разбор заново выбросил бы несохранённые правки без вопроса

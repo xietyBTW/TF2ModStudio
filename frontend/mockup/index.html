@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="style-catalog.css">
 <link rel="stylesheet" href="style-particles.css">
 <link rel="stylesheet" href="style-parts.css">
+<link rel="stylesheet" href="style-viewport.css">
 <link rel="stylesheet" href="style-warpaint.css">
 <link rel="stylesheet" href="style-dock.css">
 <link rel="stylesheet" href="style-vmt.css">
@@ -139,53 +140,75 @@
     </div>
 
     <!-- Всё ниже приходит из src/app/api.py: категории, классы, типы и сами
-         предметы. Разметка только описывает места -->
-    <div class="field catalog__cat">
-      <label class="field__label" for="cat" id="catlabel">Категория</label>
-      <div class="select"><select id="cat"></select></div>
-    </div>
+         предметы. Разметка только описывает места.
+         Вкладки - что это за вещь (категория оружия, куда надевается шапка,
+         чем вызывается эффект). Ниже фильтры - для кого и какая: текст с
+         выпадающим списком (catalog-fold.js), справа сколько нашлось -->
+    <nav class="catalog__tabs" id="ctabs">
+      <div class="catalog__filters" id="f-cat" hidden>
+        <span class="label label--inline">Категория</span>
+        <div class="catalog__opts"></div>
+      </div>
+      <!-- Куда надевается косметика: голова, лицо, тело… Список приходит из
+           Python вместе с предметами - только группы, что есть под запросом -->
+      <div class="catalog__filters" id="f-region" hidden>
+        <span class="label label--inline">Куда</span>
+        <div class="catalog__opts"></div>
+      </div>
+      <!-- Чем вызывается эффект: оружие, постройки, игрок, анюжуалы… Список
+           приходит из Python вместе с эффектами - только те виды, что есть -->
+      <div class="catalog__filters" id="f-source" hidden>
+        <span class="label label--inline">Источник</span>
+        <div class="catalog__opts"></div>
+      </div>
+    </nav>
 
-    <div class="catalog__filters" id="f-class" hidden>
-      <span class="label label--inline">Класс</span>
-    </div>
+    <div class="catalog__fbox" id="fbox">
+      <!-- У частиц - файл PCF: «все эффекты игры» или один файл. Как и
+           коллекция, select скрыт и только хранит значение, а показан тот же
+           список, что у остальных фильтров: у родного ширина раскрытого
+           списка шла от ширины поля и резала названия -->
+      <div class="field catalog__filters catalog__cat" hidden>
+        <label class="field__label" for="cat" id="catlabel">Файл</label>
+        <div class="select"><select id="cat"></select></div>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <div class="catalog__filters" id="f-type" hidden>
-      <span class="label label--inline">Тип</span>
-    </div>
+      <div class="catalog__filters" id="f-class" hidden>
+        <span class="label label--inline">Класс</span>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <!-- Куда надевается косметика: голова, лицо, тело… Список приходит из
-         Python вместе с предметами - только группы, что есть под запросом -->
-    <div class="catalog__filters" id="f-region" hidden>
-      <span class="label label--inline">Куда</span>
-    </div>
+      <div class="catalog__filters" id="f-type" hidden>
+        <span class="label label--inline">Тип</span>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <!-- Коллекция игры (кейсы с 2015 года). Их почти сорок - в ряд кнопок не
-         влезают, поэтому выпадающий список, числа под текущим запросом -->
-    <div class="catalog__filters" id="f-collection" hidden>
-      <label class="label label--inline" for="collection">Коллекция</label>
-      <div class="select"><select id="collection"></select></div>
-    </div>
+      <!-- Коллекция игры (кейсы с 2015 года), числа под текущим запросом -->
+      <div class="catalog__filters" id="f-collection" hidden>
+        <label class="label label--inline" for="collection">Коллекция</label>
+        <div class="select"><select id="collection"></select></div>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <!-- Чем вызывается эффект: оружие, постройки, игрок, анюжуалы… Список
-         приходит из Python вместе с эффектами - только те виды, что есть -->
-    <div class="catalog__filters" id="f-source" hidden>
-      <span class="label label--inline">Источник</span>
-    </div>
-    <!-- Разделы необычных: косметика, насмешки, оружие… -->
-    <div class="catalog__filters" id="f-fxcat" hidden>
-      <span class="label label--inline">Раздел</span>
-    </div>
+      <!-- Разделы необычных: косметика, насмешки, оружие… -->
+      <div class="catalog__filters" id="f-fxcat" hidden>
+        <span class="label label--inline">Раздел</span>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <!-- Фильтр категорий косметики: те же три, что в панели шапок приложения.
-         Значение хранится в общем конфиге, поэтому окно и веб показывают
-         одинаковый список -->
-    <div class="catalog__filters" id="f-hat" hidden>
-      <span class="label label--inline">Скрыть</span>
-    </div>
+      <!-- Фильтр категорий косметики: те же три, что в панели шапок приложения.
+           Значение хранится в общем конфиге, поэтому окно и веб показывают
+           одинаковый список -->
+      <div class="catalog__filters" id="f-hat" hidden>
+        <span class="label label--inline">Скрыть</span>
+        <div class="catalog__opts"></div>
+      </div>
 
-    <!-- Сколько нашлось. У косметики список из 1822 позиций, и без числа
-         непонятно, сузил фильтр выборку или нет -->
-    <p class="catalog__count mono" id="cat-count" hidden></p>
+      <!-- Сколько нашлось. У косметики список из 1822 позиций, и без числа
+           непонятно, сузил фильтр выборку или нет -->
+      <p class="catalog__count mono" id="cat-count" hidden></p>
+    </div>
 
     <p class="catalog__empty" id="cat-note" hidden></p>
 
@@ -215,35 +238,40 @@
         <input class="input wpanel__search" type="search" placeholder="Поиск раскраски">
         <div class="wpanel__list" role="listbox" aria-label="Раскраски"></div>
         <div class="wpanel__controls">
+          <div class="wpanel__look">
           <div class="wpanel__field">
-            <span class="label label--inline">Износ</span>
+            <span class="label label--inline wpanel__key">Износ</span>
+            <div class="wpanel__wears" role="radiogroup" aria-label="Износ"></div>
             <span class="wpanel__wearname"></span>
           </div>
-          <div class="wpanel__wears" role="radiogroup" aria-label="Износ"></div>
           <div class="wpanel__field">
-            <span class="label label--inline">Сид</span>
+            <span class="label label--inline wpanel__key">Сид</span>
             <input class="input input--tiny wpanel__seed" inputmode="numeric" value="0"
-                   title="От сида зависит, как узор ляжет на оружие: поворот, сдвиг, где износ">
-            <button class="textbtn textbtn--sm wpanel__dice" type="button">Случайный</button>
+                   title="От сида зависит, как узор ляжет на оружие: поворот, сдвиг, где износ. Колесо или стрелки - соседний сид">
+            <button class="ptools__btn wpanel__dice" type="button"
+                    title="Случайный сид" aria-label="Случайный сид">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="2.5" y="2.5" width="11" height="11" rx="2"/>
+                <circle class="ptools__pip" cx="5.6" cy="5.6" r="1"/><circle class="ptools__pip" cx="8" cy="8" r="1"/><circle class="ptools__pip" cx="10.4" cy="10.4" r="1"/>
+              </svg>
+            </button>
+          </div>
           </div>
           <div class="wpanel__field wpanel__parts" hidden>
-            <span class="label label--inline">Детали</span>
+            <span class="label label--inline wpanel__key">Детали</span>
             <button class="textbtn textbtn--sm wpanel__shuffle" type="button"
-                    title="Раздать узоры деталям по-другому">Перемешать детали</button>
+                    title="Раздать узоры деталям по-другому">Перемешать</button>
             <button class="textbtn textbtn--sm wpanel__tune" type="button"
-                    title="Выбрать узор для каждой детали самому">Настроить по деталям</button>
+                    title="Выбрать узор для каждой детали самому">Настроить</button>
           </div>
           <!-- У каждого материала своя развёртка: узор собирается под каждый
-               отмеченный. Плитки строит warpaint.js: миниатюра - текстура
+               отмеченный. Чипы строит warpaint.js: миниатюра - текстура
                материала, у отмеченного - его предпросмотр War Paint -->
-          <div class="wpanel__mats" hidden>
-            <div class="wpanel__field">
-              <span class="label label--inline">Материалы</span>
-              <span class="wpanel__matcount"></span>
-            </div>
+          <div class="wpanel__field wpanel__mats" hidden>
+            <span class="label label--inline wpanel__key">Материалы</span>
             <div class="wpanel__matlist" role="group" aria-label="Материалы"></div>
-            <p class="wpanel__matnote" hidden>В игре War Paint на эти материалы не ложится: узор на них разложен по деталям, как в универсальном режиме.</p>
           </div>
+          <p class="wpanel__matnote" hidden>В игре War Paint на эти материалы не ложится: узор на них разложен по деталям, как в универсальном режиме.</p>
           <p class="wpanel__status" aria-live="polite"></p>
         </div>
         </div>
@@ -256,25 +284,59 @@
                     title="Вернуться к выбору раскраски (Esc)">К раскраскам</button>
             <span class="wlay__kit"></span>
           </div>
+          <!-- Чьи детали раскладываются: у каждого материала своя развёртка
+               и своя раскладка. Чипы строит warpaint-layout.js -->
+          <div class="wpanel__field wpanel__mats wlay__mats" hidden>
+            <span class="label label--inline wpanel__key">Материал</span>
+            <div class="wpanel__matlist" role="radiogroup" aria-label="Материал"></div>
+          </div>
           <p class="wlay__hint"></p>
           <div class="wlay__layers" role="radiogroup" aria-label="Узоры"></div>
           <div class="wlay__tools">
-            <button class="textbtn textbtn--sm wlay__tidy" type="button"
-                    title="Детали меньше двух процентов развёртки - под основу">Мелкие - в основу</button>
-            <button class="textbtn textbtn--sm wlay__mix" type="button"
-                    title="Раздать узоры случайно: крупные детали получат разные">Перемешать</button>
-            <button class="textbtn textbtn--sm wlay__undo" type="button" disabled
-                    title="Отменить последнее изменение раскладки (Ctrl+Z)">Отменить</button>
-            <button class="textbtn textbtn--sm wlay__reset" type="button" disabled
-                    title="Вернуть раскладку, какую сделал автомат">Сбросить</button>
-            <button class="textbtn textbtn--sm wlay__cut" type="button" hidden
-                    title="Детали крупные? Разрежьте их в «Частях модели» - здесь появятся новые">Разрезать деталь</button>
+            <button class="ptools__btn wlay__tidy" type="button"
+                    title="Мелкие - в основу: детали меньше двух процентов развёртки" aria-label="Мелкие - в основу">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="2.5" y="2.5" width="7" height="7"/><rect x="11" y="11" width="2.5" height="2.5"/>
+                <path d="M11 11 7 7M7 9.5V7h2.5"/>
+              </svg>
+            </button>
+            <button class="ptools__btn wlay__mix" type="button"
+                    title="Перемешать: крупные детали получат разные узоры" aria-label="Перемешать">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2 4.5h2c3.5 0 4.5 7 8 7h2M2 11.5h2c3.5 0 4.5-7 8-7h2"/><path d="M12.5 2.5l2 2-2 2M12.5 9.5l2 2-2 2"/>
+              </svg>
+            </button>
+            <button class="ptools__btn wlay__undo" type="button" disabled
+                    title="Отменить (Ctrl+Z)" aria-label="Отменить">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5H10a3.5 3.5 0 0 1 0 7H7"/>
+              </svg>
+            </button>
+            <button class="ptools__btn wlay__reset" type="button" disabled
+                    title="Сбросить: раскладка, какую сделал автомат" aria-label="Сбросить">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M3 8a5 5 0 1 0 1.5-3.5"/><path d="M4.5 1.5v3h3"/>
+              </svg>
+            </button>
+            <button class="ptools__btn wlay__cut" type="button" hidden
+                    title="Разрезать деталь в «Частях модели» - здесь появятся новые" aria-label="Разрезать деталь">
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="4.5" cy="11.5" r="2"/><circle cx="11.5" cy="11.5" r="2"/><path d="M6 10 12.5 2.5M10 10 3.5 2.5"/>
+              </svg>
+            </button>
           </div>
           <div class="wlay__units" role="listbox" aria-multiselectable="true" aria-label="Детали"></div>
           <p class="wlay__status" aria-live="polite"></p>
         </div>
         </div>
         <div class="ask__acts">
+          <!-- Удерживать: на модели то, что было до War Paint -->
+          <button class="ptools__btn wpanel__peek" type="button" hidden
+                  title="Удерживайте, чтобы увидеть модель без War Paint" aria-label="Без War Paint">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.5"/><path class="ptools__pip" d="M8 2.5a5.5 5.5 0 0 0 0 11z"/>
+            </svg>
+          </button>
           <button class="textbtn wpanel__cancel" type="button">Отмена</button>
           <button class="btn--primary wpanel__apply" type="button" disabled>Нанести</button>
         </div>
@@ -348,6 +410,36 @@
              приложении. Адрес ставится при первом входе в раздел: грузить
              второй three.js ради неоткрытой вкладки незачем -->
         <iframe class="viewport__frame" id="particles" title="Частицы" hidden></iframe>
+        <!-- Кадр эффекта: в углу - что видно (точки, фон), снизу по центру -
+             пульт проигрывания, как у видео. Было строкой из восьми слов под
+             кадром вперемешку с отменой правок, которая ушла к параметрам.
+             Только в разделе частиц (style-particles.css) -->
+        <div class="vdock vcorner pdock">
+          <button class="ptools__btn vcorner__btn" type="button" id="pcpbtn" aria-pressed="false"
+                  title="Контрольные точки: откуда эффект растёт и куда движется" aria-label="Точки">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"/></svg>
+          </button>
+          <button class="ptools__btn vcorner__btn" type="button" id="pbg"
+                  title="Тёмный, серый или светлый фон кадра: полупрозрачные слои эффекта видны только на светлом" aria-label="Фон">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path class="ptools__pip" d="M8 2.5a5.5 5.5 0 0 1 0 11z"/></svg>
+          </button>
+        </div>
+        <div class="vdock pdock pdock--pult" id="ppult">
+          <button class="ptools__btn" type="button" id="prestart" title="Заново (R)" aria-label="Заново">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.5-3.5"/><path d="M3 2.5v3h3"/></svg>
+          </button>
+          <!-- Тот же круг с перетекающим треугольником, что у плеера звуков -->
+          <button class="player__play is-playing" type="button" id="ppause"
+                  title="Пауза (пробел)" aria-label="Пауза"></button>
+          <button class="ptools__btn is-active" type="button" id="ploop" aria-pressed="true"
+                  title="Повтор: эффект начинается заново, когда закончится" aria-label="Повтор">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 7V6a2 2 0 0 1 2-2h8"/><path d="m10.5 2 2 2-2 2"/><path d="M13.5 9v1a2 2 0 0 1-2 2h-8"/><path d="m5.5 14-2-2 2-2"/></svg>
+          </button>
+          <!-- Замедление: крит длится полсекунды, и без него в кадре не
+               разобрать, что и когда происходит -->
+          <button class="pdock__speed mono" type="button" id="pspeed"
+                  title="Скорость времени (S)">100%</button>
+        </div>
         <!-- Пустой кадр подписывает вьювер под своим кубиком, здесь - стадии
              работы -->
         <span class="viewport__hint" id="stagehint" hidden></span>
@@ -364,6 +456,77 @@
             <path d="M45 40 30 48 15 40"/><path d="M15 40V22"/>
             <path d="M15 22 30 30 45 22"/><path d="M30 30v18"/>
           </svg>
+        </div>
+        <!-- Что показано в кадре, кнопками в самом кадре: под ним ряды копились
+             до семи строк. Сверху справа - что видно (версия с гирляндой),
+             слева - чем подгоняют в 3D, снизу - анимация от первого лица -->
+        <!-- Праздничная версия: гирлянда, которую игра вешает на ЭТО оружие
+             (праздничный предмет или фестивайзер). Кнопки по ответу Python:
+             у каждого оружия свой набор -->
+        <!-- Правый верхний угол: версия и инспектор (inspect.js: наведение -
+             материал под курсором, щелчок - его карточка в альбоме). Инспектор
+             нужен всегда, пока есть модель, - в колонке подгонки он висел один
+             посреди края -->
+        <!-- Одной панелью: высота общая, и рядом не стоят две рамки разного
+             размера. Разделитель - только когда видны обе половины -->
+        <div class="vdock vcorner">
+          <!-- Модельные стили шапки: у каждого своя геометрия. Список приходит
+               из каталога вместе с предметом -->
+          <div class="vcorner__group" id="hatstyles" hidden title="Стиль шапки"></div>
+          <!-- Стили оружия (skin_info) приходят от воркера: у каждой модели
+               свой набор. Пусто до события -->
+          <div class="vcorner__group" id="skinbar" data-cond="styles" hidden title="Стиль"></div>
+          <!-- Состояния модели ($bodygroup): целая и разбитая бутылка, кабер до
+               и после взрыва. Игра переключает их сама, здесь - только
+               посмотреть. Группы строит applyView по ответу Python -->
+          <div class="vcorner__group" id="bodybar" hidden
+               title="Состояние модели: игра переключает его сама, здесь можно посмотреть каждое"></div>
+          <div class="vcorner__group" id="festivebar" hidden
+               title="Гирлянда, которую игра вешает на это оружие. Её правки уходят в мод отдельной моделью и не задевают другие оружия"></div>
+          <!-- Лупа, а не пипетка: пипетка в режиме частей берёт цвет -->
+          <button class="ptools__btn vcorner__btn" type="button" id="inspectbtn" hidden
+                  title="Инспектор материалов: наведите на модель, щелчок откроет карточку"
+                  aria-label="Инспектор материалов">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="6.8" cy="6.8" r="4.3"/><path d="M10 10l4 4"/>
+            </svg>
+          </button>
+        </div>
+        <!-- Подгонка в 3D: своей модели по призраку оригинала и гирлянды под
+             свою модель. Включённая открывает палитру справа (fitpanel) -->
+        <div class="vdock vdock--tools" id="vtools">
+          <button class="ptools__btn" type="button" id="fitbtn" hidden
+                  title="Подогнать модель: размер, поворот и положение по призраку оригинала"
+                  aria-label="Подогнать модель">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 2.5 13 5v6l-5 2.5L3 11V5z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/>
+            </svg>
+          </button>
+          <button class="ptools__btn" type="button" id="decorfit" hidden
+                  title="Подогнать гирлянду под свою модель (G/R/S)"
+                  aria-label="Подогнать гирлянду">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M1.5 4.5c3.5 3.5 9.5 3.5 13 0"/>
+              <path d="M5 7.2v1.3M8 7.9v1.3M11 7.2v1.3"/>
+              <circle cx="5" cy="10" r="1.3"/><circle cx="8" cy="10.7" r="1.3"/><circle cx="11" cy="10" r="1.3"/>
+            </svg>
+            <!-- На своей модели гирлянда висит как на стоковой, пока её не
+                 подогнали: так её и повесит игра, огоньки мимо -->
+            <span class="vtools__dot" id="decorfit-dot" hidden></span>
+          </button>
+        </div>
+        <!-- Анимации от первого лица. Список приходит от воркера, кнопки -
+             группами (fp-groups.js): перезарядка и осмотр играются цепочкой -->
+        <div class="vdock vdock--bottom" id="fpbar" hidden></div>
+        <!-- «На персонаже» и насмешка: слот оружия (от него и стойка, и что в
+             руках - кнопки по классу) и класс. Классов до девяти, кнопками
+             они растянули бы полосу на весь кадр - поэтому один выбор списком -->
+        <div class="vdock vdock--bottom vscene" id="scenebar">
+          <div class="vcorner__group" id="wearbar" hidden></div>
+          <span class="vdock__sep" aria-hidden="true"></span>
+          <div class="vcorner__group" id="tauntbar" hidden>
+            <button class="tag" type="button" id="classpick" title="Класс"></button>
+          </div>
         </div>
         <!-- Части модели
              Инструменты стоят ПОВЕРХ кадра, у правого края и по центру, как
@@ -677,9 +840,9 @@
                 </svg>
               </button>
               <!-- Гнуть - только у гирлянды: провод и лампочки тянутся мышью,
-                   колесо меняет радиус захвата -->
+                   колесо приближает, как везде, Shift+колесо - радиус захвата -->
               <button class="ptools__btn" type="button" data-tool="bend" data-decor hidden
-                      title="Гнуть: тяните гирлянду мышью, колесо - радиус" aria-label="Гнуть">
+                      title="Гнуть: тяните гирлянду мышью, Shift+колесо - радиус захвата" aria-label="Гнуть">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M2 12c3 0 3-8 6-8s3 8 6 8"/><circle cx="8" cy="4" r="1.5"/>
                 </svg>
@@ -687,6 +850,15 @@
 
               <span class="ptools__sep"></span>
 
+              <!-- Автоподгонка: своя модель встаёт на место оригинала по
+                   размеру, повороту и положению - дальше правят руками -->
+              <button class="ptools__btn" type="button" id="fit-auto" data-model hidden
+                      title="Подогнать автоматически: на место оригинала" aria-label="Подогнать автоматически">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3"/>
+                  <path d="M8 5.5 9 7.4l2 .3-1.5 1.4.4 2L8 10.2l-1.9.9.4-2L5 7.7l2-.3z"/>
+                </svg>
+              </button>
               <button class="ptools__btn" type="button" id="fit-reset"
                       title="Сбросить подгонку" aria-label="Сбросить">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -697,6 +869,15 @@
                       title="Выпрямить: убрать все изгибы гирлянды" aria-label="Выпрямить">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M2 8h12"/><path d="M4 5 2 8l2 3M12 5l2 3-2 3"/>
+                </svg>
+              </button>
+              <!-- Обтянуть - подгонка гирлянды автоматически: только на своей
+                   модели, на стоковой гирлянда и так на месте -->
+              <button class="ptools__btn" type="button" id="fit-wrap" data-decor="custom" hidden
+                      title="Обтянуть модель: посадить гирлянду на свою модель так, как она сидит на стоковой"
+                      aria-label="Обтянуть модель">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M3 13V8a5 5 0 0 1 10 0v5"/><path d="M1.5 9.5c2-4 4.5-6 6.5-6s4.5 2 6.5 6"/>
                 </svg>
               </button>
               <button class="ptools__btn" type="button" id="fit-done"
@@ -754,137 +935,97 @@
            превью - человек. Точку можно посадить на реальную точку крепления
            модели: в игре анюжуал висит именно на attachment -->
       <div class="cp" id="cp" hidden>
-        <div class="cp__row">
-          <span class="label label--inline">Гизмо двигает</span>
-          <div class="cp__scene" id="cp-scope">
-            <button class="tag is-active" data-scope="effect">Весь эффект</button>
-            <button class="tag" data-scope="system">Эту систему</button>
+        <!-- Шапка: вкладки точек, которые эффекту нужны (подпись - зачем,
+             если это видно по модулю), и что двигает стрелка в кадре -->
+        <div class="cp__head">
+          <div class="cp__tabs" id="cp-index" role="tablist" aria-label="Контрольные точки"></div>
+          <div class="cp__headr">
+            <div class="cp__seg" id="cp-scope"
+                 title="Что двигает стрелка в кадре. Alt при перетаскивании - наоборот">
+              <button class="tag is-active" data-scope="effect">Весь эффект</button>
+              <button class="tag" data-scope="system">Эту систему</button>
+            </div>
+            <span class="cp__info" tabindex="0"
+                  title="Контрольные точки - места, к которым привязан эффект. В игре их ставит код, здесь - вы, только для просмотра: в мод они не идут">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v4M8 4.8v.4"/></svg>
+            </span>
           </div>
-          <span class="mono cp__hint">Alt при перетаскивании - наоборот</span>
         </div>
-
-        <div class="cp__row">
-          <span class="label label--inline">Точка</span>
-          <div class="cp__pick" id="cp-index"></div>
-          <span class="mono cp__used" id="cp-used"></span>
-        </div>
-
-        <div class="cp__row">
-          <span class="label label--inline">Позиция</span>
-          <input class="input input--num" id="cp-x" type="number" step="1" value="0">
-          <input class="input input--num" id="cp-y" type="number" step="1" value="0">
-          <input class="input input--num" id="cp-z" type="number" step="1" value="0">
-          <span class="label label--inline">Углы</span>
-          <input class="input input--num" id="cp-p" type="number" step="5" value="0">
-          <input class="input input--num" id="cp-yaw" type="number" step="5" value="0">
-          <input class="input input--num" id="cp-r" type="number" step="5" value="0">
-          <span class="mono cp__hint">углы задают оси скорости и плоскость спрайтов</span>
-        </div>
-
-        <div class="cp__row">
-          <span class="label label--inline">Движение</span>
-          <div class="select"><select id="cp-motion">
-            <option value="none">Неподвижно</option>
-            <option value="bob">Покачивание вверх-вниз</option>
-            <option value="sway">Шаг вбок с подскоком</option>
-            <option value="orbit">По кругу</option>
-            <option value="spin">Разворот на месте</option>
-          </select></div>
-          <span class="label label--inline">Амплитуда</span>
-          <input class="input input--num" id="cp-amp" type="number" step="5" value="24">
-          <span class="label label--inline">Период, с</span>
-          <input class="input input--num" id="cp-period" type="number" step="0.5" value="2">
-          <button class="textbtn textbtn--sm" id="cp-reset">Сбросить</button>
-        </div>
-
-        <div class="cp__row">
-          <button class="textbtn textbtn--sm" id="cp-model">Модель…</button>
-          <span class="mono" id="cp-model-name"></span>
-          <div class="cp__scene" id="cp-scene">
-            <button class="tag is-active" data-scene="world">В мире</button>
-            <button class="tag" data-scene="model">На модели</button>
+        <div class="cp__grid">
+          <span class="label">Где</span>
+          <div class="cp__row">
+            <div class="cp__xyz">
+              <label class="cp__ax cp__ax--x"><b>X</b><input class="input input--num" id="cp-x" type="number" step="1" value="0"></label>
+              <label class="cp__ax cp__ax--y"><b>Y</b><input class="input input--num" id="cp-y" type="number" step="1" value="0"></label>
+              <label class="cp__ax cp__ax--z"><b>Z</b><input class="input input--num" id="cp-z" type="number" step="1" value="0"></label>
+            </div>
+            <!-- Подпись с полями одной группой: в узком окне переносятся вместе -->
+            <span class="cp__more">
+            <span class="label cp__sub" title="Углы задают оси скорости и плоскость спрайтов">Углы</span>
+            <div class="cp__xyz">
+              <label class="cp__ax"><b>наклон</b><input class="input input--num" id="cp-p" type="number" step="5" value="0"></label>
+              <label class="cp__ax"><b>поворот</b><input class="input input--num" id="cp-yaw" type="number" step="5" value="0"></label>
+              <label class="cp__ax"><b>крен</b><input class="input input--num" id="cp-r" type="number" step="5" value="0"></label>
+            </div>
+            </span>
+            <button class="ptools__btn cp__reset" type="button" id="cp-reset"
+                    title="Вернуть точку на место" aria-label="Сбросить точку">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.5-3.5"/><path d="M3 2.5v3h3"/></svg>
+            </button>
           </div>
-          <span class="label label--inline">Точка крепления</span>
-          <div class="select"><select id="cp-attach" disabled></select></div>
+          <span class="label">Движение</span>
+          <div class="cp__row">
+            <div class="select"><select id="cp-motion">
+              <option value="none">Неподвижно</option>
+              <option value="bob">Покачивание вверх-вниз</option>
+              <option value="sway">Шаг вбок с подскоком</option>
+              <option value="orbit">По кругу</option>
+              <option value="spin">Разворот на месте</option>
+            </select></div>
+            <!-- Размах и период - только когда точка движется -->
+            <span class="cp__more" id="cp-motion-opts" hidden>
+              <label class="cp__ax"><b>размах</b><input class="input input--num" id="cp-amp" type="number" step="5" value="24"></label>
+              <label class="cp__ax"><b>период, с</b><input class="input input--num" id="cp-period" type="number" step="0.5" value="2"></label>
+            </span>
+          </div>
+          <span class="label">Крепление</span>
+          <div class="cp__row">
+            <div class="cp__seg" id="cp-scene">
+              <button class="tag is-active" data-scene="world">В мире</button>
+              <button class="tag" data-scene="model">На модели</button>
+            </div>
+            <!-- Модель и её точка крепления - только «на модели» -->
+            <span class="cp__more" id="cp-model-opts" hidden>
+              <button class="textbtn textbtn--sm" id="cp-model">Модель…</button>
+              <span class="mono" id="cp-model-name"></span>
+              <span class="label cp__sub">Точка крепления</span>
+              <div class="select"><select id="cp-attach" disabled></select></div>
+            </span>
+          </div>
         </div>
       </div>
-
       <div class="half__foot half__foot--wrap">
-        <!-- Кнопки стилей приходят от воркера (skin_info): у каждой модели
-             свой набор, и заглушки в разметке показывали бы стили там, где их
-             нет. Ряд остаётся пустым до события -->
-        <div class="styles" id="skinbar" data-cond="styles" hidden>
-          <span class="label label--inline">Стиль</span>
-        </div>
-        <!-- Состояния модели ($bodygroup): целая и разбитая бутылка, кабер до
-             и после взрыва. Игра переключает их сама, здесь - только
-             посмотреть. Ряды строит applyView по ответу Python -->
-        <div class="styles" id="bodybar" hidden
-             title="Состояние модели: игра переключает его сама, здесь можно посмотреть каждое"></div>
-        <!-- Праздничная версия: гирлянда, которую игра вешает на ЭТО оружие
-             (праздничный предмет или фестивайзер). Её можно перекрасить и
-             подогнать - в мод она идёт своей моделью, другие оружия не
-             задевает. Кнопки по ответу Python: у каждого оружия свой набор -->
-        <div class="styles" id="festivebar" hidden
-             title="Гирлянда, которую игра вешает на это оружие. Её правки уходят в мод отдельной моделью и не задевают другие оружия">
-          <span class="label label--inline">Версия</span>
-        </div>
-        <!-- Модельные стили шапки: у каждого своя геометрия. Список приходит
-             из каталога вместе с предметом -->
-        <div class="styles" id="hatstyles" hidden>
-          <span class="label label--inline">Стиль шапки</span>
-        </div>
-        <!-- Анимации вида от первого лица. Список приходит от воркера: у
-             каждого оружия свой набор, и общего перечня не существует -->
-        <div class="styles" id="fpbar" hidden>
-          <span class="label label--inline">Анимация</span>
-        </div>
-        <!-- Классы, которые играют эту насмешку. Список приходит из
-             items_game: у каждого класса своя модель реквизита и своя
-             последовательность -->
-        <!-- Слот оружия в сцене «На персонаже»: от него зависит и стойка
-             персонажа, и что у него в руках. Кнопки строит код по классу -->
-        <div class="styles" id="wearbar" hidden>
-          <span class="label label--inline">Оружие</span>
-        </div>
-        <div class="styles" id="tauntbar" hidden>
-          <span class="label label--inline">Класс</span>
-        </div>
-        <!-- Управление проигрыванием эффекта. Живёт там же, где действия
-             над моделью: раздел меняет содержимое, а не раскладку -->
-        <div class="acts" id="pacts" hidden>
-          <button class="textbtn textbtn--sm" id="prestart" title="Заново (R)">Заново</button>
-          <button class="textbtn textbtn--sm" id="ppause" title="Пауза (пробел)">Пауза</button>
-          <!-- Замедление: крит длится полсекунды, и без него в кадре не
-               разобрать, что и когда происходит -->
-          <button class="textbtn textbtn--sm" id="pspeed" title="Скорость времени (S)">1×</button>
-          <button class="textbtn textbtn--sm" id="ploop">Повтор</button>
-          <button class="textbtn textbtn--sm" id="pcpbtn">Точки</button>
-          <button class="textbtn textbtn--sm" id="pbg" title="Тёмный, серый или светлый фон кадра: полупрозрачные слои эффекта видны только на светлом">Фон</button>
-          <!-- Ctrl+Z мышью не нажмёшь: у отмены должна быть и кнопка -->
-          <button class="textbtn textbtn--sm" id="pundo" disabled
-                  title="Отменить правку (Ctrl+Z)">Отменить</button>
-          <button class="textbtn textbtn--sm" id="predo" disabled
-                  title="Вернуть правку (Ctrl+Y)">Повторить</button>
-        </div>
         <div class="acts" id="model-acts">
-          <button class="textbtn textbtn--sm" data-cond="replace"
-                  title="SMD из Blender или OBJ/GLB с сайта; MTL и текстуры выберите вместе с моделью">Заменить модель</button>
-          <!-- Подгонка своей модели под оружие: призрак оригинала в кадре и
-               гизмо, как в Blender. Появляется, когда своя модель уже стоит -->
-          <button class="textbtn textbtn--sm" id="fitbtn" hidden
-                  title="Подогнать размер, поворот и положение по призраку оригинала">Масштабировать</button>
-          <button class="textbtn textbtn--sm" data-cond="qc">Редактировать QC</button>
+          <!-- Своя модель - одним меню: три действия про одно, и два из них
+               есть только при своей модели. Кнопки остаются (их прячут
+               data-cond и applyView), меню собирается из видимых -->
+          <button class="textbtn textbtn--sm" id="modelmenu" type="button"
+                  title="Заменить модель, править её QC, вернуть игровую">Модель ▾</button>
+          <span id="modelmenu-items" hidden>
+            <button class="textbtn textbtn--sm" data-cond="replace"
+                    title="SMD из Blender или OBJ/GLB с сайта; MTL и текстуры выберите вместе с моделью">Заменить модель</button>
+            <button class="textbtn textbtn--sm" data-cond="qc">Редактировать QC</button>
+            <!-- Своя модель - не билет в один конец: вернуть игровую надо уметь
+                 не только сменой предмета -->
+            <button class="textbtn textbtn--sm" id="dropmodel" hidden
+                    title="Вернуть игровую модель вместо своей">Убрать свою модель</button>
+          </span>
           <button class="textbtn textbtn--sm" id="maketeam" data-cond="team">Сделать командным</button>
           <!-- Гирлянда праздничной версии - частью модели оружия: в игре она
                видна у всех, а не только у владельца праздничного предмета -->
           <button class="textbtn textbtn--sm" id="makefestive" hidden
                   title="Вшить гирлянду в модель: в игре она будет на обычном оружии">Сделать праздничным</button>
           <button class="textbtn textbtn--sm" id="parts" data-cond="parts">Разделить на части</button>
-          <!-- Своя модель - не билет в один конец: вернуть игровую надо уметь
-               не только сменой предмета -->
-          <button class="textbtn textbtn--sm" id="dropmodel" hidden
-                  title="Вернуть игровую модель вместо своей">Убрать свою модель</button>
         </div>
       </div>
     </section>
@@ -926,38 +1067,81 @@
       </div>
     </div>
 
-    <!-- Плеер. Движок - обычный <audio>, но без `controls`: браузерный пульт
-         выпадает из вида приложения. Полоса и громкость - <input type=range>:
-         перетаскивание и клавиатура у него уже свои -->
-    <div class="player">
+    <!-- Плеер, как у музыкальных: слева что играет, по центру кнопки и полоса,
+         справа громкость и сборка. Движок - обычный <audio> без `controls`:
+         браузерный пульт выпадает из вида приложения. Полосы - <input
+         type=range>, перетаскивание и клавиатура у него уже свои -->
+    <div class="player is-idle">
       <audio id="snd-audio" preload="none"></audio>
-
-      <button class="player__play" id="snd-play" type="button"
-              aria-label="Играть"></button>
-
-      <div class="player__body">
-        <span class="player__what mono" id="snd-playing">Ничего не играет</span>
-        <input class="player__seek" id="snd-seek" type="range"
-               min="0" max="1000" value="0" step="1" aria-label="Перемотка">
+      <!-- Итог скачивания: над пультом, а не в подвале - подпись в подвале
+           мелкая, и скачался ли звук, было не понять -->
+      <div class="snd-toast" id="snd-toast" role="status" aria-live="polite">
+        <span class="snd-toast__text" id="snd-toast-text"></span>
+        <button class="textbtn textbtn--sm" id="snd-toast-open" type="button" hidden>Показать в папке</button>
       </div>
 
-      <span class="player__time mono" id="snd-time">0:00 / 0:00</span>
-
-      <div class="player__vol">
-        <span class="label label--inline">Громкость</span>
-        <input class="player__level" id="snd-vol" type="range"
-               min="0" max="100" value="100" step="1" aria-label="Громкость">
+      <div class="player__now">
+        <b class="player__title" id="snd-playing">Ничего не играет</b>
+        <span class="player__sub mono"><span id="snd-wave"></span><span class="player__src" id="snd-src"></span></span>
       </div>
-    </div>
 
-    <!-- Свой подвал вместо общего: тот собирает ТЕКСТУРУ выбранного предмета
-         и показывает её размер с форматом - к звукам это не относится -->
-    <div class="sounds__foot">
-      <span class="label" id="snd-note">Своих звуков нет</span>
-      <button class="textbtn textbtn--sm" id="snd-clear" hidden>Убрать всё</button>
-      <input class="input sounds__name" id="snd-name" type="text"
-             placeholder="Имя VPK" value="sounds_mod">
-      <button class="btn--primary" id="snd-build">Собрать VPK</button>
+      <div class="player__mid">
+        <div class="player__ctl">
+          <div class="player__side player__side--l">
+          <!-- Оригинал из игры вместо своего файла, с того же места: сравнить
+               «до и после». Тот же значок, что у строки списка. Есть только
+               у записей со своим файлом -->
+          <button class="player__ic" id="snd-orig" type="button" hidden
+                  aria-label="Прослушать оригинал" title="Прослушать оригинал" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4h4"/></svg>
+          </button>
+          <button class="player__ic" id="snd-prev" type="button" aria-label="Предыдущая запись">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5v14"/><path d="M18 6 9 12l9 6z" fill="currentColor"/></svg>
+          </button>
+          </div>
+          <button class="player__play" id="snd-play" type="button" aria-label="Играть"></button>
+          <div class="player__side">
+          <button class="player__ic" id="snd-next" type="button" aria-label="Следующая запись">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5v14"/><path d="m6 6 9 6-9 6z" fill="currentColor"/></svg>
+          </button>
+          <button class="player__ic" id="snd-loop" type="button" aria-label="Повтор" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V9a3 3 0 0 1 3-3h12"/><path d="m16 3 3 3-3 3"/><path d="M20 13v2a3 3 0 0 1-3 3H5"/><path d="m8 21-3-3 3-3"/></svg>
+          </button>
+          </div>
+        </div>
+        <div class="player__bar">
+          <span class="player__time mono" id="snd-time">0:00</span>
+          <input class="player__seek" id="snd-seek" type="range"
+                 min="0" max="1000" value="0" step="1" aria-label="Перемотка">
+          <span class="player__time mono" id="snd-dur">0:00</span>
+        </div>
+      </div>
+
+      <div class="player__right">
+        <!-- Громкость значком: ползунок всплывает по нажатию, колесо мыши
+             над значком тоже крутит громкость -->
+        <div class="player__vol">
+          <button class="player__ic" id="snd-volbtn" type="button" aria-label="Громкость" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4h4l5 4V6L8 10z" fill="currentColor"/><path class="player__wave1" d="M16 9.5a3.5 3.5 0 0 1 0 5"/><path class="player__wave2" d="M18.5 7a7 7 0 0 1 0 10"/><path class="player__mute" d="m16 10 4 4m0-4-4 4"/></svg>
+          </button>
+          <div class="player__volpop" id="snd-volpop" hidden>
+            <input class="player__level" id="snd-vol" type="range"
+                   min="0" max="100" value="100" step="1" aria-label="Громкость">
+            <span class="mono" id="snd-volpct">100%</span>
+          </div>
+        </div>
+        <span class="player__sep" aria-hidden="true"></span>
+        <!-- Свой подвал вместо общего: тот собирает ТЕКСТУРУ выбранного
+             предмета, к звукам это не относится. Тут же короткие сообщения -->
+        <span class="label sounds__note" id="snd-note">Своих нет</span>
+        <button class="player__ic player__clear" id="snd-clear" type="button" hidden
+                aria-label="Убрать всё" title="Убрать всё">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"/></svg>
+        </button>
+        <input class="input sounds__name" id="snd-name" type="text"
+               placeholder="Имя VPK" value="sounds_mod">
+        <button class="btn--primary sounds__build" id="snd-build">Собрать VPK</button>
+      </div>
     </div>
   </section>
 
@@ -1074,6 +1258,18 @@
     <div class="params__modes">
       <button class="underlined is-active" data-pmode="simple">Обычный</button>
       <button class="underlined" data-pmode="expert">Эксперт</button>
+      <!-- Отмена правок - у самих правок, а не у кнопок проигрывания.
+           Тусклые, пока откатываться некуда -->
+      <span class="params__hist">
+        <button class="ptools__btn" type="button" id="pundo" disabled
+                title="Отменить правку (Ctrl+Z)" aria-label="Отменить">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4 3 7l3 3"/><path d="M3 7h6.5a3.5 3.5 0 0 1 0 7H8"/></svg>
+        </button>
+        <button class="ptools__btn" type="button" id="predo" disabled
+                title="Вернуть отменённую правку (Ctrl+Y)" aria-label="Вернуть">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4 3 3-3 3"/><path d="M13 7H6.5a3.5 3.5 0 0 0 0 7H8"/></svg>
+        </button>
+      </span>
     </div>
 
     <!-- Действия открываются правой кнопкой - на системе в каталоге, на
@@ -1596,10 +1792,16 @@
         <button class="textbtn" id="cfg-drafts" type="button">Удалить черновики…</button>
         <span class="mono" id="cfg-drafts-size"></span>
       </div>
-      <!-- Главный тур идёт сам только при первом старте, а вернуться к нему
-           хочется, например, показывая приложение другому человеку -->
+    </div>
+    <!-- Обучение. Одна кнопка «заново» сбрасывала все туры разом, и было не
+         понять, какой начнётся. Теперь у каждого своё название: щелчок ведёт
+         на место тура и начинает его (tour-go.js) -->
+    <div class="field cfg__tours">
+      <span class="field__label">Обучение</span>
+      <div class="cfg__tourlist" id="cfg-tours"></div>
+      <span class="field__note" id="cfg-tours-note" hidden></span>
       <div class="cfg__maint">
-        <button class="textbtn" id="cfg-tour" type="button">Пройти обучение заново</button>
+        <button class="textbtn" id="cfg-tour" type="button">Пройти всё обучение заново</button>
       </div>
     </div>
     <!-- Отладка - к обслуживанию: обычному человеку эти галочки не нужны, и

@@ -59,10 +59,14 @@ export function buildSkinnedScene(THREE, data, makeMaterial) {
   // снимком за пазуху - без этого снимок висел бы в руке с самого начала
   const hidden = data.weaponHidden || [];
   const built = { group, skeleton, mixer: new THREE.AnimationMixer(group),
-                  action: null, meshes, duration: 0, hidden,
+                  action: null, meshes, duration: 0, hidden, loops: 0,
                   props: hidden.length
                     ? meshes.filter(e => e.kind === 'weapon').map(e => e.mesh)
                     : [] };
+  // Сколько раз клип доиграл до конца: по этому счёту страница ведёт цепочку
+  // анимаций. По доле проигранного нельзя - при редких кадрах (окно не в
+  // фокусе, рядом игра) конец клипа проскакивал между кадрами незамеченным
+  built.mixer.addEventListener('loop', () => { built.loops++; });
   applyClip(THREE, built, data.clip);
   return built;
 }
@@ -90,6 +94,7 @@ export function applyClip(THREE, built, clipData) {
   action.setLoop(THREE.LoopRepeat, Infinity);
   action.play();
   built.action = action;
+  built.loops = 0;
   built.duration = clip.duration;
   return action;
 }

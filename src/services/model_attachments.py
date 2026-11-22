@@ -199,6 +199,20 @@ def reference_smd_for_qc(qc_path: str) -> Optional[str]:
     return None if smd is None else str(smd)
 
 
+def default_part_smds(qc_path: str, main_smd: str) -> List[str]:
+    """Части модели сверх основного тела, которые игра показывает по
+    умолчанию: нулевой вариант каждой `$bodygroup`. У игроков там ботинки,
+    наушники и шапка - разведчик без них стоял без ног. Само тело (и его
+    уровни `_lodN`) сюда не попадает, иначе задвоится"""
+    from src.services.model_build_service import ModelBuildService
+
+    groups = ModelBuildService.extract_bodygroups(qc_path)
+    picked = ModelBuildService.chosen_body_smds(groups)
+    body = re.sub(r'_lod\d+$', '', Path(main_smd).stem.lower())
+    return [p for p in picked
+            if re.sub(r'_lod\d+$', '', Path(p).stem.lower()) != body]
+
+
 def _reference_smd(qc_path: Path) -> Optional[Path]:
     """Reference-SMD рядом с QC: не физика, не анимация, не поза"""
     # Сперва - то, что QC зовёт телом (`$body`/`$model`): у игроков рядом

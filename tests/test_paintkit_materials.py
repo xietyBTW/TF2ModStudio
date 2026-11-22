@@ -61,6 +61,15 @@ class GamePaintTests(unittest.TestCase):
         self.assertEqual(_plans(s, materials=['c_det', 'c_det_lens']),
                          [(['c_det'], None, None), (['c_det_lens'], 'C_DET_LENS', None)])
 
+    def test_each_material_has_its_own_layout(self):
+        """Раскладка главного не уходит соседу: у того свои детали и ключ kit:карточка"""
+        s = _session(['body', 'scope'], layout={'p1': 2})
+        s._host.preview.paintkit_layouts['7:scope'] = {'p0': 1}
+        self.assertEqual(_plans(s), [(['body'], 'BODY', {'p1': 2}),
+                                     (['scope'], 'SCOPE', {'p0': 1})])
+        self.assertEqual(s._layout_key(7, 'scope'), '7:scope')
+        self.assertEqual(s._layout_key(7, s._host.preview.textures.stable_main()), '7')
+
     def test_hand_made_recipe_stays_where_the_game_puts_it(self):
         s = _session(['c_det', 'c_det_lens'], own=[HAND_MADE], game=['c_det'])
         self.assertEqual(_plans(s, kit=8, materials=['c_det', 'c_det_lens']),
@@ -112,9 +121,15 @@ class UniversalTests(unittest.TestCase):
         s._host.preview.textures.part_cards = {'c_det_part1': 'c_det'}
         with patch('src.services.mesh_parts_service.load', return_value=object()):
             got = s.paintkit_materials(15)['materials']
-        self.assertEqual(got, [{'card': 'c_det', 'game': True, 'parts': True},
-                               {'card': 'c_det_part1', 'game': True, 'parts': True},
-                               {'card': 'c_det_lens', 'game': False, 'parts': True}])
+        main = s._host.preview.textures.stable_main()
+        self.assertEqual(got, [
+            {'card': 'c_det', 'game': True, 'parts': True, 'main': main == 'c_det',
+             'source': 'c_det'},
+            # Материал части раскладывается вместе со своим исходным
+            {'card': 'c_det_part1', 'game': True, 'parts': True, 'main': False,
+             'source': 'c_det'},
+            {'card': 'c_det_lens', 'game': False, 'parts': True, 'main': False,
+             'source': 'c_det_lens'}])
 
     def test_game_card_without_mesh_is_not_laid_by_parts(self):
         """Скин с другой пушки ложится по деталям: карточке игры без меша - нет"""

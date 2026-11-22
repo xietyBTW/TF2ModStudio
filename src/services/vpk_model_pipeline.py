@@ -294,7 +294,7 @@ class VpkModelPipeline:
                         original_smd_path,
                         original_smd_path,  # Перезаписываем оригинальный файл под тем же именем
                         progress_cb=lambda pct: emit_sub(pct, "Replacing model..." if language == "en" else "Замена модели..."),
-                        keep_user_materials=keep_user_materials,
+                        keep_user_materials=keep_user_materials, qc_path=qc_path,
                     )
                     if keep_user_materials:
                         # Свои кости модели - в QC, иначе studiomdl свернёт их
@@ -490,7 +490,7 @@ class VpkModelPipeline:
                         continue
                     SMDService.replace_model_sections(
                         replace_model_smd_path, ref_smd, ref_smd,
-                        keep_user_materials=keep_user_materials,
+                        keep_user_materials=keep_user_materials, qc_path=qc_p,
                     )
                     if keep_user_materials:
                         ModelBuildService.define_missing_bones(qc_p, ref_smd)
@@ -626,7 +626,7 @@ class VpkModelPipeline:
                         ref_smd = VpkModelPipeline._find_decompiled_reference_smd(qc_p, wk, decomp_d)
                         if ref_smd:
                             SMDService.replace_model_sections(
-                                replace_smd, ref_smd, ref_smd, keep_user_materials=keep_mat,
+                                replace_smd, ref_smd, ref_smd, keep_user_materials=keep_mat, qc_path=qc_p,
                             )
                             if keep_mat:
                                 ModelBuildService.define_missing_bones(qc_p, ref_smd)

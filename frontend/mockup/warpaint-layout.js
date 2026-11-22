@@ -29,6 +29,8 @@ const statusEl = q('.wlay__status');
 const undoBtn = q('.wlay__undo');
 const resetBtn = q('.wlay__reset');
 const cutBtn = q('.wlay__cut');
+const matsRow = q('.wlay__mats');
+const matsEl = matsRow.querySelector('.wpanel__matlist');
 
 //: Мельче этой доли развёртки деталь почти не видна - «Мелкие - в основу»
 const SMALL = 0.02;
@@ -51,6 +53,10 @@ let hotRow = null;
 //: Слой, чьи детали сейчас подсвечены на модели (наведение на плитку)
 let layerView = null;
 let callbacks = { changed() {}, back() {}, cut() {} };
+//: Чьи детали раскладываются ('' - главного) и из чего выбирать:
+//: [{card, label, url}] от панели - отмеченные материалы с узором по деталям
+let card = '';
+let targets = [];
 
 export const layoutOpen = () => !pane.hidden;
 
@@ -60,7 +66,7 @@ async function load(k) {
   const seq = ++loadSeq;
   let res;
   try {
-    res = await api.paintkitLayout(k.id, k.item);
+    res = await api.paintkitLayout(k.id, k.item, 0, card);
   } catch (err) {
     res = { error: err.message };
   }
@@ -70,7 +76,11 @@ async function load(k) {
 
 const layerOf = (n) => data.layers.find((l) => l.n === n) || data.layers[0];
 
+//: Слой «Не красить» (paintkit_keep.KEEP): деталь сохраняет прежнюю текстуру
+const KEEP = -1;
+
 function layerName(n) {
+  if (n === KEEP) return t('Не красить');
   const i = data.layers.findIndex((l) => l.n === n);
   if (i <= 0) return data.over_albedo ? t('Без узора') : t('Основа');
   return t('Узор {}').replace('{}', i);
@@ -102,14 +112,16 @@ function remember() {
 
 /** Раздаёт узоры случайно, крупные детали получают разные */
 function mixedLayers() {
-  const pool = data.layers.map((l) => l.n).filter((n) => n || !data.over_albedo);
+  // «Не красить» не раздаётся: это выбор человека, а не узор
+  const pool = data.layers.map((l) => l.n).filter((n) => n !== KEEP && (n || !data.over_albedo));
+  const kept = data.units.map((u) => u.layer === KEEP);
   const now = data.units.map((u) => u.layer).join();
   for (let attempt = 0; attempt < 6; attempt++) {
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    const next = data.units.map((_u, i) => pool[i % pool.length]);
+    const next = data.units.map((_u, i) => (kept[i] ? KEEP : pool[i % pool.length]));
     if (next.join() !== now || pool.length < 2) return next;
   }
   return data.units.map((u) => u.layer);
@@ -134,7 +146,8 @@ export function flushLayout() {
   const assign = Object.fromEntries(data.units.filter((u) => u.manual)
     .map((u) => [u.key, u.layer]));
   const target = kit;
-  saving = api.setPaintkitLayout(target.id, Object.keys(assign).length ? assign : null)
+  saving = api.setPaintkitLayout(target.id, Object.keys(assign).length ? assign : null,
+                                 data.card || card)
     .then((res) => {
       if (res && res.error) throw new Error(res.error);
       callbacks.changed(target);
@@ -153,8 +166,11 @@ export function flushLayout() {
  * Открывает раскладку War Paint ``k``. ``cb`` - {changed(kit), back(), cut()}:
  * пересобрать предпросмотр, вернуться к списку, уйти резать детали.
  */
-export async function openLayout(k, cb) {
+export async function openLayout(k, cb, list = [], current = '') {
   callbacks = cb;
+  targets = list;
+  card = current;
+  renderTargets();
   kit = k;
   data = null;
   kitEl.textContent = k.name;
@@ -174,11 +190,11 @@ export async function openLayout(k, cb) {
   selected.clear();
   anchor = -1;
   brush = (data.layers[1] || data.layers[0]).n;
-  hintEl.innerHTML = '';
-  hintEl.append(t(data.mode === 'groups'
+  // Одна фраза на экране, откуда детали - в подсказке
+  hintEl.textContent = t('Выберите узор и щёлкайте детали на модели или перетаскивайте строки на узоры.');
+  hintEl.title = t(data.mode === 'groups'
     ? 'Детали здесь - группы, как их разметили художники Valve.'
-    : 'Детали - части модели, как их видно в «Частях модели».'), ' ',
-  t('Выберите узор и щёлкайте детали на модели или перетаскивайте строки на узоры.'));
+    : 'Детали - части модели, как их видно в «Частях модели».');
   cutBtn.hidden = data.mode !== 'parts';
   buildLayers();
   buildUnits();
@@ -209,8 +225,9 @@ export function closeLayout(discard = false) {
 }
 
 /** «Перемешать детали» с главного экрана: без открытия раскладки */
-export async function shuffleLayout(k, cb) {
+export async function shuffleLayout(k, cb, current = '') {
   callbacks = cb;
+  card = current;
   const res = await load(k);
   if (!res || res.error) return res?.error || '';
   kit = k;
@@ -222,6 +239,35 @@ export async function shuffleLayout(k, cb) {
 }
 
 function status(text) { statusEl.textContent = text ? t(text) : ''; }
+
+/** Чипы материалов: какой раскладывается сейчас. Один материал - тоже
+ *  чип: у модели из нескольких должно быть видно, чьи это детали */
+function renderTargets() {
+  matsRow.hidden = !targets.length;
+  matsEl.replaceChildren(...targets.map((m) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wmat';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(m.card === card));
+    b.title = m.card;
+    const sw = document.createElement('span');
+    sw.className = 'wmat__swatch';
+    if (m.url) sw.style.backgroundImage = `url("${m.url}")`;
+    const name = document.createElement('span');
+    name.className = 'wmat__name';
+    name.textContent = m.label;
+    b.append(sw, name);
+    b.addEventListener('click', async () => {
+      if (m.card === card || !kit) return;
+      // Недоотправленное - прошлому материалу, пока data ещё его
+      await flushLayout();
+      callbacks.pick?.(m.card);
+      openLayout(kit, callbacks, targets, m.card);
+    });
+    return b;
+  }));
+}
 
 function brushHint() {
   return t('Кисть - «{}». Щелчок по детали на модели кладёт этот узор.')
@@ -237,12 +283,16 @@ function buildLayers() {
     b.dataset.n = layer.n;
     b.draggable = true;
     b.setAttribute('role', 'radio');
-    b.title = layer.base
-      ? t(data.over_albedo ? 'Родная текстура оружия, без узора'
-        : 'Первый узор шаблона: лежит везде, где не выбран другой')
-      : t('Узор шаблона War Paint');
+    b.title = layer.keep
+      ? t('Не красить: деталь оставит текстуру, что была до War Paint')
+      : layer.base
+        ? t(data.over_albedo ? 'Родная текстура оружия, без узора'
+          : 'Первый узор шаблона: лежит везде, где не выбран другой')
+        : t('Узор шаблона War Paint');
+    if (layer.keep) b.classList.add('wlay__tile--keep');
     const sw = document.createElement('span');
-    sw.className = 'wlay__swatch' + (layer.swatch ? '' : ' wlay__swatch--bare');
+    sw.className = 'wlay__swatch' + (layer.keep ? ' wlay__swatch--keep'
+      : layer.swatch ? '' : ' wlay__swatch--bare');
     if (layer.swatch) sw.style.backgroundImage = `url("${api.fileUrl(layer.swatch)}")`;
     const key = document.createElement('span');
     key.className = 'wlay__key';
@@ -387,7 +437,8 @@ function refresh(flash = []) {
     const layer = layerOf(u.layer);
     const chip = row.querySelector('.wlay__chip');
     chip.style.backgroundImage = layer.swatch ? `url("${api.fileUrl(layer.swatch)}")` : '';
-    chip.classList.toggle('wlay__swatch--bare', !layer.swatch);
+    chip.classList.toggle('wlay__swatch--keep', u.layer === KEEP);
+    chip.classList.toggle('wlay__swatch--bare', !layer.swatch && u.layer !== KEEP);
     row.querySelector('.wlay__uname small').textContent = layerName(u.layer);
     row.classList.toggle('is-manual', u.manual);
     row.setAttribute('aria-selected', String(selected.has(i)));

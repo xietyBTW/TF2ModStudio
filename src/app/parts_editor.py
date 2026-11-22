@@ -46,6 +46,15 @@ def _existing(path: Optional[str]) -> Optional[str]:
     return path if path and os.path.isfile(path) else None
 
 
+def _remove(path: str) -> None:
+    """Склейку - вместе с исходником и краской рядом (vmt_tint.keep_raw)"""
+    from src.services import vmt_tint
+
+    for file in (path, *vmt_tint.sidecars(path)):
+        with contextlib.suppress(OSError):
+            os.remove(file)
+
+
 class PartsEditor:
     """Покраска частей модели одного сеанса"""
 
@@ -1249,15 +1258,22 @@ class PartsEditor:
 
     def _move_paintkit_layouts(self, model: Any, obj_mat: str, owner: Dict[int, int]) -> None:
         """Раскладка War Paint держится за номера частей (``p3``) - переносим
-        её так же, по треугольникам. Только у главного материала: War Paint
-        раскладывается по нему, у соседнего номера частей свои"""
+        её так же, по треугольникам. Только раскладки разрезанного материала:
+        ключ ``kit`` - главного, ``kit:карточка`` - остальных
+        (PaintkitEditor._layout_key), у соседних номера частей свои"""
         from collections import Counter
 
         if not self.preview.paintkit_layouts:
             return
-        main = self._parts_model('')
-        if not isinstance(main, tuple) or main[1] != obj_mat:
-            return
+        meshes: Dict[str, Any] = {}
+
+        def cut_here(key: str) -> bool:
+            card = key.split(':', 1)[1] if ':' in key else ''
+            if card not in meshes:
+                meshes[card] = self._parts_model(card)
+            found = meshes[card]
+            return isinstance(found, tuple) and found[1] == obj_mat
+
         heir = {}
         for part in model.parts_of(obj_mat):
             votes = Counter(owner.get(tri) for tri in part.triangles)
@@ -1265,6 +1281,8 @@ class PartsEditor:
             if votes:
                 heir[f'p{part.index}'] = f'p{votes.most_common(1)[0][0]}'
         for kit, layout in list(self.preview.paintkit_layouts.items()):
+            if not cut_here(kit):
+                continue
             moved = {k: v for k, v in layout.items() if not k.startswith('p')}
             moved.update({new: layout[old] for new, old in heir.items() if old in layout})
             self.preview.paintkit_layouts[kit] = moved
@@ -1512,8 +1530,7 @@ class PartsEditor:
                         or job['slot'] not in self.preview.part_bases):
                     current = False
                     if result:
-                        with contextlib.suppress(OSError):
-                            os.remove(result)
+                        _remove(result)
                     continue
                 if not result:
                     continue
@@ -1568,8 +1585,7 @@ class PartsEditor:
             if path in live or path in recent:
                 keep.append(path)
                 continue
-            with contextlib.suppress(OSError):
-                os.remove(path)
+            _remove(path)
         self._compose_files = keep
 
     def _live_texture_paths(self) -> set:
@@ -1728,8 +1744,11 @@ class PartsEditor:
         return plan
 
     def baked_path(self, path: Optional[str]) -> Optional[str]:
-        """Путь, который пойдёт в сборку: полная склейка вместо превью"""
-        return self._baked.get(path, path) if path else path
+        """Путь, который пойдёт в сборку: полная склейка вместо превью, у
+        покрашенной картинки - её исходник с маской краски"""
+        from src.services import vmt_tint
+
+        return vmt_tint.game_texture(self._baked.get(path, path)) if path else path
 
     def bake(self, plan: Dict[str, Any], report) -> None:
         """Печёт полные склейки по плану. Зовётся из воркера сборки"""

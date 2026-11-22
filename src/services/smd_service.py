@@ -105,6 +105,47 @@ _GRIP_PREFIXES = ("weapon_bone", "vm_weapon_bone")
 _NODE_RE = re.compile(r'\s*(\d+)\s+"([^"]*)"\s+(-?\d+)')
 
 
+def shape_only_material(material_names: List[str], main: Optional[str]) -> str:
+    """
+    Материал, в который «только форма» сливает всю свою геометрию: главный
+    материал предмета, если он есть в модели, иначе самый частый. Превью
+    показывает ту же одну карточку - главную (PreviewSession._model_materials)
+    """
+    if not material_names:
+        return ''
+
+    def key(name: str) -> str:
+        return re.sub(r'\.(bmp|tga|vmt)$', '', name.strip().lower())
+
+    if main:
+        for name in material_names:
+            if key(name) == key(main):
+                return name
+    counts: Dict[str, int] = {}
+    for name in material_names:
+        counts[name] = counts.get(name, 0) + 1
+    return max(counts, key=counts.get)
+
+
+def _main_material(qc_path: Optional[str], smd_path: str = '') -> Optional[str]:
+    """Главный материал по $texturegroup QC; нет QC или группы - None.
+    Без QC - тот, что лежит рядом с SMD оригинала (папка декомпиляции):
+    так сцены превью сливают свою модель в тот же материал, что и сборка"""
+    if not qc_path and smd_path:
+        folder = os.path.dirname(smd_path)
+        found = sorted(f for f in os.listdir(folder) if f.lower().endswith('.qc')) \
+            if os.path.isdir(folder) else []
+        qc_path = os.path.join(folder, found[0]) if len(found) == 1 else None
+    if not qc_path or not os.path.isfile(qc_path):
+        return None
+    from src.services import qc_skin_parser
+    try:
+        return qc_skin_parser.parse_skin_layout(qc_path).main_texture
+    except (OSError, ValueError) as exc:
+        logger.warning(f"[SMD] главный материал из {qc_path} не прочитан: {exc}")
+        return None
+
+
 def _before_end(section: List[str], lines: List[str]) -> List[str]:
     """Строки секции SMD с `lines` перед её закрывающим `end`"""
     if not section:
@@ -180,6 +221,7 @@ class SMDService:
         output_smd_path: Optional[str] = None,
         progress_cb: Optional[Callable[[int], None]] = None,
         keep_user_materials: bool = False,
+        qc_path: Optional[str] = None,
     ) -> str:
         """
         Заменяет секции nodes/skeleton (а опц. и имена материалов) в пользовательском
@@ -197,6 +239,8 @@ class SMDService:
                                игровом скелете, дописываются к нему (`_own_bones`).
                                Скелет игры остаётся основой: по его костям модель
                                держат в руке и анимируют.
+            qc_path:           QC оригинала: его главный материал ($texturegroup)
+                               получает всю геометрию «только формы»
         Returns:
             Путь к записанному файлу
         """
@@ -259,8 +303,13 @@ class SMDService:
             _wlines(out, skeleton)
             # Запись треугольников -> 80..100 %
             # keep_user_materials -> передаём пустой список оригинальных имён,
-            # тогда _write_merged_triangles сохраняет материалы пользователя
-            _orig_mat_names = [] if keep_user_materials else orig_parts.get('material_names', [])
+            # тогда _write_merged_triangles сохраняет материалы пользователя.
+            # Иначе вся геометрия - в ОДИН материал. Раньше треугольник N
+            # получал материал N-го треугольника оригинала, и у шапки с двумя
+            # материалами своя модель в игре делилась на них как попало
+            target = shape_only_material(orig_parts.get('material_names', []),
+                                         _main_material(qc_path, original_smd_path))
+            _orig_mat_names = [] if keep_user_materials or not target else [target]
             # Кости сопоставляются по ИМЕНИ: номера у риггера свои, а порядок в
             # декомпиляции произвольный (у Детонатора weapon_bone,
             # weapon_bone_3, weapon_bone_4, weapon_bone_2). Что не опознали -

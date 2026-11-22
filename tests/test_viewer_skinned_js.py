@@ -66,7 +66,9 @@ const THREE = {
         setLoop(mode) { a.loop = mode; }, play() { a.played = true; } };
       this.actions.push(a); return a; }
     stopAllAction() { this.actions.forEach(a => { a.played = false; }); }
-    uncacheClip(clip) { this.uncached = clip; } },
+    uncacheClip(clip) { this.uncached = clip; }
+    // Настоящий микшер - EventDispatcher: событие 'loop' считает круги клипа
+    addEventListener(type, fn) { (this.listeners ||= {})[type] = fn; } },
   AnimationClip: class { constructor(name, duration, tracks) {
     this.name = name; this.duration = duration; this.tracks = tracks; } },
   VectorKeyframeTrack: class { constructor(path, times, values) {

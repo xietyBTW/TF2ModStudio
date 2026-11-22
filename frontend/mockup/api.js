@@ -344,6 +344,7 @@ export const clearLog     = () => call('clear_log', {});
 export const logFolder    = () => call('log_folder', {});
 export const dataFolder   = () => call('data_folder', {});
 export const exportFolder = () => call('export_folder', {});
+export const revealExportFile = (path) => call('reveal_export_file', { path });
 export const pickFolder   = (start) => call('pick_folder', { start });
 //: Кнопки окна: minimize / maximize / close / theme; без действия - состояние
 export const windowControl = (action = '', theme = '') =>
@@ -358,6 +359,7 @@ export const loadPartModel = (group, path) => call('load_part_model', { group, p
 export const dropPartModel = (group) => call('drop_part_model', { group });
 export const dropDecorModel = (kind) => call('drop_decor_model', { kind });
 export const setCustomFit = (fit) => call('set_custom_fit', { fit });
+export const autoFitCustomModel = () => call('auto_fit_custom_model');
 export const qcText       = () => call('qc_text');
 export const saveQc       = (text) => call('save_qc', { text });
 
@@ -409,10 +411,11 @@ export const applyPaintkit = (kit, item, wear, seed, materials, layout = 0) =>
   call('apply_paintkit', { kit, item, wear, seed: String(seed), materials, layout });
 export const previewPaintkit = (kit, item, wear, seed, materials, layout = 0) =>
   call('preview_paintkit', { kit, item, wear, seed: String(seed), materials, layout });
-export const paintkitLayout = (kit, item, layout = 0) =>
-  call('paintkit_layout', { kit, item, layout });
-export const setPaintkitLayout = (kit, assign) =>
-  call('set_paintkit_layout', { kit, assign });
+export const paintkitThumbs = (kits) => call('paintkit_thumbs', { kits });
+export const paintkitLayout = (kit, item, layout = 0, card = '') =>
+  call('paintkit_layout', { kit, item, layout, card });
+export const setPaintkitLayout = (kit, assign, card = '') =>
+  call('set_paintkit_layout', { kit, assign, card });
 export const normalPreview = (screen, global_options, editing) =>
   call('normal_preview', { screen, global_options, editing });
 

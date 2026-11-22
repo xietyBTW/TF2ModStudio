@@ -11,6 +11,7 @@ import { t } from '../i18n.js';
 import { stage, say, sayInfo, sayError, sayBusy, withParticles } from '../stage.js';
 import { closeCat } from '../layout.js';
 import { els, fillFilters, applyToolsMenu } from '../catalog.js';
+import { refreshDrops } from '../catalog-fold.js';
 import { plural } from '../util.js';
 import { ask } from '../ask.js';
 import { contextMenu } from '../menu.js';
@@ -80,6 +81,7 @@ export function fillTree(nodes, selected) {
   // Источники - про список игры, у дерева файла им делать нечего
   els.fSource.hidden = true;
   els.fFxCat.hidden = true;
+  shownSet = null;            // вернёмся к эффектам игры - список с начала
   let shown = 0;
 
   const walk = (list, depth) => {
@@ -156,6 +158,8 @@ let source = '';
 let category = '';
 //: Последний запрос - чтобы смена источника перерисовала тот же список
 let lastQuery = '';
+//: Какой набор нарисован: другой - список с начала, а не с места прошлого
+let shownSet = null;
 //: Корни списка эффектов, развёрнутые рукой, держатся между перерисовками
 const fxOpen = new Set();
 
@@ -193,13 +197,19 @@ export async function showEffects(query = '') {
   els.fFxCat.hidden = !cats.length;
 
   els.grid.innerHTML = '';
+  // Другой набор (вкладка, раздел, запрос) - с начала: иначе новый список
+  // открывался на месте, до которого листали прошлый. Тот же - на месте
+  const set = `${query}|${source}|${category}`;
+  if (set !== shownSet) els.grid.scrollTop = 0;
+  shownSet = set;
   if (!res.ready) els.grid.append(indexProgress(res.progress));
   // Без запроса список идёт группами: необычные - по разделам, другой
   // источник - по предмету («Огнемёт», «Турель»), подписываем границы
   const byItem = source && source !== 'unusual';
   let group = null;
   for (const it of res.items) {
-    const key = byItem ? (it.labels[0] || '') : it.category_name;
+    // Группу под источником решает Python: предмет, а без него - файл PCF
+    const key = byItem ? (it.group || it.labels[0] || '') : it.category_name;
     if (!query && key !== group) {
       group = key;
       const head = document.createElement('p');
@@ -417,6 +427,7 @@ async function goToFile(it) {
     if (loadedFile !== it.file) return;
   } else {
     if ([...els.cat.options].some((o) => o.value === it.file)) els.cat.value = it.file;
+    refreshDrops();
     const node = pcfTree.find((n) => n.key === it.system);
     if (node && pSystem !== it.system) await pickSystem(null, node, { keepOpen: true });
   }
@@ -508,6 +519,7 @@ export async function loadPcf(source, label = '', system = '', { keepList = fals
   // Выпадашка показывает открытый файл, если дерево - его, из списка эффектов
   // игры она остаётся на «Все эффекты», как и сам список
   if (!keepList && [...els.cat.options].some((o) => o.value === source)) els.cat.value = source;
+  refreshDrops();
   // Новый файл - свои узлы, старое состояние свёрнутости к ним не относится
   pcfCollapsed.clear();
   // Дочерние сворачиваем сразу: сверху видно корни эффектов, а не всё подряд

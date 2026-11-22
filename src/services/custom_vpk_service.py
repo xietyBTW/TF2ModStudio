@@ -437,7 +437,7 @@ class CustomVPKService:
                 decor_note = CustomVPKService._build_decor(
                     decor_builds, temp_root, vpkroot_dir, tf2_root_dir, size,
                     format_type, flags or [], vtf_options or {}, bypass_method,
-                    emit, language)
+                    emit, language, filename)
 
             if strip_game_tint and written:
                 from src.services.tint_strip import strip_unmasked
@@ -688,7 +688,8 @@ class CustomVPKService:
     def _build_decor(entries: list, temp_root: Path, vpkroot_dir: Path,
                      tf2_root_dir: Optional[str], size, format_type: str,
                      flags: List[str], vtf_options: Dict, bypass_method: str,
-                     emit: Callable[[int, str], None], language: str) -> str:
+                     emit: Callable[[int, str], None], language: str,
+                     filename: str = '') -> str:
         """Гирлянды в распакованный мод. Возвращает пометку для отчёта, если
         собрались не все: мод при этом собирается - со стоковыми гирляндами,
         как и у обычного оружия (decor_build)"""
@@ -720,7 +721,7 @@ class CustomVPKService:
             textures_vpk=TF2Paths.resolve_textures_vpk(tf2_root_dir) or '',
             studiomdl_exe=studiomdl_exe, tf_dir=tf_dir, size=size,
             format_type=format_type, flags=flags, vtf_options=vtf_options,
-            bypass_prefix=bypass_prefix(bypass_method), emit_sub=emit,
+            bypass_prefix=bypass_prefix(bypass_method, filename), emit_sub=emit,
             language=language)
         notes = [] if built == len(entries) else [failed]
         if replaced:

@@ -35,6 +35,18 @@ class GameVpkReaderTests(unittest.TestCase):
         r = _reader({"materials/backpack/c_w.vmt": b'"x"{}'})
         self.assertIsNone(r.find_vmt(["backpack"], "c_w"))
 
+    def test_find_vmt_keeps_model_material_named_backpack(self):
+        # Рюкзак медика - модельный материал, хоть «backpack» и в имени
+        r = _reader({"materials/models/player/medic/medic_backpack_red.vmt":
+                     b'"VertexLitGeneric"{"$basetexture" "models/player/medic/medic_backpack_red"}'})
+        res = r.find_vmt(["models/player/medic"], "medic_backpack_red")
+        self.assertIsNotNone(res)
+
+    def test_find_vmt_skips_vmt_pointing_at_inventory_icon(self):
+        r = _reader({"materials/models/x/c_w.vmt":
+                     b'"UnlitGeneric"{"$basetexture" "backpack/weapons/c_w"}'})
+        self.assertIsNone(r.find_vmt(["models/x"], "c_w"))
+
     def test_find_vmt_none_when_absent(self):
         self.assertIsNone(_reader({}).find_vmt(["models/x"], "c_w"))
 

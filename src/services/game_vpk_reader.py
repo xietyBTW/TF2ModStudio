@@ -28,6 +28,15 @@ from src.shared.logging_config import get_logger
 logger = get_logger(__name__)
 
 
+def _inventory_icon(path: str, content: str) -> bool:
+    """VMT иконки инвентаря (materials/backpack/…), а не модельного материала.
+    Слово «backpack» в имени ещё ничего не значит: рюкзак медика -
+    medic_backpack_red, и проверка по одному слову оставляла его серым"""
+    base = (vmt_parse.basetexture(content) or '').replace('\\', '/').lower()
+    return (path.lower().startswith('materials/backpack/')
+            or base.startswith('backpack/'))
+
+
 @dataclass(frozen=True)
 class GameVtf:
     """VTF из архивов игры и где он там лежит"""
@@ -143,7 +152,7 @@ class GameVpkReader:
                 content = raw.decode("utf-8", errors="replace")
             except Exception:
                 continue
-            if "backpack" in path.lower() or "backpack" in content.lower():
+            if _inventory_icon(path, content):
                 logger.debug(f"GameVpkReader: пропускаем backpack VMT: {path}")
                 continue
             return path, content

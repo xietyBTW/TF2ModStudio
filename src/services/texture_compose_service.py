@@ -948,14 +948,23 @@ def compose(base_path: str,
     Returns:
         Путь к склейке или None, если рисовать оказалось нечего
     """
+    from src.services import vmt_tint
+
     count = _plan(layers, frames, base_path)[1]
+    game = vmt_tint.stroke_mask(base_path)
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     writer = None
     drawn = 0
     with open(out_path, 'wb') as fp:
         for frame, delay in iter_frames(base_path, layers, frames):
             drawn += 1
+            if game:
+                frame = vmt_tint.unstroked_masked(frame, game[1], game[2])
             if count == 1:
+                if game:
+                    # Склейка становится такой же, как картинка игры в превью:
+                    # покрашена, а рядом исходник с маской и краска банки
+                    frame = vmt_tint.keep_raw(frame, game[0], out_path, compress=1)
                 # Уровень 1, как у кадров APNG: склейку тут же читают вьювер и
                 # сборка, а умолчание Pillow (6) на 2048² - это 0.3 с из
                 # каждого мазка ради вдвое меньшего файла

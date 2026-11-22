@@ -14,6 +14,7 @@ import { toGameWav } from './audio.js';
 import { chooseFile } from './util.js';
 import { t } from './i18n.js';
 import { flash, staggerIn } from './motion.js';
+import { actButton, saveSound } from './sound-acts.js';
 
 const els = {
   box: document.getElementById('sounds'),
@@ -29,10 +30,22 @@ const els = {
   loading: document.getElementById('snd-loading'),
   loadingText: document.querySelector('#snd-loading .loading__text'),
   audio: document.getElementById('snd-audio'),
+  player: document.querySelector('.player'),
   playing: document.getElementById('snd-playing'),
+  wave: document.getElementById('snd-wave'),
+  src: document.getElementById('snd-src'),
+  orig: document.getElementById('snd-orig'),
+  prev: document.getElementById('snd-prev'),
+  next: document.getElementById('snd-next'),
+  loop: document.getElementById('snd-loop'),
   play: document.getElementById('snd-play'),
   seek: document.getElementById('snd-seek'),
   time: document.getElementById('snd-time'),
+  dur: document.getElementById('snd-dur'),
+  volBox: document.querySelector('.player__vol'),
+  volBtn: document.getElementById('snd-volbtn'),
+  volPop: document.getElementById('snd-volpop'),
+  volPct: document.getElementById('snd-volpct'),
   vol: document.getElementById('snd-vol'),
 };
 
@@ -75,6 +88,8 @@ let typing = null;
 const player = els.audio;
 //: Что играет сейчас - по нему подсвечивается строка списка
 let playingKey = '';
+//: Запись и файл в плеере: «Игра / Свой» переключает именно их
+let current = null;
 //: Пока полосу тянут, время в неё не пишем: иначе ползунок вырывается из-под
 //: пальца на каждом кадре звука
 let seeking = false;
@@ -107,6 +122,9 @@ export async function openSounds() {
     bindDrop();
     bindKeys();
     bindPlayer();
+    // В подвале узко, и длинное сообщение обрезается - целиком при наведении
+    new MutationObserver(() => { els.note.title = els.note.textContent; })
+      .observe(els.note, { childList: true, characterData: true, subtree: true });
   }
   await reload();
 }
@@ -207,26 +225,6 @@ function elsewhere(sections) {
   return out;
 }
 
-/** Опечатка: «scatergun» - предлагаем «scattergun» кнопкой в строку поиска */
-function maybe(words) {
-  if (!words.length) return [];
-  const out = [document.createTextNode(' - возможно: ')];
-  words.forEach((word, i) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'textbtn textbtn--sm';
-    b.textContent = word;
-    b.addEventListener('click', () => {
-      els.query.value = word;
-      sel.query = word;
-      reload();
-    });
-    if (i) out.push(', ');
-    out.push(b);
-  });
-  return out;
-}
-
 function block(title, options) {
   const box = document.createElement('div');
   box.className = 'facet';
@@ -257,11 +255,28 @@ function count(n) {
 
 /** Ставит громкость и ползунок под неё */
 function setVolume(percent) {
-  const n = Number(percent);
   // Значения нет - полная громкость: молчащий плеер читается как поломка,
-  // а не как настройка, и человек полезет искать её причину в звуке
+  // а не как настройка. Пустое и null проверяем сами: Number('') и
+  // Number(null) - это 0, и громкость молча вставала на ноль
+  const n = percent === null || percent === undefined || percent === ''
+    ? NaN : Number(percent);
   els.vol.value = String(Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 100);
-  player.volume = Number(els.vol.value) / 100;
+  showVolume();
+}
+
+/** Громкость в плеер, на ползунок, в проценты и в вид значка */
+function showVolume() {
+  const v = Number(els.vol.value);
+  player.volume = v / 100;
+  els.vol.style.setProperty('--level', `${v}%`);
+  els.volPct.textContent = `${v}%`;
+  els.volBox.classList.toggle('is-mute', v === 0);
+  els.volBox.classList.toggle('is-low', v > 0 && v < 50);
+}
+
+function openVolume(open) {
+  els.volPop.hidden = !open;
+  els.volBtn.setAttribute('aria-expanded', String(open));
 }
 
 /** Свой пульт вместо браузерного: движок тот же <audio>, вид наш */
@@ -279,14 +294,39 @@ function bindPlayer() {
   els.seek.addEventListener('input', () => {
     if (player.duration) showTime(share() * player.duration, player.duration);
   });
-  els.vol.addEventListener('input', () => {
-    player.volume = Number(els.vol.value) / 100;
-  });
+  els.vol.addEventListener('input', showVolume);
   // Запоминаем на ОТПУСКАНИИ (`change`), а не на каждом шаге ползунка: одно
   // движение мыши даёт полсотни `input`, и конфиг переписывался бы полсотни
   // раз. Громкость общая с окном настроек - она в том же конфиге
-  els.vol.addEventListener('change',
-    () => api.setUiState('sound_volume', Number(els.vol.value)));
+  const saveVolume = () => api.setUiState('sound_volume', Number(els.vol.value));
+  els.vol.addEventListener('change', saveVolume);
+  els.volBtn.addEventListener('click', () => openVolume(els.volPop.hidden));
+  // Колесо над значком - громкость без открытия ползунка. Сохраняем с
+  // задержкой: прокрутка - это десяток событий подряд
+  let wheelSave = null;
+  els.volBox.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    els.vol.value = String(Number(els.vol.value) + (e.deltaY < 0 ? 5 : -5));
+    showVolume();
+    clearTimeout(wheelSave);
+    wheelSave = setTimeout(saveVolume, 400);
+  }, { passive: false });
+  document.addEventListener('pointerdown', (e) => {
+    if (!els.volPop.hidden && !els.volBox.contains(e.target)) openVolume(false);
+  });
+  els.volBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { openVolume(false); els.volBtn.focus(); }
+  });
+  els.prev.addEventListener('click', () => step(-1));
+  els.next.addEventListener('click', () => step(1));
+  els.loop.addEventListener('click', () => {
+    player.loop = !player.loop;
+    els.loop.setAttribute('aria-pressed', String(player.loop));
+  });
+  // Нажат - играет оригинал из игры, отжать - снова свой файл
+  els.orig.addEventListener('click', () => {
+    if (current) switchSource(els.orig.getAttribute('aria-pressed') === 'true');
+  });
   player.addEventListener('timeupdate', tick);
   player.addEventListener('durationchange', tick);
   player.addEventListener('play', showPlaying);
@@ -312,7 +352,30 @@ function tick() {
 }
 
 function showTime(now, total) {
-  els.time.textContent = `${clock(now)} / ${clock(total)}`;
+  els.time.textContent = clock(now);
+  els.dur.textContent = clock(total);
+}
+
+/** Соседняя запись списка: от той, что играет, иначе от курсора */
+function step(delta) {
+  if (!rows.length) return;
+  let i = rows.findIndex((r) => r.name === playingKey);
+  if (i < 0) i = cursor;
+  const next = i < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, i + delta));
+  setCursor(next);
+  play(rows[next]);
+}
+
+/** Та же запись игровой или своей - с того же места, чтобы сравнить */
+function switchSource(own) {
+  const { row, wave } = current;
+  const path = own ? (row.own_waves[wave] || '') : '';
+  if (own && !path) return;
+  const at = player.currentTime;
+  playFile(row, wave, path);
+  player.addEventListener('loadedmetadata', () => {
+    player.currentTime = Math.min(at, player.duration || at);
+  }, { once: true });
 }
 
 function clock(sec) {
@@ -361,8 +424,7 @@ async function reload(offset = 0) {
     els.count.textContent = 'Раздел пуст: звуковые скрипты игры не прочитались';
   } else if (!total) {
     els.count.replaceChildren('Под этими фильтрами ничего нет',
-                              ...elsewhere(res.facets.section),
-                              ...maybe(res.suggest || []));
+                              ...elsewhere(res.facets.section));
   } else {
     els.count.textContent = `Записей: ${total}`;
   }
@@ -415,11 +477,9 @@ function card(row) {
     <span class="snd__group"></span>
     <button class="snd__file mono" type="button" data-act="open"><span class="snd__shared" hidden></span></button>
     <div class="snd__acts">
-      <button class="textbtn textbtn--sm" data-act="play">Прослушать</button>
-      <button class="textbtn textbtn--sm" data-act="orig" hidden>Оригинал</button>
-      <button class="textbtn textbtn--sm" data-act="save">Скачать</button>
-      <button class="textbtn textbtn--sm" data-act="own">Свой файл</button>
-      <button class="textbtn textbtn--sm" data-act="drop" hidden>Убрать</button>
+      ${actButton('data-act', 'play')}${actButton('data-act', 'save')}${
+        actButton('data-act', 'own')}${actButton('data-act', 'orig', true)}${
+        actButton('data-act', 'drop', true)}
     </div>`;
   const icon = box.querySelector('.snd__icon');
   // Своей картинки может не быть у всей игры - тогда прячем, а не показываем
@@ -505,7 +565,7 @@ async function onClick(e) {
   if (btn.dataset.act === 'open') return toggleFiles(row, box);
   if (btn.dataset.act === 'play') return play(row);
   if (btn.dataset.act === 'orig') return play(row, true);
-  if (btn.dataset.act === 'save') return save(row);
+  if (btn.dataset.act === 'save') return saveSound(row, btn);
   if (btn.dataset.act === 'drop') return setOwn(row, null);
   return ownFor(row);
 }
@@ -678,10 +738,8 @@ function toggleFiles(row, box) {
         <span class="snd__file-also mono" hidden></span>
       </div>
       <div class="snd__acts">
-        <button class="textbtn textbtn--sm" data-file="play">Прослушать</button>
-        <button class="textbtn textbtn--sm" data-file="save">Скачать</button>
-        <button class="textbtn textbtn--sm" data-file="own">Свой файл</button>
-        <button class="textbtn textbtn--sm" data-file="drop">Убрать</button>
+        ${actButton('data-file', 'play')}${actButton('data-file', 'save')}${
+          actButton('data-file', 'own')}${actButton('data-file', 'drop')}
       </div>`;
     one.querySelector('.snd__file-name').textContent = wave;
     // Дубль, свёрнутый в запись, - под именем записи игры, общий файл - с
@@ -716,11 +774,7 @@ async function onFile(e, row) {
     const own = row.own_waves[wave] || '';
     return playFile(row, wave, own);
   }
-  if (act === 'save') {
-    const res = await api.saveSound(row.name, wave);
-    els.note.textContent = res.error || `Сохранено: ${res.path}`;
-    return;
-  }
+  if (act === 'save') return saveSound(row, btn, wave);
   if (act === 'own') return ownForFile(row, one, wave);
   return setFile(row, one, wave, null);
 }
@@ -750,24 +804,19 @@ async function setFile(row, one, wave, path) {
 function playFile(row, wave, own) {
   player.pause();
   playingKey = row.name;
+  current = { row, wave };
   player.src = own ? api.fileUrl(own) : api.soundUrl(wave);
-  els.playing.textContent = own ? `${wave} - свой файл` : wave;
+  els.player.classList.remove('is-idle');
+  els.playing.textContent = row.title || row.name;
+  els.wave.textContent = wave;
+  els.src.textContent = own ? 'свой файл' : 'из игры';
+  els.src.classList.toggle('is-own', Boolean(own));
+  // Сравнивать есть с чем, только когда у файла есть своя замена
+  els.orig.hidden = !row.own_waves[wave];
+  els.orig.setAttribute('aria-pressed', String(!own));
   player.play().catch(cannotPlay);
 }
 
-/** Кладёт игровой звук в папку экспорта: чтобы переделать, его надо достать */
-async function save(row) {
-  const res = await api.saveSound(row.name);
-  if (res.error) {
-    els.note.textContent = res.error;
-    return;
-  }
-  // У записи бывает несколько файлов - игра берёт случайный, и переделывать
-  // обычно надо все
-  els.note.textContent = res.files > 1
-    ? `Сохранено файлов: ${res.files}, рядом с ${res.path}`
-    : `Сохранено: ${res.path}`;
-}
 
 async function setOwn(row, path) {
   const res = await api.setSound(row.name, path);
@@ -790,7 +839,7 @@ async function setOwn(row, path) {
 
 function showPicked() {
   els.note.textContent = pickedFiles
-    ? `Своих файлов: ${pickedFiles}` : 'Своих звуков нет';
+    ? `Своих: ${pickedFiles}` : 'Своих нет';
   els.build.disabled = !pickedFiles;
   els.clear.hidden = !pickedFiles;
   // Счётчик «заменённых» в колонке - тот же pickedTotal

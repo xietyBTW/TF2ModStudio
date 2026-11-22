@@ -99,6 +99,10 @@ class PreviewSession:
     custom_source_path: Optional[str] = None
     #: Подгонка импортированной модели: {scale, rotate, offset} в осях SMD
     custom_fit: Optional[dict] = None
+    #: Меши своей модели в кадре (Material.001…): у «только формы» - главная карточка
+    custom_mesh_materials: List[str] = field(default_factory=list)
+    #: Что заняли картинки из файла своей модели: {материал: {placed, red, blu}}
+    custom_displaced: Dict[str, Dict[str, str]] = field(default_factory=dict)
     #: Подгонка гирлянд: {вид: {scale, rotate, offset}} в осях SMD оружия.
     #: Своя модель оружия иной формы, и гирлянду сдвигают под неё, стоковая
     #: подгонка (единица) не хранится
@@ -330,22 +334,23 @@ class PreviewSession:
         остальное наследует. Так же ведёт себя панель приложения
         (``_rebuild_cards_for_skin``)
         """
-        if self.misc_mode and self.misc_materials:
+        if self.misc_mode and self.misc_materials and not self.shape_only:
             return list(self.misc_materials)
         # Гирлянда - после своих карточек предмета, стилей у неё нет, поэтому
         # она видна и в стиле
         decor = [c for c in self.decor_cards if is_decor(c)]
         parts = self.textures.part_cards
+        materials = self._model_materials()
         if self.active_style:
             # Материал части - в стиле вместе со своим исходным: строка стиля
             # меняет и его (part_materials.add_part_columns), и правка части
             # в стиле - её правка, а не базового
             chosen = self.skin_chosen.get(self.active_style) or set()
-            return [name for card in self.textures.material_names if card in chosen
+            return [name for card in materials if card in chosen
                     for name in [card, *(p for p, base in parts.items()
                                          if base == card and self._styled(p))]
                     ] + decor
-        cards = list(self.textures.material_names)
+        cards = materials
         # Часть-материал - сразу за своим исходным: так видно, откуда она
         if parts:
             cards = [name for card in cards
@@ -360,6 +365,20 @@ class PreviewSession:
             main = self.textures.stable_main() or cards[0]
             cards = [gold if c == main else c for c in cards]
         return cards + decor
+
+    @property
+    def shape_only(self) -> bool:
+        """Своя модель «только форма»: вся её геометрия в одном материале"""
+        return bool(self.custom_smd_path and not self.custom_keep_materials)
+
+    def _model_materials(self) -> List[str]:
+        """Материалы модели в кадре. У «только формы» - один главный: сборка
+        сливает в него всю геометрию (SMDService.shape_only_material)"""
+        names = list(self.textures.material_names)
+        if self.shape_only and names:
+            main = self.textures.stable_main()
+            return [main if main in names else names[0]]
+        return names
 
     def _styled(self, part: str) -> bool:
         """Меняет ли строка активного стиля исходный материал части. Только
@@ -591,8 +610,16 @@ class PreviewSession:
                 path = t.resolve_base(mat) if style else t.resolve_card(mat)
             if path:
                 out[mat] = path
-        return {**self.scene_extra_textures,
-                **self._name_for_scene(self._with_variant(out))}
+        shown = self._with_variant(out)
+        return {**self.scene_extra_textures, **self._name_for_scene(shown),
+                **self.shape_only_meshes(shown)}
+
+    def shape_only_meshes(self, textures: Dict[str, str]) -> Dict[str, str]:
+        """Меши «только формы» - картинкой главной карточки: имена у них свои,
+        и вьювер по имени их не находил"""
+        names = self._model_materials()
+        path = textures.get(names[0]) if names and self.shape_only else None
+        return {m: path for m in self.custom_mesh_materials} if path else {}
 
     def card_mesh(self) -> Any:
         """
@@ -652,7 +679,8 @@ class PreviewSession:
             links = self.textures.mod_mesh_cards
             return [m for m in self.custom_model_materials
                     if links.get(m.lower(), m).lower() == card.lower()]
-        return list(self._name_for_scene({card: ''}))
+        return [*self._name_for_scene({card: ''}),
+                *self.shape_only_meshes({card: card})]
 
     def _name_for_scene(self, out: Dict[str, str]) -> Dict[str, str]:
         """
@@ -815,6 +843,7 @@ class PreviewSession:
             'part_edge_color': str(self.part_edge_color),
             'custom_smd_path': self.custom_smd_path,
             'custom_keep_materials': bool(self.custom_keep_materials),
+            'custom_displaced': {m: dict(v) for m, v in self.custom_displaced.items()},
             'custom_qc_text': self.custom_qc_text,
             'custom_source_path': self.custom_source_path,
             'custom_fit': dict(self.custom_fit) if self.custom_fit else None,
@@ -943,6 +972,8 @@ class PreviewSession:
                                    or PreviewSession.part_edge_color)
         self.custom_smd_path = edits.get('custom_smd_path') or None
         self.custom_keep_materials = bool(edits.get('custom_keep_materials'))
+        self.custom_displaced = {str(m): dict(v) for m, v
+                                 in (edits.get('custom_displaced') or {}).items()}
         self.custom_qc_text = edits.get('custom_qc_text') or None
         self.custom_source_path = edits.get('custom_source_path') or None
         self.custom_fit = dict(edits['custom_fit']) if edits.get('custom_fit') else None
@@ -1030,6 +1061,8 @@ class PreviewSession:
         self.custom_keep_materials = False
         self.custom_source_path = None
         self.custom_fit = None
+        self.custom_mesh_materials = []
+        self.custom_displaced = {}
 
     def reset_misc(self) -> None:
         """Забывает набор «Прочее» - его пересоберёт приход материалов модели

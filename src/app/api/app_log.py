@@ -109,6 +109,37 @@ def export_folder() -> Dict[str, object]:
     return _open_folder(folder)
 
 
+@endpoint
+def reveal_export_file(path: str = '') -> Dict[str, object]:
+    """
+    Показывает файл из папки экспорта в проводнике - выделенным
+
+    Скачанный звук иначе терялся среди сотен файлов папки. Только файлы из
+    папки экспорта: путь приходит со страницы, и открывать по нему что
+    угодно незачем
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from src.shared.paths import export_dir
+
+    try:
+        target = Path(path or '').resolve()
+        inside = target.is_file() and target.is_relative_to(export_dir().resolve())
+    except OSError:
+        inside = False
+    if not inside:
+        return {'error': 'Файл не найден'}
+    if sys.platform != 'win32':
+        return {'error': 'только Windows', 'path': str(target)}
+    # Строкой, а не списком: explorer понимает только `/select,"путь"`, а
+    # список subprocess закавычил бы целиком вместе с ключом. Кавычек в пути
+    # Windows не бывает, путь проверен выше
+    subprocess.Popen(f'explorer /select,"{target}"')  # noqa: S603
+    return {'opened': True, 'path': str(target)}
+
+
 def _open_folder(folder) -> Dict[str, object]:
     """Показывает папку в проводнике"""
     import os

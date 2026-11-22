@@ -15,6 +15,8 @@ import { flushFitSave } from './custom-model.js';
 import { applyView, lastModel, showModel, refreshView } from './preview.js';
 import { cardTitles, showMaterials } from './preview-frames.js';
 import { still } from './motion.js';
+import { contextMenu } from './menu.js';
+import { fpGroups, chainProgress, stepDone } from './fp-groups.js';
 
 /**
  * Возвращает обычный вид «Вместе»
@@ -57,11 +59,19 @@ export let fpAction = 'IDLE';
 export function applyFpClip(clip) {
   withViewer((w) => {
     if (clip && w.setViewmodelClip && w.setViewmodelClip(clip)) {
+      fpClipArrived();
       say('');
       return;
     }
     api.loadFirstPerson(fpAction, true);
   });
+}
+
+/** Клип шага в кадре (дорожки или вся сцена): с этого кадра доля и круги -
+ *  его. По прыжку доли судить нельзя: переход с другой анимации, с 0.8 на 0,
+ *  выглядел как конец шага, и осмотр начинался с середины */
+export function fpClipArrived() {
+  fpWaiting = 0;
 }
 
 /**
@@ -87,44 +97,124 @@ export async function reloadSceneIfFp() {
   return true;
 }
 
+//: Что играет сейчас: действия по порядку и номер текущего. Группа из
+//: нескольких (перезарядка, осмотр) - цепочка, одно действие - повтор его
+let fpChain = ['IDLE'];
+let fpStep = 0;
+//: Клип запрошен и ещё не приехал: с какого времени (0 - не ждём). Пока ждём,
+//: в кадре играет прошлый клип, и конец шага по нему не считается
+let fpWaiting = 0;
+
+/** Играет цепочку `chain` с начала. `busy` - подпись, пока сцена собирается */
+async function playChain(chain, busy = true) {
+  fpChain = chain;
+  fpStep = 0;
+  fpWaiting = performance.now();
+  fpAction = chain[0];
+  // Из кэша сцена приезжает дорожками за треть секунды - при такой
+  // скорости подпись только мигнёт, поэтому она отложенная
+  if (busy) sayBusy(`Сборка сцены: ${fpAction}…`);
+  const res = await api.loadFirstPerson(fpAction);
+  if (res.error) sayError(res.error);
+}
+
+/** Следующий шаг цепочки: клип останавливается на последнем кадре, пока не
+ *  приедут дорожки следующего, - иначе между шагами мелькал бы повтор */
+async function nextStep() {
+  fpWaiting = performance.now();
+  viewer()?.setViewmodelPlaying?.(false);
+  fpStep = (fpStep + 1) % fpChain.length;
+  fpAction = fpChain[fpStep];
+  const res = await api.loadFirstPerson(fpAction);
+  if (res.error) {
+    sayError(res.error);
+    fpWaiting = 0;
+    viewer()?.setViewmodelPlaying?.(true);
+  }
+}
+
+/**
+ * Полоса анимаций в кадре: группы (fp-groups.js) и «Все анимации» со
+ * списком сырых действий, включая то, что в группы не вошло
+ */
 export function showFpActions(actions) {
   const bar = document.getElementById('fpbar');
-  bar.querySelectorAll('.tag').forEach((b) => b.remove());
+  bar.innerHTML = '';
   const list = actions || [];
   bar.hidden = list.length < 2 || work.dataset.scene !== 'fp';
   if (bar.hidden) return;
 
-  for (const action of list) {
+  const { groups } = fpGroups(list);
+  for (const g of groups) {
     const b = document.createElement('button');
-    b.className = 'tag' + (action === fpAction ? ' is-active' : '');
-    b.textContent = action;
-    b.addEventListener('click', async () => {
-      fpAction = action;
-      bar.querySelectorAll('.tag').forEach(
-        (x) => x.classList.toggle('is-active', x === b));
-      // Из кэша сцена приезжает дорожками за треть секунды - при такой
-      // скорости подпись только мигнёт, поэтому она отложенная
-      sayBusy(`Сборка сцены: ${action}…`);
-      const res = await api.loadFirstPerson(action);
-      if (res.error) sayError(res.error);
+    b.className = 'tag';
+    b.dataset.chain = g.chain.join(' ');
+    b.textContent = g.label;
+    b.title = g.chain.length > 1
+      ? t('Играется цепочкой: {}').replace('{}', g.chain.join(' → ')) : g.chain[0];
+    b.addEventListener('click', () => {
+      markFp(bar, b);
+      playChain(g.chain);
     });
     bar.appendChild(b);
   }
+  const more = document.createElement('button');
+  more.className = 'tag fp__more';
+  more.textContent = 'Все анимации';
+  more.addEventListener('click', async (e) => {
+    const chosen = await contextMenu(e, list.map((a) => ({ label: a, value: a })));
+    if (!chosen) return;
+    markFp(bar, more);
+    playChain([chosen]);
+  });
+  bar.appendChild(more);
+  // Выбор переживает смену оружия, если у нового он есть; иначе - «Покой»
+  const now = fpChain.join(' ');
+  const same = bar.querySelector(`.tag[data-chain="${now}"]`)
+    || (list.includes(fpAction) && fpChain.length === 1 ? more : null);
+  if (!same) { fpChain = [list.includes('IDLE') ? 'IDLE' : list[0]]; fpStep = 0; }
+  markFp(bar, same || bar.querySelector('.tag[data-chain]') || more);
   trackFp(bar);
+}
+
+function markFp(bar, active) {
+  bar.querySelectorAll('.tag').forEach((x) => {
+    x.classList.toggle('is-active', x === active);
+    x.style.removeProperty('--fp-p');
+  });
 }
 
 //: Кадр слежения за анимацией от первого лица (requestAnimationFrame)
 let fpTrack = 0;
 
-/** Полоса на метке выбранной анимации: сколько её проиграно (--fp-p). Следит,
- *  пока ряд на экране, вьювер отдаёт долю сам (viewmodelProgress) */
+/**
+ * Каждый кадр, пока полоса на экране: переход по цепочке и полоса прогресса
+ * на выбранной кнопке (--fp-p, вся цепочка целиком). Вьювер отдаёт долю
+ * клипа сам (viewmodelProgress). Следит и при выключенных анимациях
+ * интерфейса: без этого цепочка не шла бы дальше первого шага
+ */
 function trackFp(bar) {
   cancelAnimationFrame(fpTrack);
-  if (still()) return;
   const step = () => {
     if (bar.hidden) return;
-    const p = viewer()?.viewmodelProgress?.();
-    bar.querySelector('.tag.is-active')?.style.setProperty('--fp-p', p ?? 0);
+    const w = viewer();
+    const p = w?.viewmodelProgress?.();
+    if (fpWaiting) {
+      // Клип так и не приехал (ошибку сцены покажет её событие) - не стоим
+      // на паузе вечно
+      if (performance.now() - fpWaiting > 4000) {
+        fpWaiting = 0;
+        viewer()?.setViewmodelPlaying?.(true);
+      }
+    } else if (fpChain.length > 1 && stepDone(p, w?.viewmodelLoops?.())) {
+      nextStep();
+    }
+    if (!still()) {
+      bar.querySelector('.tag.is-active')?.style.setProperty(
+        // Пока ждём клип шага, номер шага уже новый: доля внутри него - ноль,
+        // иначе полоса забегала на целый шаг вперёд и откатывалась
+        '--fp-p', chainProgress(fpStep, fpChain.length, fpWaiting ? 0 : p));
+    }
     fpTrack = requestAnimationFrame(step);
   };
   fpTrack = requestAnimationFrame(step);
@@ -141,33 +231,37 @@ export let tauntClass = '';
  */
 export function showTauntClasses(classes) {
   const bar = document.getElementById('tauntbar');
-  bar.querySelectorAll('.tag').forEach((b) => b.remove());
-  const list = classes || [];
-  // Ряд общий у двух сцен: насмешки и шапки на персонаже. Какую пересобрать
-  // по щелчку, решает сцена, открытая сейчас
+  tauntClasses = classes || [];
+  // Выбор общий у двух сцен: насмешки и шапки на персонаже. Какую пересобрать,
+  // решает сцена, открытая в момент выбора
   const scene = work.dataset.scene;
-  bar.hidden = list.length < 2 || (scene !== 'taunt' && scene !== 'wear');
+  bar.hidden = tauntClasses.length < 2 || (scene !== 'taunt' && scene !== 'wear');
   if (bar.hidden) return;
-
-  if (!list.includes(tauntClass)) tauntClass = list[0];
-  for (const name of list) {
-    const b = document.createElement('button');
-    b.className = 'tag' + (name === tauntClass ? ' is-active' : '');
-    b.textContent = name;
-    b.addEventListener('click', async () => {
-      tauntClass = name;
-      bar.querySelectorAll('.tag').forEach(
-        (x) => x.classList.toggle('is-active', x === b));
-      sayBusy(`Сборка сцены: ${name}…`);
-      // У другого класса другое оружие: слот выбираем заново, первый
-      if (scene === 'wear') wearSlot = '';
-      const res = scene === 'wear' ? await api.loadWear(name, '')
-                                   : await api.loadTaunt(name);
-      if (res.error) sayError(res.error);
-    });
-    bar.appendChild(b);
-  }
+  if (!tauntClasses.includes(tauntClass)) tauntClass = tauntClasses[0];
+  markClass();
 }
+
+//: Классы, из которых выбирает кнопка класса
+let tauntClasses = [];
+const classBtn = document.getElementById('classpick');
+const markClass = () => { classBtn.textContent = `${tauntClass} ▾`; };
+
+classBtn.addEventListener('click', async () => {
+  const r = classBtn.getBoundingClientRect();
+  // Кнопка у нижнего края кадра: меню встаёт над ней (menu.js сдвинет его в
+  // окно, если сверху не хватит места)
+  const at = { preventDefault() {}, clientX: r.left, clientY: r.top - 12 - tauntClasses.length * 36 };
+  const name = await contextMenu(at, tauntClasses.map((c) => ({ label: c, value: c })));
+  if (!name || name === tauntClass) return;
+  tauntClass = name;
+  markClass();
+  sayBusy(`Сборка сцены: ${name}…`);
+  const scene = work.dataset.scene;
+  // У другого класса другое оружие: слот выбираем заново, первый
+  if (scene === 'wear') wearSlot = '';
+  const res = scene === 'wear' ? await api.loadWear(name, '') : await api.loadTaunt(name);
+  if (res.error) sayError(res.error);
+});
 
 //: Какое оружие у персонажа в сцене «На персонаже». Пусто - первый слот класса
 export let wearSlot = '';
@@ -190,11 +284,12 @@ export function showWearSlots(ev) {
   const bar = document.getElementById('wearbar');
   bar.querySelectorAll('.tag').forEach((b) => b.remove());
   const slots = ev.slots || [];
+  // Класс сцены - и при одном слоте: подпись кнопки класса не должна отстать
+  if (ev.tf2_class) { tauntClass = ev.tf2_class; markClass(); }
   // Один слот - выбирать нечего: оружие в руках стоит в своём слоте
   bar.hidden = slots.length < 2 || work.dataset.scene !== 'wear';
   if (bar.hidden) return;
   wearSlot = ev.slot || slots[0];
-  if (ev.tf2_class) tauntClass = ev.tf2_class;
   for (const slot of slots) {
     const b = document.createElement('button');
     b.className = 'tag' + (slot === wearSlot ? ' is-active' : '');

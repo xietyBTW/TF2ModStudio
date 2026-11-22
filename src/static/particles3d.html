@@ -258,7 +258,7 @@ function buildModelSampler(obj) {
 
 function sampleModel(out, scale) {
   const m = modelSampler;
-  if (!m) return false;
+  if (!m || !modelVisible) return false;   // скрытой модели («В мире») для эффекта нет
   const r = Math.random() * m.total;
   let lo = 0, hi = m.cum.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (m.cum[mid] < r) lo = mid + 1; else hi = mid; }
@@ -509,16 +509,7 @@ class SpriteBatch {
     this._soft = soft ? 1.0 : 0.0;
     this._texture = texture;
     this.capacity = 256;
-    this.geometry = new THREE.InstancedBufferGeometry();
-
-    // Квад ±1; uv: top-left origin (flipY=false)
-    const positions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
-    const uvs       = new Float32Array([ 0,  1,     1,  1,     1, 0,      0, 0]);
-    const index     = [0, 1, 2, 0, 2, 3];
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    this.geometry.setIndex(index);
-    this._allocAttributes();
+    this._buildGeometry();
 
     this.material = new THREE.ShaderMaterial({
       uniforms: {
@@ -551,6 +542,21 @@ class SpriteBatch {
     // ponytail: без пер-частичной сортировки; additive поверх обычных
     this.mesh.renderOrder = additive ? 2 : 1;
     scene.add(this.mesh);
+  }
+
+  /** Квад и инстансные атрибуты под текущую ёмкость. При росте - новая
+      геометрия, а старая освобождается: three (r160) в dispose отпускает
+      только атрибуты, висящие на геометрии сейчас, и заменённые через
+      setAttribute буферы оставались в видеопамяти до закрытия окна */
+  _buildGeometry() {
+    this.geometry = new THREE.InstancedBufferGeometry();
+    // Квад ±1; uv: top-left origin (flipY=false)
+    const positions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
+    const uvs       = new Float32Array([ 0,  1,     1,  1,     1, 0,      0, 0]);
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    this.geometry.setIndex([0, 1, 2, 0, 2, 3]);
+    this._allocAttributes();
   }
 
   _allocAttributes() {
@@ -588,7 +594,9 @@ class SpriteBatch {
   update(sprites) {
     if (sprites.length > this.capacity) {
       while (this.capacity < sprites.length) this.capacity *= 2;
-      this._allocAttributes();
+      this.geometry.dispose();
+      this._buildGeometry();
+      this.mesh.geometry = this.geometry;
     }
     for (let i = 0; i < sprites.length; i++) {
       const s = sprites[i];
@@ -718,6 +726,8 @@ class RopeBatch {
     scene.remove(this.mesh);
     this.geometry.dispose();
     this.material.dispose();
+    // Копия с повтором вдоль V - своя у батча, material.dispose её не трогает
+    if (this.material.uniforms.uTex.value) this.material.uniforms.uTex.value.dispose();
   }
 }
 

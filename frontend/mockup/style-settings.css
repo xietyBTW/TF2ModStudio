@@ -70,6 +70,10 @@
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px var(--rhythm);
 }
+/* Обучение: названия туров одной строкой с переносом. Щелчок по названию
+   ведёт на место тура, поэтому ни состояния, ни отдельной кнопки не нужно */
+.cfg__tourlist { display: flex; flex-wrap: wrap; gap: 10px 20px; margin-bottom: 4px; }
+
 /* Поле пути и значок выбора папки в одну строку: поле тянется, значок - в
    том же весе, что инструменты палитры частей */
 .pathpick { display: flex; align-items: center; gap: 6px; }

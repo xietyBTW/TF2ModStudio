@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from src.app.api._common import _lang, _t, endpoint, logger
 from src.app.api.preview import tf2_paths
+from src.shared.text_search import TypoIndex, find
 
 
 #: Ключи категорий в порядке показа
@@ -167,17 +168,22 @@ def _search(rows: List[dict], query: str) -> List[dict]:
     Слова, а не подстрока целиком: «обрез мал» обязано находить «Обрез
     Малыша», порядок слов человек помнить не должен. Ищем и по имени файла с
     классом: поле подписано «Название или файл», а классом удобно сузить
-    список, когда фильтр стоит на «Все»
+    список, когда фильтр стоит на «Все». Опечатки прощаются, но найденное
+    точно идёт первым
     """
-    words = [w for w in str(query or '').lower().split() if w]
+    words = [w for w in str(query or '').lower().replace('ё', 'е').split() if w]
     if not words:
         return rows
 
-    def haystack(row: dict) -> str:
-        return ' '.join(str(row.get(field, '') or '').lower()
-                        for field in ('name', 'key', 'label', 'cls'))
-
-    return [row for row in rows if all(w in haystack(row) for w in words)]
+    texts = [' '.join(str(row.get(field, '') or '').lower().replace('ё', 'е')
+                      for field in ('name', 'key', 'label', 'cls'))
+             for row in rows]
+    # Предметов категории сотни, словарь из них собирается за миллисекунды
+    index = TypoIndex(texts)
+    hits = [(typos, i) for i, text in enumerate(texts)
+            if (typos := find(words, text, index)) is not None]
+    hits.sort()
+    return [rows[i] for _, i in hits]
 
 
 @endpoint

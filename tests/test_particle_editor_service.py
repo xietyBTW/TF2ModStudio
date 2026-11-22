@@ -1118,6 +1118,26 @@ def test_referenced_control_points():
     assert referenced_control_points(root, systems) == [0, 4, 9]
 
 
+def test_control_point_roles():
+    """Подпись к номеру точки - по модулю, который её читает. Чего по
+    модулю не сказать, остаётся без подписи, а не с выдуманной"""
+    from src.services.particle_editor.hierarchy import control_point_roles
+
+    def mod(fn, attr, v):
+        return {"functionName": fn, "attrs": {attr: {"t": "integer", "v": v}}}
+
+    s = {"attrs": {}, "renderers": [], "emitters": [], "forces": [],
+         "constraints": [], "children": [],
+         "initializers": [
+             mod("Position Along Path Random", "start control point number", 0),
+             mod("Position Along Path Random", "end control point number", 2),
+             mod("Remap Control Point to Vector", "input control point number", 9),
+             mod("Some Odd Module", "control point number", 5)],
+         "operators": [mod("Movement Lock to Control Point", "control_point_number", 0)]}
+    # Точку 0 читают двое - подпись у более понятного («откуда растёт»)
+    assert control_point_roles(s) == {0: "origin", 2: "path_end", 9: "remap"}
+
+
 def test_referenced_control_points_ignores_range_fields():
     """«maximum end control point» = 30 - это граница диапазона, а не точка:
     в стоке такие поля есть, и без фильтра подсказка врала бы"""

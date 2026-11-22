@@ -15,6 +15,7 @@ import { quickEdit } from './fields.js';
 import { paramCard, isChanged } from './cards.js';
 import { pfind, filterExpert, showExpert } from './expert.js';
 import { syncHistory } from './playback.js';
+import { cpBox, cpFillIndexes } from './points.js';
 
 //: Фильтр карточек: все, только те, что есть в системе, только изменённые
 const FILTERS = [
@@ -144,6 +145,8 @@ function section(name, index, params) {
 /** Рисует панель параметров выбранной системы */
 export async function showParams(system) {
   setSystem(system);
+  // У другой системы другие точки: вкладки открытой панели точек - заново
+  if (!cpBox.hidden) cpFillIndexes();
   const expert = pMode === 'expert';
   plist.hidden = expert;
   pfind.hidden = !expert;

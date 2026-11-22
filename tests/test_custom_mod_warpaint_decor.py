@@ -21,6 +21,11 @@ from src.domain.preview.session import PreviewSession
 from src.services.custom_vpk_service import CustomVPKService
 from types import SimpleNamespace
 
+def without_recent(res):
+    """Ответ без недавних: они из конфига человека, тесту не к чему"""
+    return {k: v for k, v in res.items() if k != 'recent'}
+
+
 
 def _session(**preview) -> AppSession:
     s = AppSession.__new__(AppSession)       # без воркеров и конфига
@@ -46,14 +51,14 @@ class WarpaintOnModTests(unittest.TestCase):
                      custom_vpk_own_model=True)
         with patch('src.data.paintkit_defs.for_model', return_value=[{'id': 1}]), \
              patch('src.data.paintkit_defs.generic_kits', return_value=[{'id': 2}]):
-            self.assertEqual(s.paintkits.paintkits(), {'items': [{'id': 2}], 'generic': True})
+            self.assertEqual(without_recent(s.paintkits.paintkits()), {'items': [{'id': 2}], 'generic': True})
 
     def test_texture_only_mod_keeps_game_kits(self):
         """Мод без MDL лежит на стоковой модели - её War Paint ложатся верно"""
         s = _session(custom_vpk_mode=True, custom_vpk_weapon='c_scattergun',
                      custom_vpk_own_model=False)
         with patch('src.data.paintkit_defs.for_model', return_value=[{'id': 1}]):
-            self.assertEqual(s.paintkits.paintkits(), {'items': [{'id': 1}], 'generic': False})
+            self.assertEqual(without_recent(s.paintkits.paintkits()), {'items': [{'id': 1}], 'generic': False})
 
     def test_own_smd_is_custom_geometry_too(self):
         s = _session(custom_smd_path='C:/tmp/my.smd')

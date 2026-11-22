@@ -25,6 +25,13 @@ def set_custom_fit(fit: Optional[dict] = None) -> Dict[str, object]:
 
 
 @endpoint
+def auto_fit_custom_model() -> Dict[str, object]:
+    """Своя модель на место оригинала: подгонка считается по обеим моделям"""
+    from src.app.session import session
+    return session().custom_model.auto_fit()
+
+
+@endpoint
 def drop_custom_model(lang: str = '') -> Dict[str, object]:
     """Забывает свою модель и возвращает игровую"""
     from src.app.session import session

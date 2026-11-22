@@ -218,7 +218,8 @@ CLASS_ALIASES: Dict[str, str] = {
 #: иначе под фильтром до неё не добраться
 WHO_NAMES: Dict[str, str] = {
     'announcer': 'Диктор', 'pauling': 'Мисс Полинг',
-    'halloween': 'Хэллоуин', 'wheatley': 'Ап-Сап', 'other': 'Прочие',
+    'halloween': 'Хэллоуин', 'wheatley': 'Ап-Сап', 'hl2': 'Half-Life 2',
+    'other': 'Прочие',
 }
 
 #: Субъект записи (в нижнем регистре) -> говорящий, когда это не класс.
@@ -230,6 +231,8 @@ _SUBJECT_WHO: Dict[str, str] = {
     'invade': 'announcer', 'resource': 'announcer', 'rd': 'announcer',
     'halloween': 'halloween', 'merasmus': 'halloween', 'sf14': 'halloween',
     'sf15': 'halloween', 'bcon': 'halloween',
+    # Машинки и книга заклинаний - хэллоуинские, оружием их зовут по скрипту
+    'bumpercar': 'halloween', 'bombinomicon': 'halloween',
     'psap': 'wheatley',
     'plng': 'pauling', 'toughbreak': 'pauling',
 }
@@ -511,6 +514,46 @@ def _class_in(words: List[str]) -> str:
     return ''
 
 
+#: Слово оружия -> классы: последняя догадка для записей оружия, у которых
+#: нет ни предмета, ни имени в локализации (`Weapon_RPG_DirectHit`,
+#: `Weapon_Grenade_Pipebomb`, файлы `weapons/cow_mangler_*`). Как в `_GROUPS`:
+#: слово короче пяти букв совпадает только целиком (`fist`, а не `fisticuffs`),
+#: длиннее - и как часть склеенного имени. Первое совпадение побеждает, поэтому
+#: `rocketpack` (ранец поджигателя) стоит раньше всего ракетного. Двусмысленное
+#: (`Medikit`, `GrapplingHook`) сюда не попадает: «прочие» честнее, чем чужой класс
+WEAPON_WORD_CLASSES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ('rocketpack', ('pyro',)), ('flamethrower', ('pyro',)), ('flaregun', ('pyro',)),
+    ('rpg', ('soldier',)), ('rocketlauncher', ('soldier',)),
+    ('cowmangler', ('soldier',)), ('directhit', ('soldier',)),
+    ('blackbox', ('soldier',)), ('dumpsterrocket', ('soldier',)),
+    ('pipebomb', ('demoman',)), ('grenadelauncher', ('demoman',)),
+    ('stickybomb', ('demoman',)), ('tackygren', ('demoman',)),
+    ('locknload', ('demoman',)), ('katana', ('soldier', 'demoman')),
+    ('gunslinger', ('engineer',)), ('pomson', ('engineer',)),
+    ('toolbox', ('engineer',)), ('wrench', ('engineer',)),
+    ('scattergun', ('scout',)), ('baseball', ('scout',)),
+    ('nailgun', ('scout',)), ('brawlerblaster', ('scout',)),
+    ('sapper', ('spy',)), ('revolver', ('spy',)),
+    ('fist', ('heavy',)), ('gloves', ('heavy',)), ('minigun', ('heavy',)),
+    ('gatling', ('heavy',)),
+    ('syringegun', ('medic',)), ('medigun', ('medic',)), ('bonesaw', ('medic',)),
+    ('sniperrifle', ('sniper',)), ('smg', ('sniper',)),
+)
+
+
+def weapon_class_guess(subject: str) -> Tuple[str, ...]:
+    """Классы оружия по словам субъекта. Пусто - не узнали"""
+    words = words_of(subject)
+    found = _class_in(words)
+    if found:
+        return (found,)
+    joined = ''.join(words)
+    for key, classes in WEAPON_WORD_CLASSES:
+        if (key in words) if len(key) < 5 else (key in joined):
+            return classes
+    return ()
+
+
 #: Слова субъекта, за которыми стоит инженер: постройки - его
 _ENGINEER_WORDS = frozenset(('building', 'sentry', 'sentrygun',
                              'minisentrygun', 'dispenser', 'teleporter'))
@@ -710,43 +753,23 @@ def fold_takes(entries: List[SoundEntry]) -> List[SoundEntry]:
     return out
 
 
-def item_bindings(items_game_text: str) -> Dict[str, Tuple[set, set]]:
-    """{имя записи: (предметы, классы)} - из блоков `visuals` в items_game
-
-    Единственное место, где сказано, ЧЕЙ это звук: имя записи о классе молчит,
-    дробовик носят трое
-    """
-    from src.data.taunt_catalog import _item_bodies
-
-    out: Dict[str, Tuple[set, set]] = {}
-    for body in _item_bodies(items_game_text):
-        sounds = re.findall(r'"(sound_[a-z0-9_]+)"\s+"([^"]+)"', body)
-        if not sounds:
-            continue
-        name = re.search(r'"item_name"\s+"([^"]+)"', body)
-        title = (name.group(1) if name else '').lstrip('#')
-        classes = set(re.findall(
-            r'"(scout|soldier|pyro|demoman|heavy|engineer|medic|sniper|spy)"'
-            r'\s+"1"', body))
-        for _event, entry in sounds:
-            items, known = out.setdefault(entry, (set(), set()))
-            if title:
-                items.add(title)
-            known.update(classes)
-    return out
-
-
-def _orphan_files(paks, known: set) -> List[SoundEntry]:
+def _orphan_files(paks, known: set, hl2_paks=()) -> List[SoundEntry]:
     """Файлы `sound/weapons/`, которых не называет ни одна запись
 
     Их полсотни: связку «событие - файл» для части оружия Valve держит в
     зашифрованных `scripts/tf_weapon_*.ctx`, и через записи до этих звуков не
     добраться. Заменяются они всё равно по пути, поэтому показываем их сами по
     себе - иначе часть звуков оружия просто недоступна
+
+    `hl2_paks` - архивы общей папки движка. Файл, который есть только там и
+    не назван ни одной записью TF2, - оружие Half-Life 2 (гравипушка, 357):
+    в TF2 оно не звучит, и в «прочих» такие файлы прятали нужное. Остаются в
+    списке, но под своим ключом `hl2`
     """
     out: List[SoundEntry] = []
     seen = set()
-    for pak in paks:
+    sources = [(pak, ()) for pak in paks] + [(pak, ('hl2',)) for pak in hl2_paks]
+    for pak, who in sources:
         for path in pak:
             low = path.lower()
             if not low.startswith(WEAPON_SOUND_DIR):
@@ -760,8 +783,14 @@ def _orphan_files(paks, known: set) -> List[SoundEntry]:
             stem = os.path.splitext(os.path.basename(wave))[0]
             out.append(SoundEntry(
                 name=wave, subject=stem, event='',
-                group=group_of('weapon', stem, ''), waves=(wave,)))
+                group=group_of('weapon', stem, ''), waves=(wave,), who=who))
     return out
+
+
+def _is_hl2_vpk(path: Optional[str]) -> bool:
+    """Архив общей папки движка `hl2`, а не самой игры"""
+    return bool(path) and os.path.basename(
+        os.path.dirname(os.path.abspath(path))).lower() == 'hl2'
 
 
 def load(vpk_paths: Sequence[Optional[str]],
@@ -773,10 +802,11 @@ def load(vpk_paths: Sequence[Optional[str]],
     """
     from src.services import vtf_preview_service as vps
 
-    paks = vps.open_vpks(list(vpk_paths))
+    hl2_paks = vps.open_vpks([p for p in vpk_paths if _is_hl2_vpk(p)])
+    paks = vps.open_vpks([p for p in vpk_paths if not _is_hl2_vpk(p)])
 
     def text(name: str) -> str:
-        for pak in paks:
+        for pak in [*paks, *hl2_paks]:
             try:
                 return pak[name].read().decode('utf-8', 'replace')
             except KeyError:
@@ -787,10 +817,13 @@ def load(vpk_paths: Sequence[Optional[str]],
         logger.warning(f"[звук] не достали {WEAPON_SCRIPT}")
         return []
 
+    from src.data.items_game_kv import ItemsGame
+    from src.data.sound_items import item_bindings_of
+
     bound: Dict[str, Tuple[set, set]] = {}
-    if items_game_path and os.path.isfile(items_game_path):
-        bound = item_bindings(open(items_game_path, encoding='utf-8',
-                                   errors='replace').read())
+    game = ItemsGame.load(items_game_path) if items_game_path else None
+    if game is not None:
+        bound = item_bindings_of(game)
 
     entries: List[SoundEntry] = []
     known: set = set()
@@ -815,7 +848,7 @@ def load(vpk_paths: Sequence[Optional[str]],
         if entry.name in bound else entry
         for entry in entries]
     entries = fold_takes(entries)
-    entries += _orphan_files(paks, {w for e in entries for w in e.waves})
+    entries += _orphan_files(paks, {w for e in entries for w in e.waves}, hl2_paks)
 
     by_section: Dict[str, int] = {}
     for entry in entries:

@@ -545,7 +545,7 @@ class VPKService:
 
         # Папка обхода sv_pure для $cdmaterials (console\ или vgui\replay\thumbnails\)
         from src.shared.constants import bypass_prefix as _resolve_bypass_prefix
-        bypass_prefix = _resolve_bypass_prefix(r.bypass_method)
+        bypass_prefix = _resolve_bypass_prefix(r.bypass_method, r.filename)
 
         # Стадия 1: инструменты и пути (TF2/Crowbar/studiomdl/кандидаты MDL)
         err, tools = VPKService._stage_locate_tools(
@@ -1156,7 +1156,7 @@ class VPKService:
             studiomdl_exe=studiomdl_exe, tf_dir=tf_dir, size=r.size,
             format_type=r.format_type, flags=r.flags or [],
             vtf_options=r.vtf_options or {},
-            bypass_prefix=_resolve_bypass_prefix(r.bypass_method),
+            bypass_prefix=_resolve_bypass_prefix(r.bypass_method, r.filename),
             emit_sub=emit_sub, language=r.language)
         if not built:
             ctx.cleanup(on_error=True, keep_on_error=r.keep_temp_on_error,

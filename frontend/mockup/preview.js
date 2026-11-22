@@ -24,6 +24,7 @@ import { updateDockSummary } from './build.js';
 import { refreshNormal } from './normals.js';
 import { showFit, showDecorFit, showDecorBends, dropFitSave, bindFitViewer, isFitOn }
   from './custom-model.js';
+import { syncInspect } from './inspect.js';
 import { hatModels, showHatClasses, showHatStyles, markEditedStyles } from './preview-hats.js';
 import { showMaterials, setCardTitles } from './preview-frames.js';
 import { showBodygroups, decorFittable, showFestive, forgetDecor, showSkins, showStyleBar }
@@ -39,7 +40,7 @@ export { hatModels, showHatClasses, hatClasses, showHatStyles, markEditedStyles 
 export { frameNode, addFrame, cardTitles, setCardTitles, cardTitle, showMaterials }
   from './preview-frames.js';
 export { showDecor, festiveFailed, showSkins, showStyleBar } from './preview-variants.js';
-export { resetView, fpAction, applyFpClip, reloadSceneIfFp, showFpActions, tauntClass,
+export { resetView, fpAction, applyFpClip, fpClipArrived, reloadSceneIfFp, showFpActions, tauntClass,
          showTauntClasses, showWearSlots, sceneKind, sceneModelTex, showSpecialScene,
          specialSceneFailed, showSpecialAnimated, applySpecialTexture, showSkybox,
          showFirstPerson } from './preview-scenes.js';
@@ -430,6 +431,7 @@ export function applyView(st) {
   // Подгонка - только у импортированной модели и только в кадре предмета:
   // на руках и в насмешке призрака нет
   showFit(work.dataset.scene === 'item' ? st.custom_fit : null);
+  syncInspect(st, Boolean((st.materials || []).length));
   // Гирлянда: её подгонка и свои картинки идут вьюверу отдельно от
   // раздачи текстур предмета - её меши он красит своим слоем
   showDecorFit(st.decor_fit || null, Boolean(st.festive) && work.dataset.scene === 'item'

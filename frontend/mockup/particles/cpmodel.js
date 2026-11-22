@@ -148,7 +148,9 @@ async function chosen(item) {
     const classes = Object.keys(perClass);
     let mdl = item.key;
     if (classes.length > 1) {
-      const pick = (state.cls && perClass[state.cls]) ? state.cls : await ask({
+      // Ключи per_class из items_game в нижнем регистре, фильтр - с заглавной
+      const cls = state.cls && state.cls.toLowerCase();
+      const pick = (cls && perClass[cls]) ? cls : await ask({
         title: 'Какой класс',
         text: 'У этой шапки своя модель на каждый класс.',
         list: classes.map((c) => ({ label: c, value: c })),

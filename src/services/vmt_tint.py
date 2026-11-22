@@ -140,16 +140,25 @@ def apply_to_png(png_path: str, spec: Optional[TintSpec]) -> bool:
     try:
         with Image.open(png_path) as img:
             src = img.convert("RGBA")
-        src.save(raw_of(png_path), compress_level=PREVIEW_PNG_COMPRESS)
-        if not spec.fixed:
-            with open(png_path + ".paint.json", "w", encoding="utf-8") as f:
-                json.dump({"color": list(spec.color), "over": spec.over_base,
-                           "whole": spec.whole}, f)
-        _tinted(src, spec).save(png_path, compress_level=PREVIEW_PNG_COMPRESS)
+        keep_raw(src, spec, png_path).save(png_path, compress_level=PREVIEW_PNG_COMPRESS)
         return True
     except Exception as exc:
         logger.warning(f"[tint] окраска {png_path} не удалась: {exc}")
         return False
+
+
+def keep_raw(src, spec: TintSpec, png_path: str,
+             compress: int = PREVIEW_PNG_COMPRESS):
+    """
+    Кладёт рядом с `png_path` исходник с маской и краску, отдаёт покрашенную
+    картинку - её сохраняет вызывающий
+    """
+    src.save(raw_of(png_path), compress_level=compress)
+    if not spec.fixed:
+        with open(_paint_json(png_path), "w", encoding="utf-8") as f:
+            json.dump({"color": list(spec.color), "over": spec.over_base,
+                       "whole": spec.whole}, f)
+    return _tinted(src, spec)
 
 
 def _tinted(src, spec: TintSpec):
@@ -252,12 +261,72 @@ def raw_of(png_path: str) -> str:
     return png_path + ".raw.png"
 
 
+def _paint_json(png_path: str) -> str:
+    return png_path + ".paint.json"
+
+
+def sidecars(png_path: str) -> Tuple[str, str]:
+    """Файлы, которые живут и копируются вместе с покрашенной картинкой"""
+    return raw_of(png_path), _paint_json(png_path)
+
+
+def game_texture(png_path: Optional[str]) -> Optional[str]:
+    """
+    Что класть в мод вместо картинки превью: у покрашенной - исходник с
+    маской (краску в игре наложит движок), у остальных - она сама
+    """
+    if png_path and os.path.isfile(raw_of(png_path)):
+        return raw_of(png_path)
+    return png_path
+
+
+def stroke_mask(base_path: str):
+    """
+    Основа склейки мазков - картинка игры, покрашенная для превью
+    (`apply_to_png`)? Тогда (краска, основа, исходник с маской), иначе None.
+    Альфа у основы сплошная, маска краски живёт в исходнике рядом
+    """
+    spec = paintable(base_path)
+    raw = raw_of(base_path)
+    if spec is None or spec.whole or not os.path.isfile(raw):
+        return None
+    try:
+        from PIL import Image
+        with Image.open(base_path) as b, Image.open(raw) as r:
+            if getattr(b, "n_frames", 1) > 1:
+                return None
+            base, mask = b.convert("RGBA"), r.convert("RGBA")
+    except OSError as exc:
+        logger.warning(f"[tint] маска краски {raw} не читается: {exc}")
+        return None
+    if mask.size != base.size:
+        mask = mask.resize(base.size, Image.LANCZOS)
+    return spec, base, mask
+
+
+def unstroked_masked(frame, base, raw):
+    """
+    Нетронутые мазками пиксели - исходник игры с маской краски, иначе банка в
+    игре красила бы всю текстуру. Под мазками цвет как нарисован и альфа 0:
+    человек выбрал цвет сам, и банка его не перекрашивает
+    """
+    import numpy as np
+    from PIL import Image
+
+    now = np.asarray(frame.convert("RGBA"))
+    drawn = np.any(now[..., :3] != np.asarray(base)[..., :3], axis=2)
+    out = np.array(raw)
+    out[drawn, :3] = now[drawn, :3]
+    out[drawn, 3] = 0
+    return Image.fromarray(out, "RGBA")
+
+
 def paintable(png_path: Optional[str]) -> Optional[TintSpec]:
     """Краска игры у картинки превью, если её красили через `apply_to_png`"""
     if not png_path:
         return None
     try:
-        with open(png_path + ".paint.json", encoding="utf-8") as f:
+        with open(_paint_json(png_path), encoding="utf-8") as f:
             data = json.load(f)
         return TintSpec(tuple(int(c) for c in data["color"]), float(data.get("over", 0.0)),
                         whole=bool(data.get("whole", False)))

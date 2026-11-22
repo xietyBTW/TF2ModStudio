@@ -738,18 +738,25 @@ class ParticlesEditor:
     # где на модели находятся её точки крепления
 
     def particle_control_points(self, system: str) -> Dict[str, Any]:
-        """Номера точек, на которые ссылается эффект и его дочерние системы"""
+        """Номера точек, на которые ссылается эффект и его дочерние системы:
+        {used, roles}. `roles` - {номер: роль} для подписи («откуда растёт»),
+        только у точек, чью роль видно по модулю. `game_attach` - куда игра
+        вешает точку 0 необычного (EffectCatalog.game_attach)"""
+        from src.services.particle_editor.hierarchy import control_point_roles
         from src.services.particle_editor_service import (
             referenced_control_points,
         )
 
         if self.pcf is None:
-            return {'used': []}
+            return {'used': [], 'roles': {}, 'game_attach': None}
         systems = self.pcf.systems_json()
         sys_json = systems.get(system)
         if sys_json is None:
-            return {'used': []}
-        return {'used': referenced_control_points(sys_json, systems)}
+            return {'used': [], 'roles': {}, 'game_attach': None}
+        return {'used': referenced_control_points(sys_json, systems),
+                'roles': {str(cp): role for cp, role
+                          in control_point_roles(sys_json, systems).items()},
+                'game_attach': self.effects.game_attach(system)}
 
     #: Порядок групп в списке моделей для точек: сперва то, на что вешают
     #: анюжуалы - игроки и косметика, - потом остальное
@@ -958,7 +965,8 @@ class ParticlesEditor:
         from pathlib import Path
 
         from src.services.model_attachments import (
-            attachments_from_qc, reference_smd_for_qc, root_bone_from_qc,
+            attachments_from_qc, default_part_smds, reference_smd_for_qc,
+            root_bone_from_qc,
         )
         from src.services.model_materials import resolve_model_textures
         from src.services.smd_to_obj_service import SmdToObjService
@@ -971,7 +979,8 @@ class ParticlesEditor:
         try:
             obj_path = str(Path(tmp) / 'model.obj')
             ok, mat_names = SmdToObjService.convert(
-                smd, obj_path, keep_source_axes=True)
+                smd, obj_path, keep_source_axes=True,
+                extra_smd_paths=default_part_smds(qc, smd))
             if not ok or not Path(obj_path).is_file():
                 return {'error': 'не удалось собрать меш модели'}
             obj = Path(obj_path).read_text(encoding='utf-8')

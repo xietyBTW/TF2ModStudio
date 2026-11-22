@@ -55,10 +55,44 @@ SVPURE_BYPASS_PREFIXES = {
 SVPURE_BYPASS_DEFAULT = "console"
 
 
-def bypass_prefix(method: Optional[str]) -> str:
+def bypass_prefix(method: Optional[str], filename: str = "") -> str:
     """Папка-обход для метода ('console' -> 'console', 'vgui' -> 'vgui\\replay\\thumbnails').
-    Неизвестный/None -> исторический console (безопасный дефолт)"""
-    return SVPURE_BYPASS_PREFIXES.get(method or "", "console")
+    Неизвестный/None -> исторический console (безопасный дефолт)
+
+    С именем мода за папкой-обходом идёт его метка: два мода на одну шапку
+    (один для Медика, другой для Шпиона) иначе клали текстуру по одному пути,
+    и в игре побеждал один"""
+    base = SVPURE_BYPASS_PREFIXES.get(method or "", "console")
+    tag = mod_tag(filename)
+    return f"{base}\\{tag}" if tag else base
+
+
+def mod_tag(filename: str) -> str:
+    """
+    Метка мода в пути материалов: 4 знака от имени файла мода
+
+    Хватает, чтобы различить свои моды на один предмет (совпадение у двух
+    имён - 1 из 65536), а путь упирается в MAX_PATH vpk.exe. Тот же мод при
+    пересборке получает ту же метку и перезаписывает свои файлы
+    """
+    import hashlib
+    import os
+
+    stem = os.path.splitext(os.path.basename(filename or ""))[0].strip().lower()
+    return hashlib.sha1(stem.encode("utf-8")).hexdigest()[:_TAG_LEN] if stem else ""
+
+
+_TAG_LEN = 4
+
+
+def strip_bypass_console(path: str) -> str:
+    """Путь без папки console (её добавляет Crowbar и наша сборка) и без
+    метки мода за ней. Разделители остаются как были"""
+    import re
+
+    m = re.match(r"[\\/]*console[\\/]+(?:[0-9a-f]{%d}(?:[\\/]+|$))?" % _TAG_LEN,
+                 path or "", re.IGNORECASE)
+    return path[m.end():] if m else path
 
 # Пути к инструментам
 

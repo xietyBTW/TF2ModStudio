@@ -1,0 +1,119 @@
+/*
+ * Кнопки в самом кадре: версия с гирляндой, подгонка в 3D, анимация от
+ * первого лица
+ *
+ * Под кадром они были рядами строк, и у оружия с гирляндой и видом от первого
+ * лица под моделью набегало по пять-семь строк. То, что меняет только
+ * картинку в кадре, теперь живёт в кадре; под ним остаётся то, что меняет мод.
+ * Кнопки значков - те же, что у палитры частей (.ptools__btn, style-parts.css)
+ */
+
+.vdock {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+}
+.vdock[hidden] { display: none; }
+.vdock .tag { border-color: transparent; padding: 4px 10px; }
+.vdock .tag:hover { border-color: var(--hairline-strong); }
+.vdock .tag.is-active { border-color: var(--ink); }
+
+/* Правый верхний угол - что показано: стиль, состояние, версия и лупа.
+   Палитры частей и подгонки стоят у правого края по центру, список частей -
+   слева сверху. Каждая группа - своя плашка одной высоты: не влезают в кадр -
+   плашки целиком переходят на следующую строку, без пустой рамки и висящих
+   черт, как было у одной общей панели */
+.vcorner {
+  top: 12px;
+  right: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+.vcorner > * { pointer-events: auto; }
+.vcorner:not(:has(> :not([hidden]))) { display: none; }
+/* Плашками - только в углу: те же группы есть и в полосе сцены внизу, там
+   рамка у полосы общая */
+.vcorner > .vcorner__group, .vcorner__btn {
+  padding: 3px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface);
+}
+.vcorner__group { display: flex; flex-wrap: nowrap; gap: 4px; }
+.vcorner > .vcorner__group { min-height: 31px; }
+.vcorner__part .tag { align-self: stretch; }
+.vcorner__group[hidden] { display: none; }
+/* Слова внутри меток не переносятся: «После взрыва» ломалось на две строки */
+.vcorner .tag { white-space: nowrap; }
+/* Группы состояний модели (целая/разбитая, снаряд в оружии) - подпись и
+   кнопки, между группами черта */
+.vcorner__part { display: flex; align-items: center; gap: 4px; }
+.vcorner__part + .vcorner__part { border-left: 1px solid var(--hairline-strong); padding-left: 4px; }
+.vcorner__part > .label { padding: 0 4px 0 6px; white-space: nowrap; }
+/* Лупа - квадрат ростом с плашку меток */
+.vcorner__btn { width: auto; height: auto; min-width: 31px; min-height: 31px; }
+.vcorner__btn svg { width: 14px; height: 14px; }
+.vcorner__group .festive__note { padding: 0 8px; align-self: center; }
+
+/* Подгонка - колонка значков у левого края. Пустая (своей модели и гирлянды
+   нет) пропадает целиком, а в режиме частей уступает место их списку */
+.vdock--tools {
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+}
+.vdock--tools:not(:has(> :not([hidden]))) { display: none; }
+.viewport:has(#partsbar:not([hidden])) .vdock--tools { display: none; }
+.vtools__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}
+.vtools__dot[hidden] { display: none; }
+#decorfit, #fitbtn { position: relative; }
+
+/* Анимация от первого лица - полоса внизу по центру, как у плеера. Длинное
+   «Все» раскрывается вверх (menu.js), полосу оно не раздвигает */
+.vdock--bottom {
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Без max-content ширина считалась от left: 50% - половина кадра, и пять
+     кнопок переносились на вторую строку */
+  width: max-content;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.vdock--bottom .fp__more { color: var(--ink-mute); }
+/* Полоса сцены «На персонаже» / насмешки: пустая пропадает, разделитель -
+   только между двумя видимыми половинами */
+.vscene:not(:has(#wearbar:not([hidden]), #tauntbar:not([hidden]))) { display: none; }
+.vscene { align-items: stretch; }
+.vdock__sep { width: 1px; margin: 2px 2px; background: var(--hairline-strong); }
+#wearbar[hidden] + .vdock__sep, .vscene:has(#tauntbar[hidden]) .vdock__sep { display: none; }
+.viewport:has(.vscene #wearbar:not([hidden]), .vscene #tauntbar:not([hidden])) .viewport__toast {
+  bottom: 56px;
+}
+/* Появление (style-motion.css) двигает transform - полоса стоит по центру им
+   же, поэтому выезжает снизу, не теряя сдвига */
+.viewport #fpbar { --reveal-from: translate(-50%, 4px); }
+/* Подпись событий кадра встаёт над полосой, а не под неё */
+.viewport:has(#fpbar:not([hidden])) .viewport__toast { bottom: 56px; }

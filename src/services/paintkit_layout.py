@@ -99,28 +99,35 @@ def _swatch(loader, path: str, out_dir: str) -> Dict[str, str]:
     return {'swatch': out, 'color': '#' + ''.join(f'{int(v):02x}' for v in mean)}
 
 
-def describe(defs, kit, item, parts_model, obj_material: str, own: bool,
-             loader, swatch_loader, swatch_dir: str,
-             assign: Optional[Dict[str, int]] = None, layout_seed: int = 0) -> dict:
+def layout_units(defs, kit, item, parts_model, obj_material: str, own: bool,
+                 loader, layout_seed: int = 0) -> dict:
     """
-    Раскладка для страницы: слои (с плитками узоров), детали с их слоем и
-    карта «треугольник -> деталь» для вьювера. ``{'error': …}`` - раскладывать
-    нечего
+    Детали, по которым раскладывается War Paint, и что о них знает раскладка:
+    ``{kind, units, auto, allowed, …}`` или ``{'error': …}``
 
-    ``loader`` читает маску групп (raw), ``swatch_loader`` - узоры для плиток
+    Одна на экран раскладки и на маску «Не красить» (paintkit_keep): деталь
+    с ключом ``p3`` у них обязана быть одной и той же
     """
     from src.data.paintkit_defs import template_layers
-    from src.services.paintkit_generic import assign_layers, units_for, valve_units
+    from src.services.paintkit_generic import (assign_layers, assign_shares, recipe_looks,
+                                               units_for, valve_units)
 
     layers, over_albedo = template_layers(defs, kit)
     if not layers and not own:
-        return _describe_looks(defs, kit, item, parts_model, obj_material, loader,
-                               swatch_loader, swatch_dir, assign, layout_seed)
+        recipe = defs.recipe(kit, item, 1, strip_stickers=True)
+        if recipe is None:
+            return {'error': 'Этот War Paint не ложится на это оружие'}
+        looks = recipe_looks(recipe, loader)
+        units = units_for(parts_model, obj_material, len(looks.values))
+        if not units:
+            return {'error': 'У модели нет развёртки - War Paint положить некуда'}
+        return {'kind': 'looks', 'units': units, 'recipe': recipe, 'looks': looks,
+                'auto': assign_shares([u.area for u in units], looks.shares, layout_seed),
+                'allowed': set(range(len(looks.values)))}
     found = defs.variables(kit, item, 1) if layers else None
     if not found:
         return {'error': 'Этот War Paint нарисован под одну пушку - его детали не переложить'}
     _op, values = found
-
     if own:
         mask = loader(values.get('weapon_groups', ''), raw=True)
         if mask is None:
@@ -133,9 +140,42 @@ def describe(defs, kit, item, parts_model, obj_material: str, own: bool,
         auto = assign_layers([u.area for u in units], layers, over_albedo, layout_seed)
     if not units:
         return {'error': 'У модели нет развёртки - War Paint положить некуда'}
-    out_units, tri_unit = _units(units, auto, set(layers) | {0}, assign,
-                                 parts_model, obj_material)
+    return {'kind': 'groups' if own else 'parts', 'units': units, 'auto': auto,
+            'allowed': set(layers) | {0}, 'layers': layers, 'over_albedo': over_albedo,
+            'values': values}
 
+
+#: Плитка «Не красить»: деталь сохраняет текстуру, что была до War Paint
+KEEP_LAYER = {'n': -1, 'keep': True, 'base': False, 'swatch': '', 'color': ''}
+
+
+def describe(defs, kit, item, parts_model, obj_material: str, own: bool,
+             loader, swatch_loader, swatch_dir: str,
+             assign: Optional[Dict[str, int]] = None, layout_seed: int = 0) -> dict:
+    """
+    Раскладка для страницы: слои (с плитками узоров), детали с их слоем и
+    карта «треугольник -> деталь» для вьювера. ``{'error': …}`` - раскладывать
+    нечего. Последняя плитка - «Не красить» (paintkit_keep)
+
+    ``loader`` читает маску групп (raw), ``swatch_loader`` - узоры для плиток
+    """
+    from src.services.paintkit_keep import KEEP
+
+    found = layout_units(defs, kit, item, parts_model, obj_material, own, loader, layout_seed)
+    if 'error' in found:
+        return found
+    out_units, tri_unit = _units(found['units'], found['auto'], found['allowed'] | {KEEP},
+                                 assign, parts_model, obj_material)
+    if found['kind'] == 'looks':
+        swapped = _swapped(found['recipe'])
+        stem = f'{kit.header.defindex}_{item.item_def}'
+        layers = [{'n': i, 'base': i == 0,
+                   **_look_swatch(swapped, value, swatch_loader, swatch_dir, f'{stem}_{i}')}
+                  for i, value in enumerate(found['looks'].values)]
+        return {'mode': 'parts', 'over_albedo': False, 'layers': [*layers, KEEP_LAYER],
+                'units': out_units, 'tri_unit': tri_unit}
+
+    layers, over_albedo, values = found['layers'], found['over_albedo'], found['values']
     out_layers = [{'n': 0, 'base': True,
                    **(_swatch(swatch_loader, values.get(f'texture_layer_{layers[0]}', ''),
                               swatch_dir) if not over_albedo
@@ -144,8 +184,13 @@ def describe(defs, kit, item, parts_model, obj_material: str, own: bool,
         out_layers.append({'n': layer, 'base': False,
                            **_swatch(swatch_loader, values.get(f'texture_layer_{layer}', ''),
                                      swatch_dir)})
-    return {'mode': 'groups' if own else 'parts', 'over_albedo': over_albedo,
-            'layers': out_layers, 'units': out_units, 'tri_unit': tri_unit}
+    return {'mode': found['kind'], 'over_albedo': over_albedo,
+            'layers': [*out_layers, KEEP_LAYER], 'units': out_units, 'tri_unit': tri_unit}
+
+
+def _swapped(recipe: dict) -> dict:
+    from src.services.paintkit_generic import swap_weapon_textures
+    return swap_weapon_textures(recipe)
 
 
 def _units(units, auto, allowed, assign, parts_model, obj_material):
@@ -163,31 +208,6 @@ def _units(units, auto, allowed, assign, parts_model, obj_material):
             if tri < len(tri_unit):
                 tri_unit[tri] = i
     return out_units, tri_unit
-
-
-def _describe_looks(defs, kit, item, parts_model, obj_material: str, loader,
-                    swatch_loader, swatch_dir: str, assign, layout_seed: int) -> dict:
-    """Раскладка украшенного оружия: слои - виды его рецепта, раздача - в долях оригинала"""
-    from src.services.paintkit_generic import (assign_shares, recipe_looks,
-                                               swap_weapon_textures, units_for)
-
-    recipe = defs.recipe(kit, item, 1, strip_stickers=True)
-    if recipe is None:
-        return {'error': 'Этот War Paint не ложится на это оружие'}
-    looks = recipe_looks(recipe, loader)
-    units = units_for(parts_model, obj_material, len(looks.values))
-    if not units:
-        return {'error': 'У модели нет развёртки - War Paint положить некуда'}
-    auto = assign_shares([u.area for u in units], looks.shares, layout_seed)
-    out_units, tri_unit = _units(units, auto, set(range(len(looks.values))), assign,
-                                 parts_model, obj_material)
-    swapped = swap_weapon_textures(recipe)
-    stem = f'{kit.header.defindex}_{item.item_def}'
-    layers = [{'n': i, 'base': i == 0,
-               **_look_swatch(swapped, value, swatch_loader, swatch_dir, f'{stem}_{i}')}
-              for i, value in enumerate(looks.values)]
-    return {'mode': 'parts', 'over_albedo': False,
-            'layers': layers, 'units': out_units, 'tri_unit': tri_unit}
 
 
 def _look_swatch(recipe: dict, value: int, loader, out_dir: str, key: str) -> Dict[str, str]:

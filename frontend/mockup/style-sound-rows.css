@@ -97,10 +97,6 @@
 .snd__file-also { font-size: 10px; white-space: normal; }
 /* Как игра играет запись: канал, уровень, громкость - строкой над файлами */
 .snd__props { padding: 6px 0 4px; letter-spacing: .06em; }
-.snd__file-row .snd__acts .textbtn { border-bottom-color: transparent; }
-.snd__file-row:hover .snd__acts .textbtn {
-  border-bottom-color: var(--hairline-strong);
-}
 
 .snd__group {
   overflow: hidden;
@@ -124,12 +120,33 @@
   color: var(--ink-mute);
 }
 
-/* Кнопки строки держим приглушёнными: их три на каждую из восьмисот строк, и
-   в полную силу они забивают собой список. Наводка возвращает контраст */
-.snd__acts { display: flex; gap: 14px; }
-.snd__acts .textbtn { border-bottom-color: transparent; color: var(--ink-mute); }
-.snd:hover .snd__acts .textbtn { border-bottom-color: var(--hairline-strong); }
-.snd__acts .textbtn:hover { color: var(--accent); border-bottom-color: var(--accent); }
+/* Действия строки - значками с подсказкой. Приглушены: их по пять на каждую
+   из сотен строк, и в полную силу они забивают собой список. Наводка на
+   строку возвращает контраст */
+.snd__acts { display: flex; align-items: center; gap: 2px; }
+.snd__ic {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: 0;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: color var(--dur), background-color var(--dur);
+}
+.snd__ic svg { width: 100%; height: 100%; }
+.snd:hover .snd__ic,
+.snd__file-row:hover .snd__ic { color: var(--ink-soft); }
+.snd__ic:hover { color: var(--ink); background: var(--viewport); }
+.snd__ic[data-act="play"]:hover,
+.snd__ic[data-file="play"]:hover { color: var(--accent); }
+.snd__ic.is-done, .snd__ic.is-done:hover { color: var(--accent); }
+.snd__ic:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Значки замены (оригинал, убрать) - в конце ряда и держат место: у
+   обычной строки три значка подряд без дыр, у заменённой справа ещё два, и
+   столбцы по списку не разъезжаются */
+.snd__acts .snd__ic[hidden] { display: flex !important; visibility: hidden; }
 
 .snd.is-own { box-shadow: inset 2px 0 0 var(--accent); }
 
@@ -193,91 +210,246 @@
 [data-motion="off"] .snd__eq > i { animation: none; transform: scaleY(.7); }
 @media (prefers-reduced-motion: reduce) { .snd__eq > i { animation: none; transform: scaleY(.7); } }
 
-/* Пульт
-   Браузерный <audio controls> выпадает из вида приложения целиком: свои
-   скруглённые кнопки, свой шрифт, своя тень. Движок оставляем его, вид - наш */
+/* Пульт, как у музыкальных плееров: что играет | кнопки и полоса | громкость
+   и сборка. Браузерный <audio controls> выпадает из вида приложения целиком,
+   движок оставляем его, вид - наш */
 .player {
-  display: flex;
+  display: grid;
+  /* Боковые поровну, чтобы «играть» стояла посередине окна. Средняя - по
+     своей ширине: растягиваясь вместе с окном, она отнимала место у сборки */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--rhythm);
   padding: 12px 2px 2px;
   border-top: 1px solid var(--hairline);
 }
 
+/* Уведомление над пультом - тем же видом, что у кадра модели: кромка цвета
+   слева, мелкие прописные */
+.player { position: relative; }
+.snd-toast {
+  --kind: var(--accent);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  max-width: min(640px, 90%);
+  padding: 10px 14px 10px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-left: 2px solid var(--kind);
+  background: var(--overlay);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 4px);
+  transition: opacity .25s, transform .3s ease-out, visibility 0s .3s;
+}
+.snd-toast.is-on {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition: opacity .25s, transform .3s ease-out;
+}
+.snd-toast.is-error { --kind: #c94440; }
+.snd-toast__text { overflow: hidden; text-overflow: ellipsis; }
+.snd-toast .textbtn { flex: none; color: var(--accent); border-bottom-color: currentColor; }
+[data-motion="off"] .snd-toast { transition: none; }
+
+.player__now { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.player__title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player__sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player__src:not(:empty)::before { content: " · "; }
+.player__src.is-own { color: var(--accent); }
+/* Пока ничего не играло - пульт тихий: полный вид обещал бы звук */
+.player.is-idle .player__title { color: var(--ink-mute); font-weight: 400; }
+.player.is-idle .player__bar { opacity: .45; }
+
+.player__mid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: clamp(240px, 28vw, 560px);
+}
+/* «Играть» посередине: по бокам две равные половины, а не ряд подряд -
+   «Игра / Свой» шире повтора и сдвигал бы её вбок */
+.player__ctl {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+}
+.player__side { display: flex; align-items: center; gap: 22px; }
+.player__side--l { justify-content: flex-end; }
+
+/* Значки - SVG в разметке, цвет от текста */
+.player__ic {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: color var(--dur);
+}
+.player__ic svg { width: 100%; height: 100%; }
+.player__ic:hover { color: var(--ink); }
+.player__ic[aria-pressed="true"] { color: var(--accent); }
+
+/* Играть / пауза - круг цвета текста. Треугольник и пауза - одна фигура
+   (clip-path) из восьми точек, поэтому одна перетекает в другую. У
+   треугольника две точки лежат на его сторонах, а пара - на разрезе внутри
+   него (нулевая ширина), у паузы этот разрез - просвет между полосками */
 .player__play {
   flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid var(--hairline-strong);
-  background: none;
-  cursor: pointer;
   position: relative;
-  transition: border-color var(--dur);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  cursor: pointer;
+  transition: transform var(--dur), background-color var(--dur);
 }
-.player__play:hover { border-color: var(--accent); }
-
-/* Треугольник и пауза - одна фигура (clip-path) из восьми точек, поэтому одна
-   перетекает в другую. У треугольника две точки лежат на его сторонах, а пара
-   - на разрезе внутри него (нулевая ширина), у паузы этот разрез - просвет
-   между полосками. Значков-картинок в приложении нет нигде */
+.player__play:hover { transform: scale(1.06); }
 .player__play::before {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 9px;
-  height: 11px;
-  transform: translate(-42%, -50%);
-  background: var(--ink);
+  width: 10px;
+  height: 12px;
+  transform: translate(-40%, -50%);
+  background: var(--bg);
   clip-path: polygon(0 0, 50% 25%, 50% 75%, 50% 75%, 50% 25%, 100% 50%, 100% 50%, 0 100%);
-  transition: clip-path 260ms cubic-bezier(.65, 0, .25, 1), transform 260ms cubic-bezier(.65, 0, .25, 1),
-              background var(--dur);
+  transition: clip-path 260ms cubic-bezier(.65, 0, .25, 1), transform 260ms cubic-bezier(.65, 0, .25, 1);
 }
 .player__play.is-playing::before {
   transform: translate(-50%, -50%);
   clip-path: polygon(0 0, 34% 0, 34% 100%, 66% 100%, 66% 0, 100% 0, 100% 100%, 0 100%);
 }
-.player__play:hover::before { background: var(--accent); }
 
-.player__body { flex: 1; min-width: 0; display: flex;
-                flex-direction: column; gap: 6px; }
-.player__what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.player__time { flex: none; }
-.player__vol  { flex: none; display: flex; align-items: center; gap: 10px; }
 
-/* Полоса: у input type=range нет своей «пройденной» части - рисуем градиентом
-   по переменной, которую двигает скрипт */
+.player__bar { display: flex; align-items: center; gap: 10px; width: 100%; }
+.player__time { flex: none; min-width: 30px; }
+.player__time:last-child { text-align: right; }
+
+/* Полоса: у input type=range нет своей «пройденной» части - рисуем
+   градиентом по переменной, которую двигает скрипт */
 .player__seek,
 .player__level {
   appearance: none;
-  height: 3px;
   border: 0;
-  background: var(--hairline-strong);
+  border-radius: 2px;
   cursor: pointer;
 }
-.player__seek  { width: 100%; background:
-  linear-gradient(to right, var(--accent) var(--done, 0%),
-                            var(--hairline-strong) var(--done, 0%)); }
-.player__level { width: 90px; }
-
+.player__seek {
+  flex: 1;
+  height: 3px;
+  background: linear-gradient(to right, var(--ink) var(--done, 0%),
+                              var(--hairline-strong) var(--done, 0%));
+}
+.player__bar:hover .player__seek {
+  background: linear-gradient(to right, var(--accent) var(--done, 0%),
+                              var(--hairline-strong) var(--done, 0%));
+}
 .player__seek::-webkit-slider-thumb,
 .player__level::-webkit-slider-thumb {
   appearance: none;
-  width: 3px;
-  height: 13px;
-  background: var(--ink);
+  width: 11px;
+  height: 11px;
   border: 0;
-  cursor: pointer;
+  border-radius: 50%;
+  background: var(--ink);
+  opacity: 0;
+  transition: opacity var(--dur);
 }
-.player__seek:hover::-webkit-slider-thumb,
-.player__level:hover::-webkit-slider-thumb { background: var(--accent); }
+.player__bar:hover .player__seek::-webkit-slider-thumb,
+.player__level::-webkit-slider-thumb { opacity: 1; }
 
-.sounds__foot {
+.player__right {
   display: flex;
   align-items: center;
-  gap: var(--rhythm);
-  padding-top: 4px;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
 }
-.sounds__foot #snd-note { flex: 1; }
+.player__vol { position: relative; flex: none; }
+/* Значок по громкости: тишина - перечёркнут, тихо - одна волна */
+.player__mute { display: none; }
+.player__vol.is-mute .player__wave1,
+.player__vol.is-mute .player__wave2,
+.player__vol.is-low .player__wave2 { display: none; }
+.player__vol.is-mute .player__mute { display: inline; }
+
+/* Ползунок громкости над значком, стоя: громче - выше */
+.player__volpop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 10px 8px;
+  transform: translateX(-50%);
+  border: 1px solid var(--hairline-strong);
+  background: var(--overlay);
+}
+.player__volpop[hidden] { display: none; }
+.player__level {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 3px;
+  height: 96px;
+  background: linear-gradient(to top, var(--ink) var(--level, 100%),
+                              var(--hairline-strong) var(--level, 100%));
+}
+
+.player__sep { flex: none; width: 1px; height: 26px; background: var(--hairline); }
+/* Счётчик не сжимается, сжимается поле имени. Длинное сообщение режется
+   по своей ширине, целиком - при наведении */
+.sounds__note {
+  flex: 0 0 auto;
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player__right .sounds__name { flex: 0 1 130px; min-width: 84px; }
+.player__clear { width: 16px; height: 16px; margin-left: -8px; }
+.player__clear:hover { color: var(--accent); }
+.sounds__build { flex: none; padding: 9px 12px; letter-spacing: .12em; }
+
+/* Узкое окно: три колонки не помещаются. Что играет и сборка - сверху,
+   кнопки с полосой - строкой под ними во всю ширину */
+@media (max-width: 1050px) {
+  .player {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "now right" "mid mid";
+    row-gap: 10px;
+  }
+  .player__now { grid-area: now; }
+  .player__right { grid-area: right; }
+  .player__mid { grid-area: mid; width: 100%; }
+}
 

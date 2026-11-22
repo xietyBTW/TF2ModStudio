@@ -27,7 +27,7 @@ import {
   showSkins,
   showFirstPerson,
   showFpActions,
-  showTauntClasses, showWearSlots, applyFpClip,
+  showTauntClasses, showWearSlots, applyFpClip, fpClipArrived,
   showSpecialAnimated,
   specialSceneFailed,
   showSpecialScene,
@@ -145,6 +145,7 @@ api.subscribe((ev) => {
         w.setViewRig(ev.rig);
         w.loadViewmodelAnimated(ev.scene, 0);
       });
+      fpClipArrived();      // целая сцена - тоже приезд клипа шага
       say('');
       // Текстуры чужого мода воркер не находит: он ищет их в игре по её
       // `$cdmaterials`, а лежат они в VPK человека. Раскладывает их состояние

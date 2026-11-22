@@ -15,6 +15,7 @@ import os
 import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from src.services.paintkit_thumbs import RECENT_KEY
 from src.shared.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -70,7 +71,41 @@ class PaintkitEditor:
         ids = {k['id'] for k in kits}
         decorated = [k for k in paintkit_defs.decorated_kits(paths['root'], lang)
                      if k['id'] not in ids]
-        return {'items': kits + decorated, 'generic': not own}
+        return {'items': kits + decorated, 'generic': not own, 'recent': self._recent()}
+
+    @staticmethod
+    def _recent() -> List[int]:
+        from src.config.app_config import AppConfig
+        from src.services.paintkit_thumbs import recent
+        return recent(AppConfig.get(RECENT_KEY))
+
+    def paintkit_thumbs(self, kits: List[Tuple[int, int]]) -> Dict[str, Any]:
+        """Миниатюры раскрасок списка: {id: png}; не собралась - ''"""
+        from src.data import paintkit_defs
+        from src.services.game_vpk_reader import GameVpkReader
+        from src.services.paintkit_thumbs import thumb
+        from src.services.paintkit_worker import make_loader
+
+        paths = self._host.tf2_paths()
+        if 'error' in paths:
+            return paths
+        defs = paintkit_defs.load(paths['root'])
+        if defs is None:
+            return {'thumbs': {}}
+        out_dir = os.path.join(self._host._work_dir(), 'warpaint_thumbs')
+        reader = GameVpkReader([paths['textures_vpk'], paths['misc_vpk']])
+        got: Dict[str, str] = {}
+        try:
+            load = make_loader(reader, 128)
+            for kit, item in kits:
+                try:
+                    got[str(kit)] = thumb(defs, kit, item, load, out_dir)
+                except Exception as exc:                  # noqa: BLE001
+                    logger.warning(f'[paintkit] миниатюра {kit}: {exc}')
+                    got[str(kit)] = ''
+        finally:
+            reader.close()
+        return {'thumbs': got}
 
     def _paintkit_offer(self, paths: Dict[str, str], item: int,
                         real: bool) -> Tuple[List[str], List[str], List[str]]:
@@ -159,8 +194,28 @@ class PaintkitEditor:
         if own and not any(k['item'] == int(item) for k in own):
             item = own[0]['item']
         cards, game, spread = self._paintkit_offer(paths, item, bool(own))
-        return {'materials': [{'card': c, 'game': c in game, 'parts': c in spread}
+        t = self._host.preview.textures
+        main = t.stable_main()
+        # source - чью раскладку берёт карточка: у материала части она общая
+        # с исходным, развёртка у них одна
+        return {'materials': [{'card': c, 'game': c in game, 'parts': c in spread,
+                               'main': c == main, 'source': t.part_cards.get(c, c)}
                               for c in cards]}
+
+    def _layout_key(self, kit: int, card: str = '') -> str:
+        """Ключ раскладки War Paint в работе: у главной карточки - номер War
+        Paint, как было до раскладок по материалам, у остальных - с карточкой"""
+        main = self._host.preview.textures.stable_main()
+        return str(int(kit)) if not card or card == main else f'{int(kit)}:{card}'
+
+    def _layout_of(self, kit: int, card: str = '') -> Optional[Dict[str, int]]:
+        return self._host.preview.paintkit_layouts.get(self._layout_key(kit, card))
+
+    @staticmethod
+    def _game_rep(game: List[str], main: str) -> str:
+        """Карточка, по которой раскладывают War Paint игры: рецепт у всех
+        его карточек один, детали - главной, если игра красит её"""
+        return main if main in game else (game[0] if game else '')
 
     def _paintkit_generic(self, card: str, layout: int, assign) -> Any:
         """Универсальный режим для карточки: узор по её деталям - или ошибка
@@ -230,7 +285,9 @@ class PaintkitEditor:
         chosen = [c for c in cards if c in wanted and (c in game or (by_parts and c in spread))]
         if not chosen:
             return {'error': 'Отметьте хотя бы один материал'}
-        assign = self._host.preview.paintkit_layouts.get(str(int(kit))) or None
+        # «Не красить» рецепт не касается: эти детали возвращает _keep_apply
+        from src.services.paintkit_keep import split
+        assign, _kept = split(self._layout_of(kit, self._game_rep(game, main)))
 
         plans = []
         painted = [c for c in chosen if c in game]
@@ -256,7 +313,7 @@ class PaintkitEditor:
                 by_source.setdefault(t.part_cards.get(card, card), []).append(card)
         for source, members in by_source.items():
             generic = self._paintkit_generic(source, layout,
-                                             assign if source == main and not own else None)
+                                             split(self._layout_of(kit, source))[0])
             if 'error' in generic:
                 return generic
             plans.append((members, generic, None))
@@ -302,6 +359,7 @@ class PaintkitEditor:
         plans = self._paintkit_plans(kit, item, layout, materials)
         if isinstance(plans, dict):
             return plans
+        keep = self._keep_plan(kit, item, layout)
         images = {}
         lock = self._paintkit_preview_lock
         with lock:
@@ -313,8 +371,57 @@ class PaintkitEditor:
                                                          generic, forced, out).work()
                     if not ok:
                         return {'error': message}
-                images.update((card, out) for card in cards)
+                images.update((card, self._keep_apply(keep, card, out)) for card in cards)
         return {'images': images}
+
+    def _keep_plan(self, kit: int, item: int, layout: int) -> Optional[dict]:
+        """
+        Детали «Не красить» у War Paint ``kit``: {карточка: {polys, under}}
+        или None. У каждого раскладываемого материала свои детали, картинка
+        возвращается ему и его материалам частей: развёртка у них общая.
+        Прежняя - то, что лежит на карточке сейчас, до War Paint
+        """
+        from src.services import paintkit_keep, paintkit_layout
+        from src.services.game_vpk_reader import GameVpkReader
+        from src.services.paintkit_worker import LOOKS_MASK, make_loader
+
+        t = self._host.preview.textures
+        main = t.stable_main()
+        prefix = f'{int(kit)}:'
+        out: Dict[str, dict] = {}
+        for key, assign in self._host.preview.paintkit_layouts.items():
+            if key != str(int(kit)) and not key.startswith(prefix):
+                continue
+            _rest, kept = paintkit_keep.split(assign)
+            if not kept:
+                continue
+            card = key[len(prefix):] if key.startswith(prefix) else main
+            ctx = self._layout_context(kit, item, card)
+            if 'error' in ctx:
+                continue
+            reader = GameVpkReader([ctx['paths']['textures_vpk'], ctx['paths']['misc_vpk']])
+            try:
+                found = paintkit_layout.layout_units(
+                    ctx['defs'], ctx['kit'], ctx['item'], ctx['model'], ctx['obj_mat'],
+                    ctx['own'], make_loader(reader, LOOKS_MASK), int(layout))
+            finally:
+                reader.close()
+            polys = paintkit_keep.polygons(found['units'], kept) if 'error' not in found else []
+            if not polys:
+                continue
+            for c in (ctx['card'], *(p for p, src in t.part_cards.items() if src == ctx['card'])):
+                under = t.resolve_card(c) or t.game_base(c)
+                if under:
+                    out[c] = {'polys': polys, 'under': under}
+        return out or None
+
+    def _keep_apply(self, keep: Optional[dict], card: str, png: str) -> str:
+        """War Paint карточки с возвращёнными деталями «Не красить»"""
+        if not keep or card not in keep:
+            return png
+        from src.services import paintkit_keep
+        return paintkit_keep.apply(png, keep[card]['under'], keep[card]['polys'],
+                                   self._host._work_dir())
 
     def apply_paintkit(self, kit: int, item: int, wear: int = 1, seed: int = 0,
                        size: int = 1024, layout: int = 0,
@@ -346,6 +453,11 @@ class PaintkitEditor:
         plans = self._paintkit_plans(kit, item, layout, materials)
         if isinstance(plans, dict):
             return plans
+        from src.config.app_config import AppConfig
+        from src.services.paintkit_thumbs import remember
+        AppConfig.set(RECENT_KEY, remember(AppConfig.get(RECENT_KEY), kit))
+        # Прежние текстуры - сейчас, пока War Paint их не заменил
+        keep = self._keep_plan(kit, item, layout)
         w = PaintkitBatch([
             (cards, self._paintkit_job_for(
                 kit, item, wear, seed, size, generic, forced,
@@ -368,6 +480,7 @@ class PaintkitEditor:
                     self._host._edits_held = True
                     try:
                         for card, png in [(c, png) for cards, png in w.done for c in cards]:
+                            png = self._keep_apply(keep, card, png)
                             res = self._host.set_texture(card, png) or {}
                             if 'error' in res:
                                 ok, message = False, res['error']
@@ -397,21 +510,44 @@ class PaintkitEditor:
         w.start()
         return {'started': True, 'team': team}
 
-    def paintkit_layout(self, kit: int, item: int, layout: int = 0) -> Dict[str, Any]:
+    def paintkit_layout(self, kit: int, item: int, layout: int = 0,
+                        card: str = '') -> Dict[str, Any]:
         """
         Раскладка War Paint по деталям для углублённого режима: слои с
         плитками узоров, детали с их слоем и карта треугольников для вьювера.
         См. paintkit_layout.describe
         """
-        from src.data import paintkit_defs
         from src.services import paintkit_layout
         from src.services.game_vpk_reader import GameVpkReader
         from src.services.paintkit_worker import LOOKS_MASK, make_loader
 
+        ctx = self._layout_context(kit, item, card)
+        if 'error' in ctx:
+            return ctx
+        paths = ctx['paths']
+        reader = GameVpkReader([paths['textures_vpk'], paths['misc_vpk']])
+        try:
+            res = paintkit_layout.describe(
+                ctx['defs'], ctx['kit'], ctx['item'], ctx['model'], ctx['obj_mat'], ctx['own'],
+                make_loader(reader, LOOKS_MASK), make_loader(reader, 128),
+                os.path.join(self._host._work_dir(), 'warpaint_layers'),
+                self._layout_of(kit, ctx['name']), int(layout))
+        finally:
+            reader.close()
+        if 'error' not in res:
+            res['material'] = ctx['card']
+            res['card'] = ctx['name']
+        return res
+
+    def _layout_context(self, kit: int, item: int, card: str = '') -> Dict[str, Any]:
+        """Всё, из чего строятся детали раскладки War Paint материала ``card``
+        (пусто - главного), - или ошибка"""
+        from src.data import paintkit_defs
+
         paths = self._host.tf2_paths()
         if 'error' in paths:
             return paths
-        material = self._host.preview.textures.stable_main()
+        material = card or self._host.preview.textures.stable_main()
         if not material or not self._host._shown_weapon():
             return {'error': 'Сначала выберите оружие'}
         defs = paintkit_defs.load(paths['root'])
@@ -421,37 +557,35 @@ class PaintkitEditor:
         found = self._host.parts._parts_model(material)
         if isinstance(found, dict):
             return found
-        model, obj_mat, card = found
-        own = any(k['id'] == int(kit) and k['item'] == int(item)
-                  for k in self._own_paintkits(paths['root']))
-        reader = GameVpkReader([paths['textures_vpk'], paths['misc_vpk']])
-        try:
-            res = paintkit_layout.describe(
-                defs, kit_obj, item_obj, model, obj_mat, own,
-                make_loader(reader, LOOKS_MASK), make_loader(reader, 128),
-                os.path.join(self._host._work_dir(), 'warpaint_layers'),
-                self._host.preview.paintkit_layouts.get(str(int(kit))), int(layout))
-        finally:
-            reader.close()
-        if 'error' not in res:
-            res['material'] = card
-        return res
+        model, obj_mat, mesh_card = found
+        # Группы Valve - только у карточек, которые красит рецепт игры, у
+        # остальных узор раскладывается по их деталям
+        own = (any(k['id'] == int(kit) and k['item'] == int(item)
+                   for k in self._own_paintkits(paths['root']))
+               and material in self._game_cards(paths, item))
+        return {'paths': paths, 'defs': defs, 'kit': kit_obj, 'item': item_obj,
+                'model': model, 'obj_mat': obj_mat, 'card': mesh_card, 'own': own,
+                'name': material}
 
-    def set_paintkit_layout(self, kit: int, assign: Optional[Dict[str, int]] = None
-                            ) -> Dict[str, Any]:
-        """Раскладка человека для War Paint ``kit``: {деталь: слой}; пусто - автомат"""
+    def set_paintkit_layout(self, kit: int, assign: Optional[Dict[str, int]] = None,
+                            card: str = '') -> Dict[str, Any]:
+        """Раскладка человека для War Paint ``kit``: {деталь: слой}; пусто -
+        автомат. Слой KEEP (-1) - «Не красить», см. paintkit_keep"""
+        from src.services.paintkit_keep import KEEP
+
         clean = {}
         for k, v in (assign or {}).items():
             try:
                 layer = int(v)
             except (TypeError, ValueError):
                 continue
-            if isinstance(k, str) and len(k) < 16 and 0 <= layer < 64:
+            if isinstance(k, str) and len(k) < 16 and (0 <= layer < 64 or layer == KEEP):
                 clean[k] = layer
+        key = self._layout_key(kit, card)
         if clean:
-            self._host.preview.paintkit_layouts[str(int(kit))] = clean
+            self._host.preview.paintkit_layouts[key] = clean
         else:
-            self._host.preview.paintkit_layouts.pop(str(int(kit)), None)
+            self._host.preview.paintkit_layouts.pop(key, None)
         # Раскладка - черновик до «Применить»: шагом отмены она не считается
         self._host._autosave(step=False)
         return {'ok': True}

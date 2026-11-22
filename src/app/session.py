@@ -1754,6 +1754,7 @@ class AppSession:
             # не из материалов модели
             'has_misc': bool(self.preview.misc_materials
                              and not self.preview.custom_vpk_mode
+                             and not self.preview.shape_only
                              and not is_hands),
             'misc_mode': self.preview.misc_mode,
             'force_team': t.force_team,
@@ -1892,6 +1893,8 @@ class AppSession:
         from src.domain.preview.texture_state import SINGLE_TEX_KEY
         if t.material_names == [SINGLE_TEX_KEY]:
             cards.update({m: SINGLE_TEX_KEY for m in self.preview.scene_item_materials})
+        # Меши своей модели «только формы» красятся как главная карточка
+        cards.update(self.preview.shape_only_meshes({n: n for n in t.material_names}))
         out: Dict[str, str] = {}
         for mat, path in textures.items():
             stock = t.game_base(cards.get(mat, mat)) or ''
@@ -1899,10 +1902,10 @@ class AppSession:
             if spec is None:
                 out[mat] = path
                 continue
-            same = os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(stock))
-            raw = vmt_tint.raw_of(stock) if same else path
-            out[mat] = vmt_tint.painted(
-                raw, replace(spec, color=color), self._work_dir()) or path
+            # Покрашенная картинка (оригинал игры, склейка мазков на нём)
+            # красится заново по своему исходнику с маской
+            out[mat] = vmt_tint.painted(vmt_tint.game_texture(path),
+                                        replace(spec, color=color), self._work_dir()) or path
         return out
 
     def set_team(self, team: str) -> Dict[str, Any]:

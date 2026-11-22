@@ -49,3 +49,24 @@ class ObjBoundsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GhostFramingTests(unittest.TestCase):
+    """Своя модель из импорта: кадр по призраку оригинала, не по всему OBJ"""
+
+    def test_frame_follows_the_ghost(self):
+        # Своя модель ещё без подгонки: крошечная и далеко в стороне
+        own = _cube(0.05, (500.0, 0.0, 0.0))
+        ghost = _cube(10.0, (1.0, 2.0, 3.0))
+        faces = lambda first: "\n".join(f"f {first + i} {first + i + 1} {first + i + 2}" for i in range(0, 6))
+        obj = (own + "\nusemtl Material\n" + faces(1)
+               + "\n" + ghost + "\nusemtl ghost:c_scattergun\n" + faces(9))
+        cx, cy, cz, scale = compute_obj_bounds(obj)
+        self.assertAlmostEqual(cx, 1.0, places=5)
+        self.assertAlmostEqual(cy, 2.0, places=5)
+        self.assertAlmostEqual(scale, TARGET_EXTENT / 10.0, places=5)
+
+    def test_without_ghost_everything_counts(self):
+        obj = _cube(2.0) + "\nusemtl Material\nf 1 2 3\n" + _cube(2.0, (10.0, 0.0, 0.0))
+        cx, _, _, _ = compute_obj_bounds(obj)
+        self.assertAlmostEqual(cx, 5.0, places=5)

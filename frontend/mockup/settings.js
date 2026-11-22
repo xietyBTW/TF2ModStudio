@@ -21,7 +21,7 @@ import { EN } from './strings.js';
 import { refreshView, stopPartsAnimation } from './preview.js';
 import { setTexSize } from './particles/materials.js';
 import { setSimpleView } from './particles/params.js';
-import { setToursDone, replayTours } from './tour.js';
+import { setToursDone, replayTours, resetTour, tourList } from './tour.js';
 import { setNoticesDone } from './notices.js';
 import { FX_DEFAULTS, FX_GROUPS, createFx, dockFx, fxChoice } from './buildfx.js';
 import { showAbout } from './about.js';
@@ -88,6 +88,7 @@ export async function openSettings() {
   // искать нечего. Годность решает Python (`tf2_ok`) той же проверкой, по
   // которой работает всё приложение
   showFindTf2(!cfg.tf2_ok);
+  showTours();
   document.getElementById('cfg-export').value = v.export_folder || '';
   document.querySelectorAll('[data-pick]').forEach((b) => { b.hidden = !cfg.folder_picker; });
   fillSelect('cfg-format', cfg.formats, v.export_image_format);
@@ -446,6 +447,39 @@ document.querySelectorAll('[data-pick]').forEach((btn) => {
 document.getElementById('cfg-tf2').addEventListener('input', () => showFindTf2(true));
 
 document.getElementById('cfg-cancel').addEventListener('click', () => cfgDlg.close());
+/**
+ * Обучение в настройках: строка названий. Щелчок ведёт на место тура и
+ * начинает его там (tour-go.js). Подгонке нужна своя модель - без неё вести
+ * некуда, и тур ждёт её, а под списком сказано где
+ *
+ * tour-go грузится по щелчку: он тянет каталог, а каталог - настройки, и
+ * статический импорт замкнул бы круг
+ */
+function showTours() {
+  const box = document.getElementById('cfg-tours');
+  const note = document.getElementById('cfg-tours-note');
+  note.hidden = true;
+  box.replaceChildren(...tourList().map((tour) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'textbtn textbtn--sm';
+    b.textContent = tour.title;
+    b.title = 'Показать снова';
+    b.addEventListener('click', async () => {
+      const go = await import('./tour-go.js');
+      if (!go.canGo(tour.name)) {
+        resetTour(tour.name);
+        note.textContent = tour.where;
+        note.hidden = false;
+        return;
+      }
+      cfgDlg.close();
+      go.showTourAgain(tour.name);
+    });
+    return b;
+  }));
+}
+
 document.getElementById('cfg-tour').addEventListener('click', () => {
   cfgDlg.close();
   replayTours();

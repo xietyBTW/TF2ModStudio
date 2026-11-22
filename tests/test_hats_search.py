@@ -7,7 +7,8 @@
 
 import unittest
 
-from src.app.api import _hat_rank, _hat_suggest
+from src.app.api import _hat_rank
+from src.shared.text_search import TypoIndex
 from src.data.hats_parser import HatItem, region_group
 
 
@@ -48,9 +49,10 @@ class RankTests(unittest.TestCase):
     def test_yo_and_case_do_not_matter(self):
         self.assertEqual(_hat_rank(_hat('Ёлочная шляпа'), ['елочная'], ''), 1)
 
-    def test_suggestions_for_a_typo(self):
-        got = _hat_suggest(['fedra'], ['Fancy Fedora', 'Bonk Helm'], {})
-        self.assertEqual(got, ['Fancy Fedora'])
+    def test_typo_is_found_below_exact(self):
+        index = TypoIndex(['Fancy Fedora', 'Bonk Helm'])
+        self.assertEqual(_hat_rank(_hat('Fancy Fedora'), ['fedra'], '', index), 4)
+        self.assertIsNone(_hat_rank(_hat('Bonk Helm'), ['fedra'], '', index))
 
 
 if __name__ == '__main__':

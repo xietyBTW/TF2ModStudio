@@ -9,6 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from src.data.translations import TRANSLATIONS
+from src.shared.constants import mod_tag
 from src.services.build_context import BuildContext
 from src.services.build_service import BuildService
 from src.services.vpk_service import VPKService
@@ -19,6 +20,10 @@ from src.services.packaging_service import PackagingService
 from src.services.model_service import ModelService
 from src.shared.validators import validate_build_params
 from src.shared.exceptions import VPKCreationError, RequiredFileMissingError as SharedFileNotFoundError
+
+
+#: Папка обхода с меткой мода `out.vpk` (сборка различает моды на один предмет)
+_MOD_PREFIX = "console\\" + mod_tag("out.vpk")
 
 
 class PlanMaterialsBypassTests(unittest.TestCase):
@@ -1802,13 +1807,13 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
             str(base), "en"))
         self.assertEqual(c.kwargs, {
             "target_mdl_paths": ["models/player/items/all_class/hat_heavy.mdl"],
-            "bypass_prefix": "console", "part_specs": None,
+            "bypass_prefix": _MOD_PREFIX, "part_specs": None,
             "part_source_qc": qc, "part_names": {}})
         s = self.mocks[sty].call_args
         self.assertEqual(s.args[1], [{"style": 1}])
         self.assertEqual(s.args[7:11], ((4, 4), "DXT1", [], {}))
         self.assertEqual(s.kwargs, {
-            "bypass_prefix": "console",
+            "bypass_prefix": _MOD_PREFIX,
             "written_textures": {"console/models/player/items/all_class/hat_scout": img},
             "textures_vpk": "tf2_textures_dir.vpk",
             "template_cdmaterials": ["models/player/items/all_class"]})
@@ -1832,7 +1837,7 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
             "misc_vpk": "tf2_misc_dir.vpk", "textures_vpk": "tf2_textures_dir.vpk",
             "studiomdl_exe": "studiomdl.exe", "tf_dir": str(base), "size": (4, 4),
             "format_type": "DXT1", "flags": [], "vtf_options": {},
-            "bypass_prefix": "console", "language": "en"})
+            "bypass_prefix": _MOD_PREFIX, "language": "en"})
         self.assertEqual(self.mocks[apply_].call_args.args[1], [{"name": "p1"}])
         self.assertEqual(self.mocks[sec].call_args.kwargs, {
             "part_variants": {"p1": "c_scattergun_p1"}, "part_specs": [{"name": "p1"}],

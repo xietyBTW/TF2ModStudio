@@ -9,9 +9,22 @@ from src.app.api._common import _lang, endpoint
 
 @endpoint
 def paintkits(lang: str = '') -> Dict[str, object]:
-    """War Paint игры для показанного оружия: [{id, name, item, wears, team}]"""
+    """War Paint игры для показанного оружия: {items: [{id, name, item, wears, team}], recent}"""
     from src.app.session import session
     return session().paintkits.paintkits(_lang(lang))
+
+
+@endpoint
+def paintkit_thumbs(kits: Optional[List[object]] = None) -> Dict[str, object]:
+    """Миниатюры раскрасок: kits - [[id, item], ...] видимых строк -> {thumbs: {id: png}}"""
+    from src.app.session import session
+    pairs = []
+    for pair in (kits or [])[:24]:
+        try:
+            pairs.append((int(pair[0]), int(pair[1])))     # type: ignore[index]
+        except (TypeError, ValueError, IndexError):
+            continue
+    return session().paintkits.paintkit_thumbs(pairs)
 
 
 def _cards(materials) -> Optional[List[str]]:
@@ -49,14 +62,16 @@ def preview_paintkit(kit: int, item: int, wear: int = 1, seed: int = 0,
 
 
 @endpoint
-def paintkit_layout(kit: int, item: int, layout: int = 0) -> Dict[str, object]:
-    """Раскладка War Paint по деталям: слои, детали и карта треугольников"""
+def paintkit_layout(kit: int, item: int, layout: int = 0, card: str = '') -> Dict[str, object]:
+    """Раскладка War Paint по деталям материала card (пусто - главного): слои,
+    детали и карта треугольников"""
     from src.app.session import session
-    return session().paintkits.paintkit_layout(int(kit), int(item), int(layout))
+    return session().paintkits.paintkit_layout(int(kit), int(item), int(layout), str(card or ''))
 
 
 @endpoint
-def set_paintkit_layout(kit: int, assign: Optional[Dict[str, int]] = None) -> Dict[str, object]:
-    """Раскладка человека {деталь: слой}; пусто - вернуть автомат"""
+def set_paintkit_layout(kit: int, assign: Optional[Dict[str, int]] = None,
+                        card: str = '') -> Dict[str, object]:
+    """Раскладка человека {деталь: слой} материала card; пусто - вернуть автомат"""
     from src.app.session import session
-    return session().paintkits.set_paintkit_layout(int(kit), assign)
+    return session().paintkits.set_paintkit_layout(int(kit), assign, str(card or ''))

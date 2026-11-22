@@ -14,7 +14,7 @@ import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.shared.logging_config import get_logger
-from src.shared.text_search import plain as _plain
+from src.shared.text_search import TypoIndex, plain as _plain
 from src.shared.validators import vpk_file_name
 
 if TYPE_CHECKING:
@@ -54,30 +54,44 @@ def _sound_title(entry, items: List[str], known: str,
 #: Valve непоследователен: `Weapon_Scatter_Gun` рядом с `Weapon_Shotgun`, и
 #: буквальное совпадение подстроки половину названий не находит. «ё» и «е»
 #: тоже одно и то же: «ракетомет» обязан находить «Ракетомёт»
-def _score(row: Dict[str, Any], words: List[str]) -> float:
+def _score(row: Dict[str, Any], words: List[str],
+           index: Optional[TypoIndex] = None) -> float:
     """Насколько строка отвечает запросу. Меньше нуля - не отвечает вовсе
 
     Каждое слово обязано найтись, вес - по тому, ГДЕ нашлось: целый термин
     (имя предмета, класс, слот, группа) дороже его начала, начало - дороже
     вхождения в середину, а имя записи и путь файла - самое дешёвое. Так
-    «bat» ставит биту выше «BatSaber», а тот - выше «combat»
+    «bat» ставит биту выше «BatSaber», а тот - выше «combat». Слово с
+    опечаткой («scatergun») дешевле любого точного
     """
     total = 0.0
-    terms = row['terms']
     for w in words:
-        if w in terms:
-            total += 8
-        elif any(t.startswith(w) for t in terms):
-            total += 4
-        elif any(w in t for t in terms):
-            total += 2
-        elif w in row['name_plain']:
-            total += 1
-        elif w in row['blob']:
-            total += 0.5
-        else:
+        weight = _weight(row, w)
+        if not weight and index is not None:
+            # С опечаткой - по тем же ступеням, но ниже любого точного (0,5):
+            # среди «scatergun» обрез обязан встать выше газировщика
+            weight = max((_weight(row, n) for n in index.near(w)), default=0) / 20
+        if not weight:
             return -1
+        total += weight
     return total
+
+
+def _weight(row: Dict[str, Any], w: str) -> float:
+    """Вес одного слова в строке: термин целиком, начало, середина, имя
+    записи, путь файла; 0 - нет вовсе"""
+    terms = row['terms']
+    if w in terms:
+        return 8
+    if any(t.startswith(w) for t in terms):
+        return 4
+    if any(w in t for t in terms):
+        return 2
+    if w in row['name_plain']:
+        return 1
+    if w in row['blob']:
+        return 0.5
+    return 0
 
 
 class SoundsEditor:
@@ -94,7 +108,8 @@ class SoundsEditor:
         #: Строки каталога на языке `_sound_lang` - разбор скриптов игры дорог
         self._sound_cache: List[Dict[str, Any]] = []
         self._sound_lang: Optional[str] = None
-        self._sound_vocab_cache = None
+        #: Словарь для опечаток на языке `_sound_lang`
+        self._sound_typos: Optional[TypoIndex] = None
 
     #: Сколько строк отдаём за раз. Записей в игре десять с половиной тысяч,
     #: и рисовать их все - секунды на пустом месте, дальше страница просит
@@ -129,6 +144,7 @@ class SoundsEditor:
         # Разделители убираем с обеих сторон: скаттерган в игре записан
         # `Weapon_Scatter_Gun`, и поиск «scattergun» его не находил
         words = [_plain(w) for w in (query or '').split() if _plain(w)]
+        index = self._typo_index(lang) if words else None
         picks = self._wave_picks
 
         def is_own(row: Dict[str, Any]) -> bool:
@@ -149,7 +165,7 @@ class SoundsEditor:
             if own and not is_own(row):
                 continue
             if words:
-                score = _score(row, words)
+                score = _score(row, words, index)
                 if score < 0:
                     continue
                 scores[row['name']] = score
@@ -179,7 +195,10 @@ class SoundsEditor:
                     tally[key] = tally.get(key, 0) + 1
 
         classes = {c['key'].lower(): c['name'] for c in self._classes(lang)}
-        who_names = {**{k: classes[k] for k in sc.CLASSES if k in classes},
+        # «Все классы» - после девяти: предметы на всех (крюк-кошка, Saxxy)
+        # иначе считались, но в колонке фильтров не появлялись вовсе
+        who_names = {**{k: classes[k] for k in (*sc.CLASSES, 'all-class')
+                        if k in classes},
                      **sc.WHO_NAMES}
         chosen = {'section': section, 'who': who, 'group': group,
                   'variant': variant, 'format': fmt}
@@ -209,9 +228,6 @@ class SoundsEditor:
                 for row in hits[offset:offset + self.SOUND_PAGE]]
         return {'rows': page, 'total': len(hits), 'offset': offset,
                 'facets': facets, 'all': every,
-                # Ничего не нашлось - может, опечатка: «scatergun»
-                'suggest': (self._suggest(words, section, lang)
-                            if words and not hits else []),
                 # Пустой список сам по себе ничего не объясняет: страница по
                 # этому флагу отличает «сузил до нуля» от «скрипты игры не
                 # прочитались»
@@ -237,50 +253,15 @@ class SoundsEditor:
                 'own_waves': own_waves,
                 'partial': bool(own_waves) and not whole}
 
-    def _suggest(self, words: List[str], section: str,
-                 lang: str) -> List[str]:
-        """Похожие слова из словаря раздела: «scatergun» -> «scattergun»
-
-        Словарь - как записи ЗОВУТ (имена предметов, классы, группы), без
-        имён файлов и ключей моделей: там мусора больше, чем подсказок.
-        Сравниваем по сжатому виду, показываем как пишут
-        """
-        import difflib
-
-        vocab = self._sound_vocab(section, lang)
-        out: List[str] = []
-        # Сначала запрос целиком: «rocket lancher» - это «rocket launcher»,
-        # а не «rocket» и «launcher» по отдельности
-        whole = ''.join(words)
-        for near in difflib.get_close_matches(whole, vocab, n=2, cutoff=0.8):
-            if near != whole and vocab[near] not in out:
-                out.append(vocab[near])
-        for w in words if not out else ():
-            for near in difflib.get_close_matches(w, vocab, n=2, cutoff=0.72):
-                label = vocab[near]
-                if near != w and label not in out:
-                    out.append(label)
-        return out[:3]
-
-    def _sound_vocab(self, section: str, lang: str) -> Dict[str, str]:
-        """{сжатое слово: как пишут} по разделу - один раз на язык и раздел"""
-        key = (section, lang)
-        cache = getattr(self, '_sound_vocab_cache', None)
-        if cache is None:
-            cache = self._sound_vocab_cache = {}
-        if key not in cache:
-            vocab: Dict[str, str] = {}
-            for row in self._sound_rows(lang):
-                if section and row['section'] != section:
-                    continue
-                for label in row['labels']:
-                    plain = _plain(label)
-                    # С цифрами - имена файлов-сирот (`rocket1`), не слова
-                    if (len(plain) > 2 and '_' not in label
-                            and not any(c.isdigit() for c in plain)):
-                        vocab.setdefault(plain, label)
-            cache[key] = vocab
-        return cache[key]
+    def _typo_index(self, lang: str) -> TypoIndex:
+        """Словарь для опечаток - как записи ЗОВУТ (имена предметов, классы,
+        группы), один раз на язык. Имена файлов сюда не идут: «rocket1»
+        опечаткой не бывает"""
+        rows = self._sound_rows(lang)
+        if self._sound_typos is None:
+            self._sound_typos = TypoIndex(
+                label for row in rows for label in row['labels'] if '_' not in label)
+        return self._sound_typos
 
     def _classes(self, lang: str) -> List[Dict[str, str]]:
         from src.app.api import classes as api_classes
@@ -338,7 +319,13 @@ class SoundsEditor:
         # опознаём по имени субъекта: `Weapon_Ambassador` - это `TF_Ambassador`
         # в локализации и `c_ambassador` в каталоге оружия. Без этого «посол» и
         # «нож» в поиске не находились вовсе: имена записей латинские
-        guess = self._subject_index(loc, lang)
+        from src.data.items_game_kv import ItemsGame
+
+        game = ItemsGame.load(get_items_game_path(paths['root']))
+        from src.data.sound_items import classes_by_item_name
+
+        token_classes = classes_by_item_name(game) if game else {}
+        guess = self._subject_index(loc, lang, token_classes)
         classes = {c['key'].lower(): c['name'] for c in self._classes(lang)}
         who_names = {**classes, **sound_catalog.WHO_NAMES}
         rows = []
@@ -370,7 +357,17 @@ class SoundsEditor:
             # Чей звук - от точного к догадке: items_game, каталог оружия,
             # имя записи. Нет ничего - «прочие»: без ключа под фильтром до
             # строки не добраться
-            who = list(entry.classes or cls or entry.who) or ['other']
+            who = list(entry.classes or cls or entry.who
+                       or (sound_catalog.weapon_class_guess(entry.subject)
+                           if entry.section == 'weapon' else ())) or ['other']
+            # Оружие Half-Life 2 - под своим ключом, даже если в имени
+            # нашлось слово оружия TF2: `weapons/shotgun/…` - не дробовик TF2
+            if entry.who == ('hl2',):
+                who = ['hl2']
+            # Предмет всех девяти классов (крюк-кошка, Saxxy) - «все классы»,
+            # как в каталоге оружия, а не девять строк в каждом фильтре
+            if set(sound_catalog.CLASSES) <= set(who):
+                who = ['all-class']
             # У звуков мира говорящего нет (см. `make_entry`), а догадка по
             # имени субъекта тут ложная: `Grenade.Roll` - не чья-то граната
             if entry.section == 'world':
@@ -404,7 +401,7 @@ class SoundsEditor:
             # модели, класс, слот, группа, совпадение с ними весит больше,
             # чем случайное вхождение в путь файла (см. `_score`).
             # `labels` - те же слова, но как их пишут люди: из них
-            # собираются подсказки «возможно, вы имели в виду»
+            # собирается словарь для опечаток
             row['labels'] = tuple(dict.fromkeys(
                 t.strip().lower() for t in (
                     title, *items, *items_en, *aliases, named,
@@ -439,11 +436,12 @@ class SoundsEditor:
             row['shared_count'] = len({n for names in shared.values()
                                        for n in names})
         self._sound_lang, self._sound_cache = lang, rows
-        self._sound_vocab_cache = {}
+        self._sound_typos = None
         return rows
 
-    def _subject_index(self, loc: Dict[str, str],
-                       lang: str) -> Dict[str, tuple]:
+    def _subject_index(self, loc: Dict[str, str], lang: str,
+                       token_classes: Optional[Dict[str, set]] = None
+                       ) -> Dict[str, tuple]:
         """{сжатое имя субъекта: (название предмета, классы, иконка)}
 
         Два источника: локализация знает больше всего названий
@@ -451,11 +449,16 @@ class SoundsEditor:
         знает КЛАСС и картинку. Чего нет ни там, ни там, получает значок
         раздела (`icon_for`) - на строку без картинки это не похоже
 
+        `token_classes` - классы предмета по токену его названия (из
+        items_game): у названия из локализации своего класса нет, а без него
+        «Линчеватель скота» уходил в «прочие»
+
         Каталог индексируется и по ключу модели, и по имени на ОБОИХ языках:
         `SUBJECT_ITEMS` называет предметы по-английски, и в русском
         интерфейсе «Machina» иначе не находилась. Классов у предмета
         бывает несколько - дробовик носят четверо, - и копятся все
         """
+        from src.data import sound_catalog
         from src.data.weapons import (
             TF2_WEAPONS, WEAPON_SLOT_TYPES, get_weapon_type_name,
         )
@@ -466,7 +469,11 @@ class SoundsEditor:
                 continue
             stem = _plain(token[3:].removeprefix('Weapon_').removeprefix('weapon_'))
             if stem and stem not in out:
-                out[stem] = (value, (), '', ())
+                # В игровом порядке, а не по алфавиту: по первому классу
+                # строка берёт портрет, и у пистолета он был бы инженера
+                own = (token_classes or {}).get(token.lower(), ())
+                known = tuple(c for c in sound_catalog.CLASSES if c in own)
+                out[stem] = (value, known, '', ())
 
         for cls_name, slots in TF2_WEAPONS.items():
             cls = cls_name.lower()
@@ -689,7 +696,8 @@ class SoundsEditor:
         if not saved:
             return {'error': 'Файла этого звука в игре нет'}
         logger.info(f"[звук] сохранено из игры: {len(saved)} в {export_folder}")
-        return {'path': saved[0], 'files': len(saved)}
+        return {'path': saved[0], 'name': os.path.basename(saved[0]),
+                'files': len(saved)}
 
     def build_sounds(self, filename: str = '') -> Dict[str, Any]:
         """Собирает VPK из выбранных звуков

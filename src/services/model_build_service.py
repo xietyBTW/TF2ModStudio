@@ -943,6 +943,8 @@ class ModelBuildService:
         (его добавляет Crowbar при декомпиляции), но целевая папка другая -
         пере-корневаем в целевую. Результат всегда с обратными слешами
         """
+        from src.shared.constants import strip_bypass_console
+
         prefix = bypass_prefix.rstrip("\\/") + "\\"
         norm = original_path.replace("/", "\\")
         body = norm.lstrip("\\")
@@ -950,9 +952,8 @@ class ModelBuildService:
         pref_low = prefix.lower()
         if low.startswith(pref_low):
             return body                              # уже под нашей папкой
-        if low.startswith("console\\"):
-            body = body[len("console\\"):]           # Crowbar-console -> в целевую
-        return prefix + body
+        # Crowbar-console (и метка прошлого мода) -> в целевую
+        return prefix + strip_bypass_console(body)
 
     @staticmethod
     def patch_qc_file(qc_path: str, bypass_prefix: str = "console") -> None:

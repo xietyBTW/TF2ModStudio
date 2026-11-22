@@ -45,6 +45,29 @@ class EffectFiltersTest(unittest.TestCase):
         self.assertEqual(res['categories'], [])
         self.assertEqual([it['system'] for it in res['items']], ['flame'])
 
+    def test_source_groups_by_item_then_by_file(self):
+        """Без предмета - группа по файлу PCF, а не одна куча «без предмета»"""
+        rows = [row('flame', ['weapon'], labels=['Flamethrower']),
+                {**row('rain_drop', ['world']), 'file': 'particles/rain_custom.pcf'},
+                {**row('rain_low', ['world']), 'file': 'particles/rain_custom_dx80.pcf'},
+                {**row('dock_fog', ['world']), 'file': 'particles/harbor_fx.pcf'}]
+        self.ed._effect_rows = lambda lang: (rows, True)
+        got = [(it['system'], it['group']) for it in self.ed.particle_effects('', 'world')['items']]
+        self.assertEqual(got, [('dock_fog', 'harbor fx'), ('rain_drop', 'rain custom'),
+                               ('rain_low', 'rain custom')])
+        weapon = self.ed.particle_effects('', 'weapon')['items']
+        self.assertEqual(weapon[0]['group'], 'Flamethrower')
+
+    def test_source_count_matches_list(self):
+        """Ребёнок под корнем, которого нет в строках, не считается: в
+        списке его тоже нет, и число расходилось со списком"""
+        orphan = row('lost_kid', ['weapon'])
+        orphan['root'] = 'missing_root'
+        self.ed._effect_rows = lambda lang: ([row('flame', ['weapon']), orphan], True)
+        res = self.ed.particle_effects('', 'weapon')
+        count = {f['key']: f['count'] for f in res['facets']}['weapon']
+        self.assertEqual(count, res['total'])
+
     def test_search_is_still_paged(self):
         res = self.ed.particle_effects('hat', 'unusual')
         self.assertEqual(len(res['items']), EffectCatalog.EFFECTS_PAGE)

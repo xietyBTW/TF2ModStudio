@@ -166,15 +166,16 @@
 }
 .wpanel__generic[hidden] { display: none; }
 .wpanel__generic p { margin: 0; flex: 1; }
+/* Список забирает всю свободную высоту: раскрасок сотни, настройки - ниже */
 .wpanel__list {
-  flex: 1 0 160px; max-height: 60vh; overflow: auto;
+  flex: 1 1 0; min-height: 160px; overflow: auto;
   display: flex; flex-direction: column;
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
 }
 .wpanel__row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 10px;
+  padding: 5px 10px 5px 6px;
   border: 0; border-left: 2px solid transparent;
   border-bottom: 1px solid var(--hairline);
   background: none; color: var(--ink-soft);
@@ -185,6 +186,12 @@
 .wpanel__row[aria-selected="true"] {
   color: var(--ink); border-left-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+/* Миниатюра: рецепт на развёртке пушки, пока не приехала - пустой квадрат */
+.wpanel__thumb {
+  flex: none; width: 30px; height: 30px;
+  background: var(--viewport) center / cover no-repeat;
+  outline: 1px solid var(--hairline); outline-offset: -1px;
 }
 .wpanel__tag { flex: none; font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; color: var(--ink-mute); }
 .wpanel__name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -201,79 +208,61 @@
   color: var(--ink-mute); cursor: default;
 }
 .wpanel__empty { margin: 18px 10px; font-size: 12px; color: var(--ink-mute); }
-.wpanel__controls { display: flex; flex-direction: column; gap: 10px; }
-.wpanel__field { display: flex; align-items: center; gap: 12px; }
-.wpanel__wearname { font-size: 12px; color: var(--ink); }
-.wpanel__wears { display: grid; grid-template-columns: repeat(5, 1fr); }
+.wpanel__controls, .wpanel__look { display: flex; flex-direction: column; gap: 8px; }
+.wpanel__field { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* Подписи строк одной ширины: настройки читаются столбиком */
+.wpanel__key { flex: none; width: 74px; }
+.wpanel__wearname {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: var(--ink-mute);
+}
+.wpanel__wears { flex: none; display: grid; grid-template-columns: repeat(5, 34px); }
 .wpanel__wear {
-  padding: 7px 0;
+  padding: 5px 0;
   border: 1px solid var(--hairline-strong); margin-left: -1px;
   background: none; color: var(--ink-soft);
-  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; cursor: pointer;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; cursor: pointer;
   transition: background var(--dur), color var(--dur);
 }
 .wpanel__wear:first-child { margin-left: 0; }
 .wpanel__wear:hover { color: var(--ink); }
 .wpanel__wear.is-active { position: relative; background: var(--chosen); border-color: var(--ink); color: var(--chosen-ink); }
-.wpanel__seed { width: 190px; font-variant-numeric: tabular-nums; }
+.wpanel__dice { flex: none; width: 26px; height: 26px; }
+.wpanel__seed { flex: 0 1 190px; min-width: 0; font-variant-numeric: tabular-nums; }
 .wpanel__status { margin: 0; min-height: 1.4em; font-size: 11.5px; color: var(--ink-mute); }
-/* Материалы: плитки-переключатели с миниатюрой, как плитки узоров раскладки.
-   Отмеченная - в цвете (и с предпросмотром War Paint), снятая - приглушена */
-.wpanel__mats { display: flex; flex-direction: column; gap: 8px; }
+/* Материалы: чипы-переключатели. Отмеченный - в рамке и в цвете (с
+   предпросмотром War Paint), снятый - приглушён */
+.wpanel__mats { align-items: flex-start; }
+.wpanel__mats .wpanel__key { padding-top: 7px; }
 .wpanel__mats[hidden], .wpanel__matnote[hidden] { display: none; }
-.wpanel__matcount { font: 10.5px/1 var(--mono); color: var(--ink-mute); font-variant-numeric: tabular-nums; }
-.wpanel__matlist {
-  display: grid; gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-}
+/* Выбор материала раскладки - радио: выбранный в цвете, остальные приглушены */
+.wlay__mats .wmat[aria-checked="false"] .wmat__swatch { filter: grayscale(.7) opacity(.5); }
+.wpanel__matlist { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .wmat {
-  position: relative;
-  display: flex; flex-direction: column; gap: 5px;
-  padding: 0; border: 0; background: none; min-width: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: 100%; min-width: 0;
+  padding: 3px 9px 3px 3px;
+  border: 1px solid var(--hairline); background: none;
   color: var(--ink-mute); text-align: left; cursor: pointer;
-  transition: color var(--dur);
+  transition: color var(--dur), border-color var(--dur);
 }
 .wmat__swatch {
-  position: relative; display: block;
-  aspect-ratio: 1; width: 100%;
+  flex: none; width: 22px; height: 22px;
   background: var(--viewport) center / cover no-repeat;
-  outline: 1px solid var(--hairline); outline-offset: -1px;
   filter: grayscale(.7) opacity(.5);
-  transition: transform var(--dur-panel) cubic-bezier(.2, .7, .2, 1),
-              outline-color var(--dur), filter var(--dur-panel);
-}
-/* Флажок в углу: тот же квадрат, что у обычных галочек приложения */
-.wmat__swatch::before {
-  content: ""; position: absolute; left: 5px; top: 5px;
-  width: 13px; height: 13px; box-sizing: border-box;
-  border: 1px solid var(--hairline-strong); background: var(--overlay);
-  transition: background var(--dur), border-color var(--dur);
-}
-.wmat__swatch::after {
-  content: ""; position: absolute; left: 9.5px; top: 5.5px;
-  width: 4px; height: 8px;
-  border-right: 1.5px solid var(--surface); border-bottom: 1.5px solid var(--surface);
-  transform: rotate(42deg) scale(0);
-  transition: transform var(--dur);
+  transition: filter var(--dur-panel);
 }
 .wmat__name {
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden; overflow-wrap: break-word;
-  font-size: 11.5px; line-height: 1.3; color: inherit;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: inherit;
 }
-.wmat__tag { font: 9.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mute); }
-.wmat:hover { color: var(--ink-soft); }
-.wmat:hover .wmat__swatch { transform: translateY(-2px); }
-.wmat:focus-visible { outline: none; }
-.wmat:focus-visible .wmat__swatch { outline: 1px solid var(--accent); outline-offset: 2px; }
-.wmat[aria-checked="true"] { color: var(--ink); }
-.wmat[aria-checked="true"] .wmat__swatch { filter: none; outline: 2px solid var(--ink); outline-offset: -2px; }
-.wmat[aria-checked="true"] .wmat__swatch::before { background: var(--ink); border-color: var(--ink); }
-.wmat[aria-checked="true"] .wmat__swatch::after { transform: rotate(42deg) scale(1); }
+.wmat:hover { color: var(--ink-soft); border-color: var(--hairline-strong); }
+.wmat:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.wmat[aria-checked="true"] { color: var(--ink); border-color: var(--ink); }
+.wmat[aria-checked="true"] .wmat__swatch { filter: none; }
 /* Рецепт под одну пушку: на этот материал его не разложить */
-.wmat:disabled { cursor: default; color: var(--ink-mute); }
-.wmat:disabled .wmat__swatch { transform: none; filter: grayscale(1) opacity(.3); }
-.wmat:disabled .wmat__swatch::before { display: none; }
+.wmat:disabled { cursor: default; color: var(--ink-mute); border-style: dashed; }
+.wmat:disabled .wmat__swatch { filter: grayscale(1) opacity(.3); }
 .wpanel__matnote { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-mute); }
 #warpaint.is-active { color: var(--ink); }
 
@@ -281,14 +270,18 @@
    Список раскрасок и раскладка по деталям лежат в одной клетке сетки: при
    переходе уходящий экран ещё виден (allow-discrete держит display), и они
    разъезжаются в стороны, а не встают друг под друга */
+/* Высота экранов - свободная высота панели, но не меньше запаса: в узкой
+   раскладке половина низкая, и тогда прокручивается вся панель */
 .wpanel__panes {
-  flex: 1 0 auto; min-height: 0;
+  flex: 1 1 0; min-height: 380px;
   display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   overflow-x: clip;
 }
+/* Низкое окно: экран прокручивается сам, список не сжимается в ноль */
 .wpanel__pane {
   grid-area: 1 / 1;
-  display: flex; flex-direction: column; gap: 14px; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0;
+  overflow-y: auto;
   --pane-from: translateX(-28px);
   transition: opacity var(--dur-panel), transform var(--dur-panel) cubic-bezier(.2, .7, .2, 1),
               display var(--dur-panel) allow-discrete;
@@ -311,10 +304,11 @@
 .wlay__hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
 .wlay__hint b { font-weight: 500; color: var(--ink); }
 
-/* Плитки узоров: кисть (щелчок) и цель перетаскивания */
+/* Плитки узоров: кисть (щелчок) и цель перетаскивания. Мелкие - чтобы
+   влезли в один ряд и оставили высоту списку деталей */
 .wlay__layers {
-  display: grid; gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  display: grid; gap: 8px;
+  grid-auto-flow: column; grid-auto-columns: minmax(0, 72px);
 }
 .wlay__tile {
   position: relative;
@@ -335,6 +329,13 @@
 .wlay__swatch--bare {
   background-image: repeating-linear-gradient(135deg, transparent 0 7px,
                     color-mix(in srgb, var(--ink) 12%, transparent) 7px 8px);
+}
+/* «Не красить»: деталь остаётся как была - перечёркнутая клетка, не узор.
+   Перечёркивание крупное и с цветом выделенного, чтобы не спутать с «основой» */
+.wlay__swatch--keep {
+  background: var(--viewport)
+    linear-gradient(to top right, transparent calc(50% - 1px),
+                    var(--accent) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px));
 }
 .wlay__key {
   position: absolute; left: 4px; top: 4px;
@@ -368,12 +369,13 @@
   100% { transform: scale(1); }
 }
 
-.wlay__tools { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.wlay__tools { display: flex; flex-wrap: wrap; gap: 2px; }
+.wlay__tools .ptools__btn:disabled { opacity: .35; cursor: default; background: none; }
 .wlay__tools [hidden] { display: none; }
 
 /* Детали: перетаскиваемые строки */
 .wlay__units {
-  flex: 1 0 140px; max-height: 46vh; overflow: auto;
+  flex: 1 1 0; min-height: 140px; overflow: auto;
   display: flex; flex-direction: column;
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
@@ -462,10 +464,13 @@
 }
 [data-panels="float"] .catalog[hidden] { display: none; }
 [data-panels="float"] .catalog__search { font-size: 22px; font-weight: 300; padding: 8px 0; }
-[data-panels="float"] .catalog__filters { gap: 20px; }
 [data-panels="float"] .catalog__grid {
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 26px 22px;
   padding-bottom: var(--rhythm);
 }
 
+
+/* «Без War Paint» - слева в подвале панели, подальше от «Нанести» */
+.wpanel__peek { margin-right: auto; }
+.wpanel__peek[hidden] { display: none; }

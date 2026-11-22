@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from src.shared.text_search import plain
+from src.shared.text_search import TypoIndex, find, plain
 
 if TYPE_CHECKING:
     from src.app.session import AppSession
@@ -48,6 +48,17 @@ def with_weapon_variants(index: Dict[str, str], roots: Dict[str, str],
 _HIDDEN = ('blob', 'keys', 'root', 'matched')
 
 
+def _file_group(pcf: str) -> str:
+    """Группа эффекта без предмета - его файл: `particles/harbor_fx.pcf` ->
+    «harbor fx» (заголовок группы - прописными, подчёркивания там мешают)"""
+    name = (pcf or '').replace(chr(92), '/').rsplit('/', 1)[-1]
+    name = name[:-4] if name.lower().endswith('.pcf') else name
+    # `_dx80` - тот же файл для слабых видеокарт, отдельной группой он
+    # только двоил бы её
+    name = name[:-5] if name.lower().endswith('_dx80') else name
+    return name.replace('_', ' ').strip()
+
+
 def _strip(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _HIDDEN and k != 'kids'}
 
@@ -84,6 +95,9 @@ class EffectCatalog:
         rows, ready = self._effect_rows(lang)
         source = (source or '').strip().lower()
         words = [plain(w) for w in (query or '').split() if plain(w)]
+        index = self._typo_index(rows) if words else None
+        #: {система: сколько слов нашлось только с опечаткой} - под запросом
+        typos_of: Dict[str, int] = {}
 
         by_name = {row['system']: row for row in rows}
         counts: Dict[str, int] = {}
@@ -91,8 +105,11 @@ class EffectCatalog:
         found: Dict[str, List[Dict[str, Any]]] = {}
         matched: set = set()
         for row in rows:
-            if words and not all(w in row['blob'] for w in words):
-                continue
+            if words:
+                typos = find(words, row['blob'], index)
+                if typos is None:
+                    continue
+                typos_of[row['system']] = typos
             if source and source not in row['kinds']:
                 continue
             # Без запроса и источника - каталог: только необычные
@@ -107,11 +124,19 @@ class EffectCatalog:
                 kids.append(row)
         # Счётчики - по корням и по всей игре под запросом, а не по
         # показанному: из каталога необычных иначе нельзя было бы уйти в
-        # «Оружие»
-        for top in {r['root'] or r['system'] for r in rows
-                    if not words or all(w in r['blob'] for w in words)}:
-            for kind in self._root_kinds(by_name, top):
-                counts[kind] = counts.get(kind, 0) + 1
+        # «Оружие». Корень - тем же путём, что у списка выше (корень строки,
+        # и только существующий): считая по дереву детей, число расходилось
+        # со списком на одну-две строки
+        tops_of: Dict[str, set] = {}
+        for r in rows:
+            if words and r['system'] not in typos_of:
+                continue
+            top = r['root'] or r['system']
+            if top not in by_name:
+                continue
+            for kind in r['kinds']:
+                tops_of.setdefault(kind, set()).add(top)
+        counts.update({kind: len(tops) for kind, tops in tops_of.items()})
 
         items: List[Dict[str, Any]] = []
         for top, kids in found.items():
@@ -131,26 +156,38 @@ class EffectCatalog:
 
         if words:
             # Совпавшие целиком или с начала - выше: «crit» это crit_text,
-            # а не bullet_tracer01_crit. Корень наследует лучший ранг детей
+            # а не bullet_tracer01_crit. Корень наследует лучший ранг детей.
+            # Найденное с опечаткой - после всего найденного точно
+            # У слова с опечаткой ранг считается по словам, которыми оно
+            # нашлось: иначе все такие эффекты стояли бы одной кучей
+            alike = [n for w in words for n in (w, *index.near(w))]
+
             def rank_one(it: Dict[str, Any]) -> int:
-                if any(w in it['keys'] for w in words):
+                if any(w in it['keys'] for w in alike):
                     return 0
-                if any(k.startswith(w) for k in it['keys'] for w in words):
+                if any(k.startswith(w) for k in it['keys'] for w in alike):
                     return 1
                 return 2
 
-            def rank(it: Dict[str, Any]) -> int:
+            def rank(it: Dict[str, Any]) -> tuple:
                 own = rank_one(it) if it['matched'] else 3
-                return min([own, *(rank_one(k) for k in it['kids'])])
+                typos = min([typos_of.get(it['system'], 9) if it['matched'] else 9,
+                             *(typos_of.get(k['system'], 9) for k in it['kids'])])
+                return typos, min([own, *(rank_one(k) for k in it['kids'])])
             items.sort(key=rank)
         elif source == 'unusual':
             # Необычные - разделами, как каталог: по предмету их не собрать,
             # у эффекта с именем подписи нет, и он уезжал в конец списка
             items.sort(key=lambda it: CATEGORY_ORDER.get(it['category'], 9))
         elif source:
-            # Под источником - по предмету, потом по имени: все вспышки
-            # огнемёта рядом
-            items.sort(key=lambda it: (' '.join(it['labels']).lower() or '\uffff',
+            # Под источником - группами: по предмету, все вспышки огнемёта
+            # рядом. Предмета нет - по файлу PCF: у «Хэллоуина» и «Карт» он
+            # есть у одного эффекта из десяти, и одна куча «без предмета» в
+            # триста строк ничего не говорила, а файл - это их настоящее
+            # деление (doomsday, harbor, eyeboss). Предметные группы первыми
+            for it in items:
+                it['group'] = it['labels'][0] if it['labels'] else _file_group(it['file'])
+            items.sort(key=lambda it: (not it['labels'], it['group'].lower(),
                                        it['system'].lower()))
         facets = [{'key': kind, 'name': name, 'count': counts.get(kind, 0)}
                   for kind, name in ps.KIND_NAMES.items()
@@ -171,6 +208,16 @@ class EffectCatalog:
                              else list(ParticleEditorService.catalog_progress() or ())),
                 'items': [self._listed(it, inline=bool(words) or it['open']) for it in page],
                 'total': len(items), 'facets': facets, 'categories': categories}
+
+    def _typo_index(self, rows: List[Dict[str, Any]]) -> TypoIndex:
+        """Словарь для опечаток по именам систем, эффектов и предметов.
+        Пересобирается, когда сменился набор строк (язык, дособранный индекс)"""
+        cached = getattr(self, '_typos', None)
+        if cached is None or cached[0] is not rows:
+            texts = [t for row in rows
+                     for t in (row['system'], row['name'], *row['labels'], row['blob'])]
+            self._typos = (rows, TypoIndex(texts))
+        return self._typos[1]
 
     @staticmethod
     def _listed(item: Dict[str, Any], inline: bool) -> Dict[str, Any]:
@@ -208,15 +255,6 @@ class EffectCatalog:
         if category:
             items = [it for it in items if key(it) == category]
         return items, categories
-
-    def _root_kinds(self, by_name: Dict[str, dict], top: str) -> set:
-        """Виды корня вместе с детьми: огнемёт зовёт эффект, у которого
-        сам корень - «правила игры», а пламя - дети"""
-        kinds = set(by_name[top]['kinds']) if top in by_name else set()
-        for kid in self._children.get(top, ()):
-            if kid in by_name:
-                kinds.update(by_name[kid]['kinds'])
-        return kinds
 
     def _effect_rows(self, lang: str):
         """Все эффекты игры со словами для поиска - один раз на язык
@@ -303,6 +341,26 @@ class EffectCatalog:
         if index:
             self._effect_cache = ((lang, len(index)), rows)
         return rows, bool(index)
+
+    def game_attach(self, system: str) -> Optional[Dict[str, Any]]:
+        """Куда игра вешает точку 0 этого необычного: {attachment, rootbone}
+
+        Ребёнок спрашивает за свой корень в PCF: точку 0 ему отдаёт родитель.
+        Не необычный - None, правила игры у него нет
+        """
+        from src.services.particle_editor_service import ParticleEditorService
+
+        by_system = {fx['system'].lower(): fx for fx in self._unusual_effects('en')}
+        fx = by_system.get(system.lower())
+        if fx is None:
+            paths = self._host.tf2_paths()
+            if 'error' in paths:
+                return None
+            root = ParticleEditorService.system_roots(paths['root']).get(system, '')
+            fx = by_system.get(root.lower())
+        if fx is None:
+            return None
+        return {'attachment': fx['attachment'], 'rootbone': fx['rootbone']}
 
     def _unusual_effects(self, lang: str) -> List[dict]:
         """Таблица необычных эффектов с именами на языке интерфейса"""

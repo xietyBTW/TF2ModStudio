@@ -15,12 +15,26 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from src.shared.constants import Team
 from src.shared.logging_config import get_logger
 
 if TYPE_CHECKING:
     from src.app.session import AppSession
 
 logger = get_logger(__name__)
+
+
+def _same_file(a: Optional[str], b: Optional[str]) -> bool:
+    """Тот же файл: путь или содержимое. Работа хранит копии картинок у
+    себя (work_store), и после перезапуска путь на карточке уже другой"""
+    import filecmp
+
+    if not a or not b:
+        return False
+    if os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b)):
+        return True
+    return (os.path.isfile(a) and os.path.isfile(b)
+            and filecmp.cmp(a, b, shallow=False))
 
 
 class CustomModelEditor:
@@ -113,6 +127,7 @@ class CustomModelEditor:
             p.custom_qc_text = None
             p.custom_source_path = source
             p.custom_fit = fit.to_dict() if fit else None
+            p.custom_mesh_materials = list(materials)
             p.reset_skins()
             # Командные кадры и вариант остались от ИГРОВОЙ модели - на чужой
             # геометрии они показывали бы не то. Для «только геометрии» их
@@ -211,6 +226,7 @@ class CustomModelEditor:
             # Кадры команд и «Прочее» - от игровой геометрии, правки человека
             # (текстуры, «сделать командным») уже на месте, их не трогаем
             force = p.textures.force_team
+            p.custom_mesh_materials = list(materials)
             p.reset_team_frames()
             p.reset_misc()
             p.textures.force_team = force
@@ -232,10 +248,35 @@ class CustomModelEditor:
             return 0
         by_card = [(m, textures[m]) for m in cards if m in textures]
         pairs = by_card or [(cards[0], next(iter(textures.values())))]
+        p = self._host.preview
         with self._host._lock:
             for material, path in pairs:
-                self._host.preview.textures.set_texture(material, path)
+                # Что было на карточке до картинки из файла - его вернёт
+                # «Убрать свою модель»: картинка нарисована под развёртку своей
+                # модели, на игровой она мусор. Помним самое первое
+                if material not in p.custom_displaced:
+                    p.custom_displaced[material] = {
+                        team: p.textures.textures.get(team, {}).get(material, '')
+                        for team in (Team.RED, Team.BLU)}
+                p.custom_displaced[material]['placed'] = path
+                p.textures.set_texture(material, path)
         return len(pairs)
+
+    def _restore_displaced(self) -> None:
+        """ПОД ЗАМКОМ: возвращает карточкам то, что заняли картинки из файла
+        своей модели. Карточку, на которую человек потом положил своё, не
+        трогаем"""
+        p = self._host.preview
+        for material, was in p.custom_displaced.items():
+            for team in (Team.RED, Team.BLU):
+                slot = p.textures.textures.setdefault(team, {})
+                if not _same_file(slot.get(material), was.get('placed')):
+                    continue
+                if was.get(team):
+                    slot[material] = was[team]
+                else:
+                    slot.pop(material, None)
+        p.custom_displaced = {}
 
     def _custom_model_obj(self, smd: str, ghost: bool):
         """OBJ своей модели для превью: (путь, материалы модели) или (None, [])
@@ -371,6 +412,33 @@ class CustomModelEditor:
         self._host._autosave()
         return {'fit': p.custom_fit}
 
+    def auto_fit(self) -> Dict[str, Any]:
+        """
+        Своя модель на место оригинала: размер, поворот и сдвиг считаются по
+        точкам обеих моделей (auto_fit.fit_to), дальше - обычная подгонка, её
+        можно поправить руками и отменить
+        """
+        from src.services import auto_fit, decompile_cache, mesh_import_service, smd_service
+
+        p = self._host.preview
+        source = p.custom_source_path
+        if not source:
+            return {'error': 'Подгонка есть только у импортированной модели'}
+        key = p.weapon_key or ''
+        qc = decompile_cache.find_cached_qc_for_weapon(key) if key else None
+        ref = smd_service.find_reference_smd(os.path.dirname(qc), key) if qc else None
+        if not ref:
+            return {'error': 'Оригинал ещё не разобран - подгонять не к чему'}
+        try:
+            points = (mesh_import_service.smd_points(source)
+                      if source.lower().endswith('.smd')
+                      else self._parse_import(source)[0].corners[:, :3])
+        except mesh_import_service.MeshImportError as exc:
+            return {'error': str(exc)}
+        fit = auto_fit.fit_to(points, mesh_import_service.smd_points(ref))
+        logger.info(f"автоподгонка своей модели: {fit.to_dict()}")
+        return self.set_custom_fit(fit.to_dict())
+
     def drop_custom_model(self, lang: str = 'ru') -> Dict[str, Any]:
         """Забывает свою модель и возвращает в кадр игровую
 
@@ -382,6 +450,7 @@ class CustomModelEditor:
         p = self._host.preview
         key, mode = p.weapon_key, getattr(self._host, '_mode', '')
         with self._host._lock:
+            self._restore_displaced()
             p.begin_game_model()
             p.custom_qc_text = None
         self._pending_model = None

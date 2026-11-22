@@ -6,6 +6,7 @@ import re
 from typing import Dict, List, Optional
 
 from src.app.api._common import _lang, _t, endpoint
+from src.shared.text_search import TypoIndex, find
 
 
 # Шапки и косметика
@@ -81,19 +82,18 @@ def hats(query: str = '', tf2_class: Optional[str] = None,
          region: str = '', collection: str = '',
          lang: str = '') -> Dict[str, object]:
     """
-    Косметика TF2 из items_game.txt: {items, regions, collections, suggest}
+    Косметика TF2 из items_game.txt: {items, regions, collections}
 
     Скрытые категории берём из конфига (`hats_hidden_tags`) - так же, как
     панель шапок. Отдаём ВСЁ, что прошло фильтры: косметики 9504, и отрисовка
     полного списка стоит 56 мс - обрезать было незачем, а обрезанный список
     молча врал, что предмета в игре нет
 
-    Поиск ранжирует: имя целиком, с начала, по началам слов, подстрока;
-    ищет и по английскому имени, когда интерфейс русский. `regions` - фасет
-    «куда надевается» с числами под текущим запросом и классом (без своего
-    фильтра, иначе из «Лица» нельзя было бы уйти). `collections` - то же для
-    коллекций игры, новые сверху. `suggest` - похожие имена, когда ничего не
-    нашлось
+    Поиск ранжирует: имя целиком, с начала, по началам слов, подстрока, с
+    опечаткой; ищет и по английскому имени, когда интерфейс русский.
+    `regions` - фасет «куда надевается» с числами под текущим запросом и
+    классом (без своего фильтра, иначе из «Лица» нельзя было бы уйти).
+    `collections` - то же для коллекций игры, новые сверху
     """
     from src.app.session import session
     from src.data.hats_parser import REGION_ORDER, parse_hats
@@ -102,7 +102,7 @@ def hats(query: str = '', tf2_class: Optional[str] = None,
     t = _t(lang)
     paths = session().tf2_paths()
     if 'error' in paths:
-        return {'items': [], 'regions': [], 'collections': [], 'suggest': []}
+        return {'items': [], 'regions': [], 'collections': []}
 
     hidden = set(hidden_hat_tags())
     region = (region or '').strip().lower()
@@ -111,9 +111,9 @@ def hats(query: str = '', tf2_class: Optional[str] = None,
     col_counts: Dict[str, list] = {}
     words = _hat_plain(str(query)).split()
     english = _english_names(paths['root']) if words and lang != 'en' else {}
+    index = _hat_index(paths['root'], lang) if words else None
     counts: Dict[str, int] = {}
     found = []
-    names: List[str] = []
     for h in parse_hats(paths['root'], lang):
         if 'medals' in hidden and h.is_medal:
             continue
@@ -121,8 +121,7 @@ def hats(query: str = '', tf2_class: Optional[str] = None,
             continue
         if not h.matches([], tf2_class or None):
             continue
-        names.append(h.name)
-        rank = _hat_rank(h, words, english.get(h.defindex, ''))
+        rank = _hat_rank(h, words, english.get(h.defindex, ''), index)
         if rank is None:
             continue
         # Каждый фасет считается под ЧУЖИМ фильтром, но не под своим: иначе
@@ -145,7 +144,6 @@ def hats(query: str = '', tf2_class: Optional[str] = None,
         'collections': [{'key': k, 'name': name, 'count': n}
                         for k, (_, name, n) in sorted(
                             col_counts.items(), key=lambda kv: -kv[1][0])],
-        'suggest': _hat_suggest(words, names, english) if words and not found else [],
     }
 
 
@@ -156,9 +154,11 @@ def _hat_plain(text: str) -> str:
                     .lower().replace('ё', 'е').split())
 
 
-def _hat_rank(h, words: List[str], english: str) -> Optional[int]:
+def _hat_rank(h, words: List[str], english: str,
+              index: Optional[TypoIndex] = None) -> Optional[int]:
     """0 - имя целиком, 1 - с начала, 2 - по началам слов, 3 - подстрока
-    где угодно (в имени, внутреннем имени, классах); None - мимо"""
+    где угодно (в имени, внутреннем имени, классах), 4 - с опечаткой;
+    None - мимо"""
     if not words:
         return 0
     q = ' '.join(words)
@@ -171,33 +171,30 @@ def _hat_rank(h, words: List[str], english: str) -> Optional[int]:
     if all(any(p.startswith(w) for p in parts) for w in words):
         return 2
     blob = ' '.join([*names, _hat_plain(h.internal_name), h.classes_str.lower()])
-    if all(w in blob for w in words):
-        return 3
-    return None
+    typos = find(words, blob, index)
+    if typos is None:
+        return None
+    return 3 if typos == 0 else 4
 
 
-def _hat_suggest(words: List[str], names: List[str],
-                 english: Dict[str, str]) -> List[str]:
-    """Похожие имена: «Fedra» -> «Fancy Fedora». По сжатому виду, показываем
-    как пишут"""
-    import difflib
+#: Словари косметики для опечаток: {(папка игры, язык): индекс}. Список
+#: шапок между запросами не меняется, а собирать словарь из девяти тысяч
+#: имён на каждую букву поиска незачем
+_HAT_INDEX: Dict[tuple, TypoIndex] = {}
 
-    vocab = {_hat_plain(n): n for n in [*names, *english.values()] if n}
-    q = ' '.join(words)
-    close = difflib.get_close_matches(q, list(vocab), n=3, cutoff=0.6)
-    if close:
-        return [vocab[c] for c in close]
-    # По одному слову против слов имён: «fedra» - «fedora» из «Fancy Fedora»
-    owner: Dict[str, str] = {}
-    for plain, name in vocab.items():
-        for w in plain.split():
-            owner.setdefault(w, name)
-    out: List[str] = []
-    for w in words:
-        for hit in difflib.get_close_matches(w, list(owner), n=2, cutoff=0.75):
-            if owner[hit] not in out:
-                out.append(owner[hit])
-    return out[:3]
+
+def _hat_index(root: str, lang: str) -> TypoIndex:
+    """Слова имён косметики на языке интерфейса и по-английски"""
+    from src.data.hats_parser import parse_hats
+
+    key = (root, lang)
+    if key not in _HAT_INDEX:
+        items = parse_hats(root, lang)
+        english = _english_names(root) if lang != 'en' else {}
+        _HAT_INDEX[key] = TypoIndex(
+            [*(h.name for h in items), *english.values(),
+             *(h.internal_name for h in items)])
+    return _HAT_INDEX[key]
 
 
 def _english_names(root: str) -> Dict[str, str]:

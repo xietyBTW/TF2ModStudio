@@ -26,41 +26,8 @@
   #canvas-container.inspecting { cursor: help; }
   #canvas-container.cutting  { cursor: crosshair; }
 
-  /* Кнопка инспекции материала (?) */
-  #inspect-btn {
-    position: absolute;
-    top: 10px; right: 10px;
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.55);
-    font-size: 14px; font-weight: 700;
-    display: none;
-    align-items: center; justify-content: center;
-    cursor: pointer; user-select: none;
-    z-index: 20;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-  }
-  #inspect-btn:hover { background: rgba(255, 255, 255, 0.12); color: #ddd; }
-  #inspect-btn.active {
-    background: rgba(204, 85, 34, 0.25);
-    border-color: #cc5522;
-    color: #ffae80;
-  }
-  body.is-light #inspect-btn {
-    background: rgba(20, 18, 15, 0.04);
-    border-color: rgba(20, 18, 15, 0.28);
-    color: #57534d;
-  }
-  body.is-light #inspect-btn:hover { background: rgba(20, 18, 15, 0.08); color: #14120f; }
-  body.is-light #inspect-btn.active {
-    background: rgba(204, 85, 34, 0.14);
-    border-color: #cc5522;
-    color: #cc5522;
-  }
-
-  /* Тултип материала/текстуры у курсора */
+  /* Тултип материала/текстуры у курсора. Включает инспектор значок в кадре
+     страницы (колонка подгонки), сюда - setInspectMode */
   #inspect-tip {
     position: absolute;
     display: none;
@@ -90,6 +57,8 @@
     text-align: center;
     line-height: 1.35;
   }
+  #inspect-tip .meta { color: #9a958d; font-size: 10px; text-align: center; margin-top: 2px; }
+  #inspect-tip .meta:empty { display: none; }
 
   /* Статус (idle / loading / error) */
   #status {
@@ -277,10 +246,10 @@
 </div>
 
 <!-- Инспекция материала: кнопка «?» (вкл/выкл) + тултип у курсора -->
-<div id="inspect-btn">?</div>
 <div id="inspect-tip">
   <img id="inspect-tip-img" alt="">
   <div class="mat" id="inspect-tip-mat"></div>
+  <div class="meta" id="inspect-tip-meta"></div>
 </div>
 
 
@@ -327,7 +296,8 @@ const I18N = {
     no_internet   : 'Нет подключения к интернету (Three.js CDN недоступен)',
     hint          : 'ЛКМ - вращение · Колесо - масштаб · ПКМ - панорама',
     drop_texture  : 'Отпустите, чтобы применить текстуру',
-    inspect       : 'Инспектор материалов - наведи на модель',
+    inspect_own   : 'своя',
+    inspect_game  : 'игровая',
   },
   en: {
     select_weapon : 'Select an item',
@@ -337,7 +307,8 @@ const I18N = {
     no_internet   : 'No internet connection (Three.js CDN unavailable)',
     hint          : 'LMB - rotate · Wheel - zoom · RMB - pan',
     drop_texture  : 'Release to apply texture',
-    inspect       : 'Material inspector - hover over the model',
+    inspect_own   : 'yours',
+    inspect_game  : 'game',
   },
 };
 
@@ -349,7 +320,6 @@ window.setLanguage = function(lang) {
   _t    = I18N[_lang];
   document.getElementById('hint').textContent     = _t.hint;
   document.getElementById('drop-text').textContent = _t.drop_texture;
-  document.getElementById('inspect-btn').title = _t.inspect;
   // Обновляем текст статуса только если показан начальный экран (не loading/error)
   if (!status.classList.contains('loading') && !status.classList.contains('error')) {
     if (!currentModel) {
@@ -883,13 +853,31 @@ window.addEventListener('pointerup', () => {
   }
 });
 
-// Колесо в режиме «гнуть» - радиус захвата, а не приближение (оно выключено)
+// Колесо в режиме «гнуть» - приближение, как везде; Shift+колесо - радиус
+// захвата: его ставят раз под задачу, а камеру двигают постоянно. Обычное
+// приближение орбиты в этом режиме выключено - оба ведёт этот обработчик
 renderer.domElement.addEventListener('wheel', e => {
   if (!_bendOn) return;
   e.preventDefault();
-  window.setBendRadius(_bendRadius * (e.deltaY > 0 ? 1 / 1.15 : 1.15));
+  // Windows с Shift отдаёт прокрутку по горизонтали: deltaY ноль, шаг в deltaX
+  const step = e.deltaY || e.deltaX;
+  if (!e.shiftKey) { _dollyBy(step); return; }
+  window.setBendRadius(_bendRadius * (step > 0 ? 1 / 1.15 : 1.15));
   if (typeof window.onBendRadius === 'function') window.onBendRadius(_bendRadius);
 }, { capture: true, passive: false });
+
+/** Приближение к центру орбиты на шаг колеса - тем же шагом, что у орбиты
+ *  (0.95 за щелчок) и в её пределах */
+function _dollyBy(step) {
+  if (!step) return;
+  const offset = camera.position.clone().sub(controls.target);
+  const k = step > 0 ? 1 / 0.95 : 0.95;
+  offset.setLength(THREE.MathUtils.clamp(offset.length() * k,
+                                         controls.minDistance, controls.maxDistance));
+  camera.position.copy(controls.target).add(offset);
+  controls.update();
+  requestRender();
+}
 
 /** Для автопроверки: что гирлянда сейчас делает */
 window.decorDebug = () => {
@@ -1151,7 +1139,9 @@ window.setFitMode = function(on, target = 'model') {
   if (_fitMode) {
     if (!_fitControls) {
       _fitControls = new TransformControls(camera, renderer.domElement);
-      _fitControls.setSpace('local');
+      // Оси мира, как у G/R/S с X/Y/Z (FIT_AXIS_DIR): у повёрнутой модели
+      // стрелки по её собственным осям смотрели вкось и расходились с клавишами
+      _fitControls.setSpace('world');
       _fitControls.addEventListener('dragging-changed', e => { controls.enabled = !e.value; });
       _fitControls.addEventListener('objectChange', () => _fitOpEmit());
       scene.add(_fitControls);
@@ -1814,6 +1804,9 @@ window.viewmodelProgress = function() {
   const total = action && action.getClip().duration;
   return total ? (action.time % total) / total : null;
 };
+
+// Сколько раз текущий клип доиграл до конца (0 - ещё ни разу, null - нет его)
+window.viewmodelLoops = () => (_skinned && _skinned.action ? _skinned.loops || 0 : null);
 
 function _disposeSkinned() {
   if (!_skinned) return;
@@ -3264,22 +3257,42 @@ window.addEventListener('keydown', e => {
   if (typeof window.onPartsKey === 'function') window.onPartsKey(e);
 });
 
-// Инспекция материала/текстуры (кнопка «?»)
-const _inspectBtn    = document.getElementById('inspect-btn');
+// Инспектор материалов: наведение показывает материал и его текстуру, щелчок
+// отдаёт материал странице (onInspectPick) - она открывает его карточку.
+// Включает его значок страницы (setInspectMode), а погаснуть сам он может,
+// когда модели не стало, - об этом страница узнаёт из onInspectMode
 const _inspectTip    = document.getElementById('inspect-tip');
 const _inspectTipImg = document.getElementById('inspect-tip-img');
 const _inspectTipMat = document.getElementById('inspect-tip-mat');
+const _inspectTipMeta = document.getElementById('inspect-tip-meta');
 let   _inspectMode   = false;
-_inspectBtn.title = _t.inspect;
+//: Материалы со своей текстурой человека - пометка в подсказке (setInspectOwn)
+let   _inspectOwn    = new Set();
 
 function _setInspectMode(on) {
+  if (_inspectMode === on) return;
   _inspectMode = on;
-  _inspectBtn.classList.toggle('active', on);
   document.getElementById('canvas-container').classList.toggle('inspecting', on);
   if (!on) _inspectTip.style.display = 'none';
+  if (typeof window.onInspectMode === 'function') window.onInspectMode(on);
 }
 
-_inspectBtn.addEventListener('click', () => _setInspectMode(!_inspectMode));
+window.setInspectMode = (on) => _setInspectMode(Boolean(on) && !!currentModel && !_isCritHitMode);
+window.setInspectOwn = (names) => { _inspectOwn = new Set(names || []); };
+
+// Щелчок без протяжки - выбор: протяжкой крутят камеру
+let _inspectDownAt = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  _inspectDownAt = _inspectMode ? { x: e.clientX, y: e.clientY } : null;
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  const down = _inspectDownAt;
+  _inspectDownAt = null;
+  if (!_inspectMode || !down || e.button !== 0) return;
+  if (Math.abs(e.clientX - down.x) + Math.abs(e.clientY - down.y) > 4) return;
+  const info = _matInfoFromMesh(_hitMeshAt(_ndcFromEvent(e)));
+  if (info && typeof window.onInspectPick === 'function') window.onInspectPick(info.name);
+});
 
 // Непрозрачная миниатюра: у VTF альфа - маска бликов ($phong), а не прозрачность.
 // На модели текстура и так рисуется непрозрачной, поэтому в превью форсим alpha=255.
@@ -3322,7 +3335,11 @@ function _matInfoFromMesh(mesh) {
   let src = '';
   const img = mat && mat.map && mat.map.image;
   if (img) src = _opaqueThumb(img) || img.src || img.currentSrc || '';
-  return { name, src };
+  const w = img && (img.naturalWidth || img.width), h = img && (img.naturalHeight || img.height);
+  const size = w && h ? `${w}×${h}` : '';
+  // '*' - модель одноматериальная, и её меш назван не так, как карточка
+  const own = _inspectOwn.has(name) || _inspectOwn.has('*') ? _t.inspect_own : _t.inspect_game;
+  return { name, src, meta: [size, img ? own : ''].filter(Boolean).join(' · ') };
 }
 
 renderer.domElement.addEventListener('mousemove', e => {
@@ -3331,6 +3348,7 @@ renderer.domElement.addEventListener('mousemove', e => {
   if (!info) { _inspectTip.style.display = 'none'; return; }
 
   _inspectTipMat.textContent = info.name;
+  _inspectTipMeta.textContent = info.meta;
   if (info.src) {
     _inspectTipImg.src = info.src;
     _inspectTipImg.classList.remove('empty');
@@ -3368,11 +3386,8 @@ function animate() {
   _stepCameraFly();
   _stepFitTween();
   controls.update();
-  // Кнопка инспекции доступна только когда есть обычная модель (не CritHIT)
-  const _inspectAvail = !!currentModel && !_isCritHitMode;
-  const _want = _inspectAvail ? 'flex' : 'none';
-  if (_inspectBtn.style.display !== _want) _inspectBtn.style.display = _want;
-  if (!_inspectAvail && _inspectMode) _setInspectMode(false);
+  // Инспектор - только у обычной модели (не CritHIT); модели не стало - гаснет
+  if (_inspectMode && (!currentModel || _isCritHitMode)) _setInspectMode(false);
   if (!(_renderQueued || moving || playing)) return;
   _renderQueued = false;
   renderer.render(scene, camera);
@@ -3393,7 +3408,8 @@ renderer.domElement.addEventListener('webglcontextrestored', requestRender);
 for (const name of Object.keys(window)) {
   const fn = window[name];
   if (_globalsBefore.has(name) || typeof fn !== 'function'
-      || name === 'viewmodelProgress' || name.endsWith('Debug')) continue;
+      || name === 'viewmodelProgress' || name === 'viewmodelLoops'
+      || name.endsWith('Debug')) continue;
   window[name] = function(...args) { requestRender(); return fn.apply(this, args); };
 }
 

@@ -411,6 +411,19 @@ def keep(key: str) -> bool:
     return True
 
 
+#: Снимок модели с правками - обложка работы в библиотеке
+SHOT = 'shot.png'
+
+
+def save_shot(key: str, png: bytes) -> Optional[Path]:
+    """Обложка сохранённой работы. Черновику она не нужна: в списке его нет"""
+    from src.services.cover_shot import write_png
+
+    if not is_kept(key):
+        return None
+    return write_png(png, work_dir() / key / SHOT)
+
+
 def is_kept(key: str) -> bool:
     """Сохранял ли человек эту работу сам (а не автосохранение молча)"""
     return bool(key) and (work_dir() / key / KEPT).is_file()
@@ -435,8 +448,13 @@ def _listing(kept: bool) -> list:
             when = edits.stat().st_mtime
         except OSError:
             when = 0.0
+        shot = folder / SHOT
         out.append({'key': folder.name, 'saved_at': when,
-                    'item': item_of(folder.name)})
+                    'item': item_of(folder.name),
+                    # Время снимка - версией в адресе: файл переписывается
+                    # на том же месте при каждом открытии работы
+                    'shot': str(shot) if shot.is_file() else '',
+                    'shot_at': shot.stat().st_mtime if shot.is_file() else 0})
     out.sort(key=lambda w: w['saved_at'], reverse=True)
     return out
 

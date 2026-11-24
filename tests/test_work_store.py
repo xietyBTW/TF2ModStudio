@@ -248,6 +248,23 @@ class WorkStoreTests(unittest.TestCase):
         self.assertEqual(work_store.list_drafts(), [])
         self.assertEqual([w['key'] for w in work_store.list_saved()], [self.key])
 
+    def test_shot_is_the_cover_of_a_kept_work_only(self):
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.new('RGBA', (512, 512), (0, 255, 0, 200)).save(buf, 'PNG')
+
+        work_store.save(self.key, {'force_team': True})
+        # Черновика в списке нет - и обложка ему ни к чему
+        self.assertIsNone(work_store.save_shot(self.key, buf.getvalue()))
+
+        work_store.keep(self.key)
+        shot = work_store.save_shot(self.key, buf.getvalue())
+        self.assertEqual(work_store.list_saved()[0]['shot'], str(shot))
+        with Image.open(shot) as img:
+            self.assertEqual(img.size, (256, 256))
+        self.assertIsNone(work_store.save_shot(self.key, b'not png'))
+
     def test_size_counts_the_files_of_the_work(self):
         work_store.save(self.key, {'textures': {'red': {'mat': self._texture()}}})
         self.assertGreater(work_store.size_of(self.key), 0)

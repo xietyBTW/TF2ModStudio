@@ -90,9 +90,10 @@ class ApplyMaterialExtrasTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
 
     def test_vmt_edit_of_this_mod_replaces_its_vmt(self):
+        from src.domain.preview.vmt_edits import VmtEdits
         from src.services.edited_vmt_service import EditedVMTService
         edited = '"VertexLitGeneric"\n{\n\t"$basetexture" "models/w/m9"\n\t"$phong" "1"\n}\n'
-        with mock.patch.object(EditedVMTService, 'EDITED_VMT_DIR', str(self.temp / 'edits')):
+        with EditedVMTService.use(VmtEdits()):
             EditedVMTService.save_edited_vmt(EditedVMTService.mod_key('D:/mods/a.vpk', 'm9'), edited)
             # Правка того же материала игры и другого мода - не про этот мод
             EditedVMTService.save_edited_vmt('m9_blue', edited)

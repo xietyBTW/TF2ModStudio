@@ -9,6 +9,17 @@ from typing import Callable, List, Tuple
 # (predicate, ru_title, ru_desc, en_title, en_desc)
 _RULES: List[Tuple[Callable, str, str, str, str]] = [
 
+    # Предмет из таблицы реквизита, но ни одна насмешка игры его не играет
+    (
+        lambda m: any(x in m for x in [
+            "реквизита насмешка не найдена", "no taunt found for this prop",
+        ]),
+        "У этого предмета нет насмешки",
+        "В игре он не участвует ни в одной насмешке. Модель можно смотреть и менять на вкладке «Модель».",
+        "This item has no taunt",
+        "No taunt in the game uses it. You can view and edit the model on the Model tab.",
+    ),
+
     # Путь к TF2 не настроен
     (
         lambda m: any(x in m for x in [

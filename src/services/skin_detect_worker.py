@@ -20,7 +20,6 @@ from typing import Optional
 
 from src.services.base_worker import Signal
 
-from src.data.weapons import WEAPON_MDL_PATHS
 from src.services import decompile_cache, model_decompile_service
 from src.services.base_worker import BaseWorker
 from src.services.model_build_service import ModelBuildService
@@ -80,10 +79,12 @@ class SkinDetectWorker(BaseWorker):
         «Skin N», а безымянные строки в полосу стилей не идут - и такую
         текстуру было не выбрать и не поправить
         """
+        from src.data.item_kinds import kind_of
         from src.data.item_skin_styles import styled_skins
         from src.data.weapon_model_index import tf2_root_from_misc_vpk
 
-        if self.mode == "hat":
+        # Стиль шапки - своя модель, строк скина игры у неё не спрашивают
+        if kind_of(self.mode).styles_are_models:
             return info
         root = tf2_root_from_misc_vpk(self.misc_vpk_path)
         named = styled_skins(self.weapon_key, root, self._lang) if root else []
@@ -118,32 +119,15 @@ class SkinDetectWorker(BaseWorker):
         return self._extract_and_decompile()
 
     def _mdl_rel(self) -> str:
-        from src.data.weapon_quirks import PREVIEW_MDL_OVERRIDE
-        from src.data.player_characters import PLAYER_BODY_MODE_KEYS as _PBK, SPY_MASK_MODE_KEY as _SMK
-        override = PREVIEW_MDL_OVERRIDE.get(self.weapon_key)
-        if self.mode == "hat" or self.mode in _PBK or self.mode == _SMK:
-            return self.weapon_key
-        if override:
-            return override
-        return WEAPON_MDL_PATHS.get(
-            self.weapon_key,
-            f"models/weapons/c_models/{self.weapon_key}/{self.weapon_key}.mdl",
-        )
+        """Путь MDL в VPK - тем же правилом, что у 3D-превью (общий кэш)"""
+        from src.services import smd_locator
+        return smd_locator.mdl_rel_path(self.mode, self.weapon_key)
 
     def _mdl_candidates(self) -> list:
         """Пути MDL внутри VPK в порядке приоритета"""
-        from src.data.weapon_quirks import PREVIEW_MDL_OVERRIDE
-        from src.data.player_characters import PLAYER_BODY_MODE_KEYS as _PBK
-
-        mdl_rel = self._mdl_rel()
-        if self.mode == "hat" or self.mode in _PBK or self.weapon_key in PREVIEW_MDL_OVERRIDE:
-            return [mdl_rel]
-
-        from src.data.weapon_model_index import tf2_root_from_misc_vpk
-        from src.services.extract_model_service import ExtractModelService
-        return ExtractModelService._build_paths_to_try(
-            self.mode, self.weapon_key, tf2_root_from_misc_vpk(self.misc_vpk_path)
-        )
+        from src.services import smd_locator
+        return smd_locator.mdl_candidates(self.mode, self.weapon_key, self.misc_vpk_path,
+                                          self._mdl_rel())
 
     def _extract_and_decompile(self) -> Optional[str]:
         """QC после извлечения из VPK и Crowbar. None - показывать нечего

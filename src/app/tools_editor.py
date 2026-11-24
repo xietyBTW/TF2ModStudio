@@ -181,10 +181,9 @@ class ToolsEditor:
         У тела персонажа выбор обязателен: без списка возвращается
         ``need_textures`` - страница спрашивает, что брать, и зовёт снова
         """
-        from src.data.player_characters import (
-            PLAYER_BODY_MODE_KEYS, PLAYER_CHARACTERS,
-        )
-        from src.data.player_hands import HAND_MODE_KEYS, get_hand_textures
+        from src.data.item_kinds import kind_of
+        from src.data.player_characters import PLAYER_CHARACTERS
+        from src.data.player_hands import get_hand_textures
         from src.data.weapons import SPECIAL_MODES
         from src.domain.preview.model_key import model_key_for
 
@@ -203,7 +202,8 @@ class ToolsEditor:
         export_folder, export_format = self._host._export_settings()
 
         # Шапка: своя цепочка QC -> VMT -> $baseTexture, у каждой вещи своя модель
-        if mode == 'hat':
+        kind = kind_of(mode)
+        if kind.is_hat:
             key = self._host.preview.weapon_key
             if not key:
                 return {'error': 'Сначала выберите шапку'}
@@ -213,14 +213,14 @@ class ToolsEditor:
                 export_folder=export_folder, export_format=export_format,
                 language=lang))
 
-        is_body = mode in PLAYER_BODY_MODE_KEYS
+        is_body = kind.is_character
 
         if is_body:
             if not textures:
                 return {'need_textures': self.character_textures()}
             folder = PLAYER_CHARACTERS.get(mode, {}).get('folder', '')
             explicit = [(folder, name) for name in textures]
-        elif mode in HAND_MODE_KEYS:
+        elif kind.is_hands:
             explicit = get_hand_textures(mode)
         else:
             explicit = None

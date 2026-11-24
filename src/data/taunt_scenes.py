@@ -59,6 +59,8 @@ OVERRIDES: Dict[str, str] = {
 
 #: Разобранный items_game: {путь модели реквизита: {класс: имя сцены}}
 _cache: Dict[str, Dict[str, Dict[str, str]]] = {}
+#: {(модель реквизита, класс): имя сцены самого реквизита}
+_with_prop_scene: Dict[tuple, str] = {}
 
 
 def _blocks(text: str) -> List[str]:
@@ -103,11 +105,15 @@ def _parse(items_game_path: str) -> Dict[str, Dict[str, tuple]]:
         if not props:
             continue
         scenes = per_class(body, 'custom_taunt_scene_per_class')
+        prop_scenes = per_class(body, 'custom_taunt_prop_scene_per_class')
         table = {}
         for tf2_class, mdl in props.items():
             stem = os.path.basename(scenes.get(tf2_class, ''))
-            table[tf2_class.lower()] = (mdl.replace('\\', '/').strip().lower(),
-                                        stem.removesuffix('.vcd').lower())
+            path = mdl.replace('\\', '/').strip().lower()
+            table[tf2_class.lower()] = (path, stem.removesuffix('.vcd').lower())
+            if tf2_class in prop_scenes:
+                _with_prop_scene[(path, tf2_class.lower())] = os.path.basename(
+                    prop_scenes[tf2_class]).removesuffix('.vcd').lower()
         for mdl, _scene in table.values():
             out.setdefault(mdl, {}).update(table)
     logger.info(f"[taunt] реквизитов с насмешками: {len(out)}")
@@ -154,6 +160,25 @@ def uses(mdl_path: str, tf2_root: str) -> Dict[str, tuple]:
         if found:
             return dict(found)
     return {}
+
+
+def prop_scene(mdl_path: str, tf2_root: str, tf2_class: str) -> str:
+    """Имя своей сцены реквизита или пусто (`CTFPlayer::PlayTauntSceneFromItem`)
+
+    Сцена есть (`custom_taunt_prop_scene_per_class`) - реквизит отдельная
+    модель `tf_taunt_prop` в точке персонажа, к костям не привязан, двигает
+    его своя анимация, а активное оружие остаётся в руках, пока его не
+    спрячет `AE_WPN_HIDE`: пулемётчик в «Русском растирании» трёт свой
+    пулемёт. Сцены нет - оружие само становится реквизитом
+    (CTFWeaponBase::GetWorldModelIndex)
+    """
+    found = uses(mdl_path, tf2_root).get((tf2_class or '').lower())
+    return _with_prop_scene.get((found[0], tf2_class.lower()), '') if found else ''
+
+
+def keeps_weapon(mdl_path: str, tf2_root: str, tf2_class: str) -> bool:
+    """Остаётся ли в руках активное оружие - см. `prop_scene`"""
+    return bool(prop_scene(mdl_path, tf2_root, tf2_class))
 
 
 def classes_for(mdl_path: str, tf2_root: str) -> List[str]:
@@ -203,7 +228,10 @@ def sequence_name(prop_key: str, scene_stem: str, tf2_class: str,
     for candidate in (scene_stem, f'taunt_{scene_stem}',
                       f'{scene_stem}_{tf2_class}',
                       f'taunt_{scene_stem}_{tf2_class}',
-                      prop_key, f'taunt_{prop_key}'):
+                      prop_key, f'taunt_{prop_key}',
+                      # «Развевающиеся знамёна»: сцена taunt_flying_colors,
+                      # а последовательность taunt_flag_scout
+                      f'{prop_key}_{tf2_class}'):
         if candidate and candidate in names:
             return names[candidate]
 

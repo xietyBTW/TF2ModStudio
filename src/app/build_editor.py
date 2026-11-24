@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from src.data.item_kinds import kind_of
 from src.shared.logging_config import get_logger
 from src.shared.validators import vpk_file_name
 
@@ -111,6 +112,13 @@ class BuildEditor:
         # своя картинка на каждую команду, а не одна доп. текстура на все
         own_parts = set(self._host.preview.part_material_names())
         extra = {m: p for m, p in t.uploaded_slot_paths().items() if m not in own_parts}
+        # Австралий - что видно на его карточке у каждой команды (своё, как
+        # обычная, как красное); игровое сборка пишет оригиналом сама
+        # Модель со своими материалами собирает свою таблицу скинов, и
+        # золото там - стиль «плюсиком», а не этот материал игры
+        if not self._host.preview.custom_keep_materials:
+            from src.domain.preview import variant_card
+            extra.update(variant_card.build_images(t))
         if self._host.preview.custom_vpk_mode:
             # Сборка мода кладёт `image` на ПЕРВЫЙ VTF архива, а главная
             # карточка - материал модели (VpkModController._on_materials).
@@ -166,7 +174,7 @@ class BuildEditor:
         оригинала в картинках, «keep» - как есть
         """
         tint_mode = _tint_mode(params)
-        if mode == 'hat' and not params.get('hat_paints', True):
+        if kind_of(mode).asks_game_paints and not params.get('hat_paints', True):
             return None
         risks = self._host._tint_risks(images.own_paths())
         if risks and tint_mode not in ('none', 'mask', 'keep'):
@@ -197,13 +205,15 @@ class BuildEditor:
 
         tint_mode = _tint_mode(params)
         hat_primary, hat_models =(self._hat_build_models(params.get('hat_classes'))
-                                   if mode == 'hat' else (None, None))
+                                   if kind_of(mode).class_models else (None, None))
         size = int(params.get('size') or 512)
         image = images.image
         if images.main_from_game:
             from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
             image = EXTRA_TEX_USE_GAME_ORIGINAL
+        from src.services.edited_vmt_service import EditedVMTService
         return BuildRequest(
+            vmt_edits=EditedVMTService.snapshot(),
             image_path=image,
             main_from_game=images.main_from_game,
             mode=mode,
@@ -242,7 +252,7 @@ class BuildEditor:
             # но мод один - иначе человек собирал бы их по одному и вручную
             # склеивал
             hat_style_builds=(self._host._hat_style_builds(params.get('hat_classes'))
-                              if mode == 'hat' else None),
+                              if kind_of(mode).styles_are_models else None),
             decor_builds=images.decor or None,
             # Своя модель снаряда в оружии: на игровой модели и на своей
             part_models=(dict(self._host.preview.part_models) or None
@@ -336,8 +346,7 @@ class BuildEditor:
         игры»): там же, где есть редактор VMT, кроме масок шпиона - у них своя
         сборка из одних текстур"""
         from src.app.api import controls_for
-        from src.data.player_characters import SPY_MASK_MODE_KEY
-        return bool(controls_for(mode).get('vmt_editor')) and mode != SPY_MASK_MODE_KEY
+        return bool(controls_for(mode).get('vmt_editor')) and not kind_of(mode).is_spy_mask
 
     def _part_material_specs(self) -> Optional[list]:
         """Части-материалы для сборки:
@@ -353,16 +362,13 @@ class BuildEditor:
         игровая текстура исходного. `existing` - части отданы родному
         материалу модели: только переименовать треугольники
         """
-        from src.domain.preview.texture_state import _existing
         from src.services import part_materials as pm
         from src.shared.constants import Team
 
         t = self._host.preview.textures
-        rows = (t.skin_info or {}).get('rows') or []
-        head = [str(n).lower() for n in rows[0]] if rows else []
+        table = t.table
         specs = []
         for base, entries in self._host.preview.part_materials.items():
-            col = head.index(base.lower()) if base.lower() in head else -1
             for e in entries:
                 if not e.get('tris'):
                     continue
@@ -376,17 +382,21 @@ class BuildEditor:
                                   'existing': True, 'image': None, 'image_blu': None,
                                   'style_images': {}, 'map_base': None})
                     continue
-                image = _existing(t.textures.get(Team.RED, {}).get(name))
-                blu = _existing(t.textures.get(Team.BLU, {}).get(name))
-                # «Сделать командным» без своей синей: синий берёт красную -
-                # так же, как превью (resolve_base) и главная (uploaded_for_mat)
-                if not blu and t.force_team and not t.is_team_material(name):
-                    blu = image
+                # Те же слоты, что видно на карточке: синяя - своя, иначе взятая
+                # у красной («Как красная», «сделать командным»), иначе игровая
+                image = t.own_at(name, 0, Team.RED)
+                blu = t.own_at(name, 0, Team.BLU) or t.inherited(name, 0, Team.BLU)
                 maps = self._host.preview.texture_maps.get(name) or {}
                 derive = any((m or {}).get('derive') for m in maps.values())
                 styles = {}
-                for style, overrides in t.skin_overrides.items():
-                    own = _existing((overrides or {}).get(name))
+                # Строки стилей с правками и их синие пары: у синей строки
+                # (огонь Горящих рукавиц) своя картинка или взятая у красной
+                rows = {int(r) for r in t.skin_overrides}
+                if not self._host.preview.own_styles:
+                    rows |= {table.blu_row(r) for r in rows}
+                for style in sorted(rows - {0}):
+                    team = Team.BLU if t.red_row(style) != style else Team.RED
+                    own = t.own_at(name, style, team) or t.inherited(name, style, team)
                     if not own:
                         continue
                     if self._host.preview.own_styles:
@@ -397,9 +407,8 @@ class BuildEditor:
                             styles[f"{pm.model_name(base)}_"
                                    f"{self._host.preview.style_suffix(style)}".lower()] = own
                         continue
-                    row = rows[style] if 0 < int(style) < len(rows) else []
-                    if 0 <= col < len(row) and str(row[col]).lower() != base.lower():
-                        styles[str(row[col]).lower()] = own
+                    if table.changes(int(style), base):
+                        styles[table.name_at(int(style), table.col_of(base)).lower()] = own
                 specs.append({'name': name, 'base': base, 'tris': list(e['tris']),
                               'total': e.get('total'), 'late': e.get('late'),
                               'sources': list(e.get('sources') or []),
@@ -546,29 +555,18 @@ class BuildEditor:
         запомненный выбор «ко всем» отвечает следом, и только потом спрашиваем
         человека. Пока он думает, воркер стоит на UiRequest
         """
-        # Правка стиля хранится под БАЗОВЫМ материалом, а сборка спрашивает
-        # материал строки $texturegroup по его имени (c_sd_cleaver_bloody) -
-        # без этой связки Bloody у гильотины собирался бы игровым
-        uploaded = (self._host.preview.textures.uploaded_for_mat(material)
-                    or self._host.preview.textures.style_upload_for(material))
-        if uploaded:
-            self._answer_texture_request(self._host.parts.baked_path(uploaded))
-            return
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
-        # Синяя командной карточки решена заранее, под кнопкой BLU: «Как
-        # красная» - копия красной, иначе игровая. Спрашивать не о чем
-        t = self._host.preview.textures
-        red = None if t.force_team else t.red_of_blu(material)
-        if red is not None:
+        # Своя картинка и выбор синей под кнопкой BLU решены заранее - тем же
+        # слотом, что видно на карточке (PreviewTextureState.build_answer)
+        answer = self._host.preview.textures.build_answer(material)
+        if answer:
+            special = answer in (EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN)
             self._answer_texture_request(
-                EXTRA_TEX_USE_MAIN if red in t.blu_like_red else EXTRA_TEX_USE_GAME_ORIGINAL)
+                answer if special else self._host.parts.baked_path(answer))
             return
         # Мод из VPK: текстура материала уже лежит в моде и видна на
-        # карточке - своей нет, значит остаётся его. Спрашивать не о чем.
-        # Синий двойник красного без правки - тоже: карточки у него нет, а
-        # игровой выглядит как красный
-        if (self._host.preview.custom_vpk_mode
-                or material.lower() in self._host.preview.textures.blu_twins):
+        # карточке - своей нет, значит остаётся его. Спрашивать не о чем
+        if self._host.preview.custom_vpk_mode:
             self._answer_texture_request(EXTRA_TEX_USE_GAME_ORIGINAL)
             return
         # Сборку отменяют: воркер дойдёт до проверки отмены только после

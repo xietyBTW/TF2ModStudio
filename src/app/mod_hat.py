@@ -11,14 +11,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from src.shared.game_paths import game_path as _norm
+
 
 def is_hat(preview) -> bool:
     """Показан мод, и заменяет он косметику"""
     return bool(preview.custom_vpk_mode) and preview.custom_vpk_kind == 'cosmetic'
-
-
-def _norm(path) -> str:
-    return str(path or '').replace('\\', '/').lower()
 
 
 def models_by_class(item, shown: str, own: bool) -> Dict[str, str]:

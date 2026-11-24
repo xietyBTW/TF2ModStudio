@@ -64,6 +64,7 @@ class BluChoiceTests(unittest.TestCase):
     def test_choice_survives_work_round_trip(self):
         s = PreviewSession()
         s.textures.textures[Team.RED]["hat"] = self.red_png
+        s.textures.blu_name_map = {"hat": "hat_blue"}
         s.textures.set_blu_choice("hat", "red")
         edits = s.user_edits()
         fresh = PreviewSession()
@@ -75,6 +76,7 @@ class BluChoiceTests(unittest.TestCase):
     def test_other_item_forgets_choice(self):
         s = PreviewSession()
         s.begin_item("hat_a", "hat")
+        s.textures.blu_name_map = {"hat": "hat_blue"}
         s.textures.set_blu_choice("hat", "red")
         s.begin_item("hat_a", "hat")
         self.assertEqual(s.textures.blu_like_red, {"hat"})

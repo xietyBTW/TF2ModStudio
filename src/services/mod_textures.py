@@ -20,6 +20,8 @@ import os
 from typing import Dict, Iterable, Optional, Set
 
 from src.services import vmt_parse
+from src.shared.game_paths import texture_key  # noqa: F401  ключ текстуры для модулей мода
+from src.shared.team_names import is_blue, team_form
 
 #: Параметры VMT, которые указывают на ОСНОВНУЮ текстуру
 _BASE_PARAMS = frozenset({'basetexture', 'basetexture2'})
@@ -38,20 +40,12 @@ _SERVICE_SUFFIXES = (
 _SERVICE_WORDS = ('lightwarp', 'phongwarp', 'cubemap', 'normalmap', 'sheenmap')
 
 
-def texture_key(path: str) -> str:
-    """Путь текстуры так, как его пишет VMT: от materials/, без .vtf,
-    прямые слэши, нижний регистр"""
-    key = str(path or '').replace('\\', '/').strip().strip('/').lower()
-    if key.startswith('materials/'):
-        key = key[len('materials/'):]
-    return key[:-4] if key.endswith('.vtf') else key
-
 
 def is_service_name(vtf_path: str) -> bool:
     """Служебная ли текстура по одному имени (когда VMT о ней молчит)"""
     stem = os.path.splitext(os.path.basename(str(vtf_path)))[0].lower()
-    if stem.endswith('_blue'):
-        stem = stem[:-len('_blue')]
+    if is_blue(stem):
+        stem = team_form(stem)[0]
     return (stem.endswith(_SERVICE_SUFFIXES)
             or any(word in stem for word in _SERVICE_WORDS))
 

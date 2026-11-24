@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple
 
 from src.shared.constants import ToolPaths, ToolTimeouts
+from src.data.translations import tr
 from src.shared.logging_config import get_logger
+from src.shared.team_names import is_blue, is_blue_of
 from src.shared.validators import sanitize_path
 
 logger = get_logger(__name__)
@@ -205,7 +207,7 @@ class CustomVPKService:
                 'vmt_path': (vmt_by_base.get(texture_key(rel(vtf)))
                              or vmt_by_stem.get(stem.lower())),
                 'vmt_dir': str(vtf.parent),
-                'is_blue': stem.lower().endswith('_blue'),
+                'is_blue': is_blue(stem),
                 'rel_dir': rel_dir,
             })
 
@@ -298,28 +300,22 @@ class CustomVPKService:
 
         try:
             # 1. Извлечение
-            emit(-1, "Extracting VPK..." if language == "en" else "Распаковка VPK...")
+            emit(-1, tr(language, 'build_sub_extracting_vpk'))
             if not CustomVPKService.extract_vpk_to_dir(custom_vpk_source_path, str(vpkroot_dir)):
-                return False, (
-                    "Failed to extract VPK. Make sure the file is a valid single-file VPK mod."
-                    if language == "en" else
-                    "Не удалось распаковать VPK. Убедитесь, что это корректный однофайловый VPK мод."
-                )
+                return False, tr(language, 'mod_vpk_extract_failed')
 
             # 2. Обнаружение текстур
             # По самим VTF-файлам (как и 2D-карточки) - чтобы замена на любой
             # карточке (включая стили) применилась, имена совпадают с карточками
-            emit(-1, "Scanning textures..." if language == "en" else "Сканирование текстур...")
+            emit(-1, tr(language, 'build_sub_scanning'))
             discovered = CustomVPKService.discover_textures(str(vpkroot_dir))
             all_textures = ([t for t in discovered if not t['is_blue']]
                             + [t for t in discovered if t['is_blue']])
 
-            if not all_textures:
-                return False, (
-                    "No textures found in VPK (no VTF files)."
-                    if language == "en" else
-                    "В VPK не найдено текстур (нет VTF файлов)."
-                )
+            # Мод из одних ссылок на игровые текстуры (так собирает и это
+            # приложение) пересобирается ради гирлянд: им свои VTF не нужны
+            if not all_textures and not decor_builds:
+                return False, tr(language, 'mod_vpk_no_textures')
 
             # Правки VMT из редактора - до рельефа и карт: те дописываются
             # уже в правленый VMT, как у модельной сборки
@@ -328,16 +324,16 @@ class CustomVPKService:
             # 3. Подготовка конвертера
             # Настройки материала (свои поверх общих) - как у модельной сборки:
             # с одними общими мод собрался бы молча без рельефа и карт
-            from src.data.texture_overrides import effective_settings, own_settings
-            global_tex = {'size': size, 'format': format_type,
-                          'flags': flags or [], 'options': vtf_options or {}}
+            from src.data.texture_overrides import own_settings, vtf_settings
 
             def _settings(tex: Dict):
                 from src.services import normal_map
-                e = effective_settings(global_tex, own_settings(material_settings, tex['name']))
+                own = own_settings(material_settings or {}, tex['name'])
+                t_size, t_fmt, t_flags, t_opts = vtf_settings(
+                    size, format_type, flags, vtf_options, own)
                 # Маска блеска в альфе основы: нормаль заберёт её себе
-                options = normal_map.options_for(CustomVPKService._vmt_text(tex), e['options'])
-                return tuple(e['size']), e['format'], list(e['flags'] or []), options
+                options = normal_map.options_for(CustomVPKService._vmt_text(tex), t_opts)
+                return t_size, t_fmt, t_flags, options
 
             # Что сделала замена: {name: (картинка, fps, есть ли нормаль)}
             replaced: Dict[str, Tuple[str, Optional[float], bool]] = {}
@@ -394,9 +390,9 @@ class CustomVPKService:
             # Первая (главная) текстура - из image_path пользователя (классический
             # путь). Если image_path не задан (режим 2D-карточек) - главную
             # текстуру тоже спрашиваем через callback, как и остальные
-            first = all_textures[0]
+            first = all_textures[0] if all_textures else None
             todo = []   # (картинка, текстура, родная нормаль)
-            if image_path and os.path.isfile(image_path):
+            if first and image_path and os.path.isfile(image_path):
                 todo.append((image_path, first, _stock(first)))
                 remaining = all_textures[1:]
             else:
@@ -416,8 +412,7 @@ class CustomVPKService:
             # Текстуры независимы, а сжатие отпускает GIL: жмём одновременно
             if todo:
                 names = ", ".join(tex['name'] for _, tex, _ in todo)
-                emit(-1, f"Converting {names}..." if language == "en"
-                     else f"Конвертация {names}...")
+                emit(-1, tr(language, 'build_sub_converting', names=names))
                 from src.services.texture_build.vtf_jobs import VtfJobs
                 jobs = VtfJobs()
                 for job in todo:
@@ -444,7 +439,7 @@ class CustomVPKService:
                 strip_unmasked(vpkroot_dir, only=written)
 
             # 6. Перепаковка
-            emit(-1, "Packing VPK..." if language == "en" else "Упаковка VPK...")
+            emit(-1, tr(language, 'build_sub_packing'))
             from src.services.packaging_service import PackagingService
             final = PackagingService.pack_directory(
                 vpkroot_dir=vpkroot_dir,
@@ -602,10 +597,7 @@ class CustomVPKService:
             if cdmat is None or not vmt:
                 if not (maps or wants_normal or fps):
                     continue
-                problems.append(
-                    f"{tex['name']}: no VMT next to the texture, normal map and material maps skipped"
-                    if language == 'en' else
-                    f"{tex['name']}: рядом с текстурой нет VMT, рельеф и карты не добавлены")
+                problems.append(tr(language, 'mod_maps_no_vmt', name=tex['name']))
                 continue
             try:
                 if not image and (maps or wants_normal):
@@ -628,7 +620,8 @@ class CustomVPKService:
                     if fps:
                         VMTService.enable_animated_bumpmap(vmt, fps)
                 if record is not None:
-                    blue = by_name.get(f"{tex['name']}_blue".lower())
+                    blue = next((t for n, t in by_name.items()
+                                 if is_blue_of(tex['name'], n)), None)
                     blue_vmt = (blue.get('vmt_path') if blue and maps_of(blue) is None
                                 else None)
                     for target in filter(None, (vmt, blue_vmt)):
@@ -655,10 +648,7 @@ class CustomVPKService:
             except Exception as e:                          # noqa: BLE001
                 logger.warning(f"Custom VPK: рельеф/карты '{tex['name']}' не вышли: {e}",
                                exc_info=True)
-                problems.append(
-                    f"{tex['name']}: normal map / material maps failed, see the log"
-                    if language == 'en' else
-                    f"{tex['name']}: рельеф или карты не вышли, подробности в журнале")
+                problems.append(tr(language, 'mod_maps_failed', name=tex['name']))
         CustomVPKService._drop_orphans(dropped, vpkroot_dir)
         return problems
 
@@ -699,9 +689,7 @@ class CustomVPKService:
         from src.services.tf2_paths import TF2Paths
         from src.shared.constants import bypass_prefix
 
-        failed = ("Edited lights were not built - see the log"
-                  if language == "en" else
-                  "Правленые гирлянды не собрались - подробности в журнале")
+        failed = tr(language, 'mod_lights_failed')
         try:
             studiomdl_exe, misc_vpk, tf_dir = TF2Paths.resolve(tf2_root_dir or '')
         except FileNotFoundError as exc:
@@ -716,6 +704,10 @@ class CustomVPKService:
             logger.warning(f"[гирлянда] custom-мод: своя гирлянда мода заменена "
                            f"игровой: {replaced}")
         ctx = SimpleNamespace(temp_dir=str(temp_root), vpkroot_dir=vpkroot_dir)
+        emptied = CustomVPKService._empty_native_decor(
+            ctx, entries, misc_vpk, studiomdl_exe, tf_dir,
+            bypass_prefix(bypass_method, filename), language)
+        entries = [e for e in entries if e.get('mdl')]
         built = build_decor_models(
             ctx, entries, misc_vpk=misc_vpk,
             textures_vpk=TF2Paths.resolve_textures_vpk(tf2_root_dir) or '',
@@ -725,7 +717,37 @@ class CustomVPKService:
             language=language)
         notes = [] if built == len(entries) else [failed]
         if replaced:
-            notes.append(("The mod's own lights were replaced with the game ones: "
-                          if language == "en" else
-                          "Своя гирлянда мода заменена игровой: ") + ", ".join(replaced))
+            notes.append(tr(language, 'mod_lights_replaced', names=', '.join(replaced)))
+        if emptied:
+            notes.append(emptied)
         return "\n".join(notes)
+
+    @staticmethod
+    def _empty_native_decor(ctx, entries: list, misc_vpk: str, studiomdl_exe: str,
+                            tf_dir: str, prefix: str, language: str) -> str:
+        """
+        Родные гирлянды оружия - пустыми моделями, если гирлянда уже вшита в
+        модель мода (запись с `empty`, см. DecorEditor.builds). Мод подменяет
+        оружие у всех, и у праздничного экземпляра их иначе было бы две.
+        Пустая - настоящая модель без видимой геометрии: файл нулевой длины
+        движок не загрузит. Возвращает строку для отчёта
+        """
+        from src.services import decor_bake
+
+        # Родная гирлянда, что уже лежит в моде своей моделью, - работа автора
+        natives = [m for e in entries for m in (e.get('empty') or ())
+                   if not (Path(ctx.vpkroot_dir) / m).is_file()]
+        if not natives:
+            return ''
+        done = 0
+        for mdl in natives:
+            try:
+                decor_bake.build_empty(ctx, mdl, misc_vpk=misc_vpk,
+                                       studiomdl_exe=studiomdl_exe, tf_dir=tf_dir,
+                                       bypass_prefix=prefix)
+                done += 1
+            except Exception as exc:                          # noqa: BLE001
+                logger.warning(f"[гирлянда] custom-мод: родная {mdl} не убрана: {exc}",
+                               exc_info=True)
+        key = 'mod_lights_hidden' if done == len(natives) else 'mod_lights_hide_failed'
+        return tr(language, key)

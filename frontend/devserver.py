@@ -482,7 +482,10 @@ def main() -> None:
     from src.shared.logging_config import setup_logging
     from src.shared.paths import ensure_data_dir
 
-    setup_logging(log_file=ensure_data_dir() / "tf2sg.log")
+    # Свой файл на порт: приложение и другой dev-сервер держат tf2sg.log
+    # открытым, и ротация чужого файла на Windows не проходит
+    port_arg = next((a for a in sys.argv[1:] if a.isdigit()), '5173')
+    setup_logging(log_file=ensure_data_dir() / f"tf2sg_dev_{port_arg}.log")
 
     # Запуск руками - это и есть разработка: разрешаем чужому источнику читать
     # ответы. Приложение (frontend/app.py) поднимает Handler само и сюда не

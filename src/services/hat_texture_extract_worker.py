@@ -27,6 +27,7 @@ from src.services.base_worker import BaseWorker
 from src.services.game_vpk_reader import GameVpkReader
 from src.services.material_resolver import MaterialResolver
 from src.shared.logging_config import get_logger
+from src.shared.game_paths import game_path
 
 logger = get_logger(__name__)
 
@@ -48,7 +49,7 @@ class HatTextureExtractWorker(BaseWorker):
         parent=None,
     ):
         super().__init__(parent)
-        self._hat_mdl  = hat_mdl_path.replace("\\", "/").lower()
+        self._hat_mdl  = game_path(hat_mdl_path)
         self._tf2_root = tf2_root_dir
         self._export   = export_folder
         self._fmt      = export_format.upper()

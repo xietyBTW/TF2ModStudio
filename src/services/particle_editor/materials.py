@@ -4,7 +4,6 @@ import base64
 import io
 import os
 import re
-import tempfile
 from typing import Any, Dict, List, Optional
 
 from src.services import vmt_parse
@@ -53,8 +52,7 @@ def set_material_to_game(pcf, old_material: str, game_material: str) -> bool:
     материал game_material (просто меняет строку - новый файл не создаётся).
     Работает в казуале: игра уже содержит этот материал
     """
-    def _norm(m: str) -> str:
-        return m.replace("\\", "/").lower()
+    from src.shared.game_paths import game_path as _norm
 
     target = _norm(old_material)
     changed = False
@@ -212,32 +210,15 @@ def _resolve_material(paks: list, mat: str) -> Optional[dict]:
 
 
 def _vtf_to_png(vtf_raw: bytes) -> Optional[tuple]:
-    """VTF-байты -> (data URL PNG, w, h). VTFLib читает только с диска -
-    пишем во временный файл"""
-    tmp_path = None
-    try:
-        from PIL import Image
-        from src.services.vtflib_wrapper import VTFLib
-        fd, tmp_path = tempfile.mkstemp(suffix=".vtf")
-        with os.fdopen(fd, "wb") as f:
-            f.write(vtf_raw)
-        rgba, w, h = VTFLib.read_vtf_as_rgba(tmp_path)
-        buf = io.BytesIO()
-        # Сжатие послабее: уровень 3 против 6 - 2 мс вместо 29 на текстуру
-        # 256², а картинка тяжелее лишь на десятую часть
-        Image.frombytes("RGBA", (w, h), rgba).save(buf, format="PNG",
-                                                   compress_level=3)
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{b64}", w, h
-    except Exception as exc:
-        logger.warning(f"VTF→PNG не удался: {exc}")
+    """VTF-байты -> (data URL PNG, w, h) общим декодером превью"""
+    from src.services.vtf_preview_service import png_size, vtf_bytes_to_png_bytes
+
+    png = vtf_bytes_to_png_bytes(vtf_raw)
+    if not png:
+        logger.warning("VTF→PNG не удался")
         return None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    width, height = png_size(png)
+    return f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}", width, height
 
 
 def additive_card_url(data_url: str) -> str:

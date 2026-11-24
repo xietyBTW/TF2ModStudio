@@ -31,7 +31,7 @@ def mdl_rel_path(mode: str, weapon_key: str) -> str:
     kind = kind_of(mode)
     _override = PREVIEW_MDL_OVERRIDE.get(weapon_key)
     # У шапок, персонажей и масок weapon_key - это уже полный путь MDL
-    if kind.is_hat or kind.is_character or kind.is_spy_mask:
+    if kind.model_by_path:
         return weapon_key
     if _override:
         # Превью-подмена модели (напр. Dead Ringer -> viewmodel v_watch_pocket_spy)
@@ -50,20 +50,15 @@ def mdl_candidates(mode: str, weapon_key: str, misc_vpk_path: str,
     поэтому её путь раскрывается в список кандидатов. У персонажей, масок и
     превью-подмен путь известен точно
     """
-    from src.data.weapon_quirks import PREVIEW_MDL_OVERRIDE
-    kind = kind_of(mode)
-    if kind.is_hat:
-        from src.services.tf2_paths import build_hat_mdl_candidates
-        return build_hat_mdl_candidates(mdl_rel_hint)
-    if (kind.is_character or kind.is_spy_mask
-            or weapon_key in PREVIEW_MDL_OVERRIDE):
-        return [mdl_rel_hint]
-
     from src.data.weapon_model_index import tf2_root_from_misc_vpk
-    from src.services.extract_model_service import ExtractModelService
-    return ExtractModelService._build_paths_to_try(
-        mode, weapon_key, tf2_root_from_misc_vpk(misc_vpk_path)
-    )
+    from src.data.weapon_quirks import PREVIEW_MDL_OVERRIDE
+    from src.services.model_locator import mdl_candidates as _candidates
+
+    by_path = kind_of(mode).model_by_path
+    if not by_path and weapon_key in PREVIEW_MDL_OVERRIDE:
+        return [mdl_rel_hint]
+    return _candidates(mode, mdl_rel_hint if by_path else weapon_key,
+                       tf2_root_from_misc_vpk(misc_vpk_path))
 
 
 # Основной меш
@@ -88,8 +83,7 @@ def find_reference_smd(directory: str, mode: str, weapon_key: str,
     # Персонажи TF2: проверяем ДО *_reference.smd. У них bodygroup'ы (рюкзак
     # медика medipack_reference.smd, шапка и т.п.) тоже имеют _reference в
     # имени и алфавитно могут идти раньше основного тела
-    from src.data.player_characters import PLAYER_BODY_MODE_KEYS
-    if mode in PLAYER_BODY_MODE_KEYS:
+    if kind_of(mode).is_character:
         body = _character_smd(directory, weapon_key, load_model)
         if body:
             return body

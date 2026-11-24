@@ -69,6 +69,18 @@ class Rig:
     frame: Dict[int, Tuple[tuple, tuple]]
     world: Dict[int, Mat]
     by_name: Dict[str, Mat]
+    #: {имя в нижнем регистре: имя как в этом скелете}. Движок ищет кость
+    #: через Q_stricmp (Studio_BoneIndexByName), и `Prop_bone` метлы ведёт
+    #: `prop_bone` персонажа
+    folded: Dict[str, str]
+
+    def spelling(self, name: str) -> Optional[str]:
+        """Имя этой кости так, как оно записано в скелете, или None"""
+        return self.folded.get(name.lower())
+
+    def lookup(self, name: str) -> Optional[Mat]:
+        spelled = self.spelling(name)
+        return self.by_name.get(spelled) if spelled else None
 
 
 def load_rig(smd_path: str, frame_index: int = 0) -> Optional[Rig]:
@@ -91,7 +103,8 @@ def load_rig(smd_path: str, frame_index: int = 0) -> Optional[Rig]:
     world = smd_pose.world_matrices(parents, frame)
     by_name = {names[bone]: mat for bone, mat in world.items() if bone in names}
     return Rig(names=names, parents=parents, frame=frame,
-               world=world, by_name=by_name)
+               world=world, by_name=by_name,
+               folded={name.lower(): name for name in names.values()})
 
 
 def arms_skinning(arms_ref_smd: str, pose: Rig) -> Optional[Dict[int, Mat]]:
@@ -115,7 +128,7 @@ def arms_skinning(arms_ref_smd: str, pose: Rig) -> Optional[Dict[int, Mat]]:
         wb = bind.world.get(bone)
         if wb is None:
             continue
-        wp = pose.by_name.get(name)
+        wp = pose.lookup(name)
         if wp is None:
             # Кость без анимации остаётся там, где стояла: W_позы = W_bind,
             # то есть матрица единичная. Кладём её явно, чтобы вершина с такой
@@ -176,7 +189,7 @@ def bonemerge_skinning(weapon_ref_smd: str, pose: Rig,
         if cached is not None:
             return cached
         name = bind.names.get(bone, "")
-        wp = pose.by_name.get(name) if name in wanted else None
+        wp = pose.lookup(name) if name in wanted else None
         if wp is not None:
             final[bone] = wp                 # bonemerge: мировая матрица руки
             return wp
@@ -226,8 +239,9 @@ def driving_bones(weapon_ref_smd: str, pose: Rig,
             return driver[bone]
         name = bind.names.get(bone, "")
         if name in wanted:
-            driver[bone] = name
-            return name
+            # Имя руки, а не оружия: по нему кость ищет сцена
+            driver[bone] = pose.spelling(name) or name
+            return driver[bone]
         parent = bind.parents.get(bone, -1)
         if parent < 0 or parent == bone or guard > 256:
             return None
@@ -270,11 +284,12 @@ def merged_bone_names(weapon_ref_smd: str, poses,
 def _merge_targets(bind: Rig, pose: Rig,
                    merge_bones: Optional[Iterable[str]]) -> set:
     """Имена костей оружия, которые действительно берут положение от руки"""
-    available = {name for name in bind.names.values() if name in pose.by_name}
+    available = {name for name in bind.names.values() if pose.spelling(name)}
     if not available:
         return set()
     if merge_bones:
-        wanted = available & {str(n) for n in merge_bones}
+        listed = {str(n).lower() for n in merge_bones}
+        wanted = {name for name in available if name.lower() in listed}
         if wanted:
             return wanted
         logger.info(

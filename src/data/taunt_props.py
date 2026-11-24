@@ -63,10 +63,6 @@ TAUNT_PROPS: Dict[str, dict] = {
         "ru": "Ядерная бутылка", "en": "Nuke Bottle",
         "mdl_path": "models/player/items/taunts/demo_nuke_bottle/demo_nuke_bottle.mdl",
     },
-    "dizzy_bottle1": {
-        "ru": "Хмельная бутылка", "en": "Dizzy Bottle",
-        "mdl_path": "models/player/items/taunts/dizzy_bottle1/dizzy_bottle1.mdl",
-    },
     "victory_mug": {
         "ru": "Кружка победы", "en": "Victory Mug",
         "mdl_path": "models/player/items/taunts/victory_mug.mdl",

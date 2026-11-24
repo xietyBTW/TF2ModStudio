@@ -29,6 +29,63 @@ def mod_icon(name: str = '') -> Dict[str, object]:
 
 
 @endpoint
+def mod_info(name: str = '', lang: str = '') -> Dict[str, object]:
+    """
+    Что заменяет мод библиотеки: {name, title, icon, kind} для карточки
+
+    title - имя предмета в игре, icon - ключ его иконки рюкзака (страница
+    просит её через /icon). Модель, которую заменяет мод, узнаётся открытием
+    VPK один раз и запоминается: каталог спрашивает это на каждый показ
+    """
+    from pathlib import Path
+    from src.app.api.saved_works import _work_title
+    from src.app import mod_hat
+    from src.data.weapons import WEAPON_MDL_PATHS
+    from src.services import mod_library_service as library
+
+    mod = library.resolve(name)
+    if mod is None:
+        return {'error': 'Такого мода в библиотеке нет'}
+    lang = _lang(lang)
+    target = library.read_target(mod.name)
+    if target is None:
+        found = mod_target(str(mod), '', lang)
+        if 'error' in found or not found.get('mdl'):
+            return {'name': mod.name}
+        target = {'mdl': found['mdl'], 'kind': found['kind']}
+        library.write_target(mod.name, target['mdl'], target['kind'])
+
+    mdl, kind = target['mdl'], target['kind']
+    hat = mod_hat.catalog_row(mdl, lang) if kind == 'cosmetic' else None
+    if hat:
+        return {'name': mod.name, 'kind': kind,
+                'title': hat.get('name') or '', 'icon': hat.get('icon') or mdl}
+    # Ключ оружия: из таблицы путей, а у мастерской и партнёров он равен
+    # имени файла модели (c_shogun_kunai)
+    key = next((k for k, path in WEAPON_MDL_PATHS.items()
+                if path.lower() == mdl.lower()), '') or Path(mdl).stem
+    return {'name': mod.name, 'kind': kind,
+            'title': _work_title('', key.lower(), lang), 'icon': mdl}
+
+
+@endpoint
+def save_mod_shot(name: str = '', png: str = '') -> Dict[str, object]:
+    """Снимок модели из вьювера - обложкой мода. png - base64 без префикса"""
+    import base64
+    import binascii
+    from src.services import mod_library_service
+
+    try:
+        data = base64.b64decode(png, validate=True)
+    except (binascii.Error, ValueError):
+        return {'error': 'Снимок повреждён'}
+    path = mod_library_service.save_shot(name, data)
+    if path is None:
+        return {'error': 'Снимок не сохранён'}
+    return {'name': name, 'icon': str(path)}
+
+
+@endpoint
 def add_mod(path: str = '') -> Dict[str, object]:
     """Кладёт открытый мод в библиотеку и отдаёт его постоянный путь"""
     from src.services import mod_library_service

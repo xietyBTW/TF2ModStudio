@@ -78,15 +78,21 @@ def find_reference_smd(directory: str, prefer: str = "") -> Optional[str]:
     def name(path: str) -> str:
         return os.path.basename(path).lower()
 
-    candidates = sorted(
-        p for p in glob.glob(os.path.join(directory or "", "*.smd"))
-        if _LOD_MARKER not in name(p)
-        and not any(kw in name(p) for kw in NON_REFERENCE_SMD_KEYWORDS))
-    if not candidates:
-        return None
     stem = os.path.basename((prefer or "").replace("\\", "/")).lower()
     if stem.endswith(".mdl"):
         stem = stem[:-4]
+
+    def service(path: str) -> bool:
+        # Слово ищем вне имени самой модели: `balloon_animal_pyro.smd` - это
+        # надувной зверь, а не анимация
+        rest = name(path).replace(stem, "") if stem else name(path)
+        return any(kw in rest for kw in NON_REFERENCE_SMD_KEYWORDS)
+
+    candidates = sorted(
+        p for p in glob.glob(os.path.join(directory or "", "*.smd"))
+        if _LOD_MARKER not in name(p) and not service(p))
+    if not candidates:
+        return None
     has_stem = (lambda p: stem in name(p)) if stem else (lambda p: False)
     for group in (
         [p for p in candidates if name(p) in (f"{stem}_reference.smd", f"{stem}.smd")],

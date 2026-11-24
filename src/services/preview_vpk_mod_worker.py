@@ -25,6 +25,7 @@ from src.services.base_worker import BaseWorker
 from src.services.game_vpk_reader import GameVpkReader
 from src.services import game_texture_index, smd_service, vpk_mod_cards, vpk_mod_models
 from src.shared.logging_config import get_logger
+from src.shared.team_names import BLUE_SUFFIXES, is_blue_of
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,8 @@ class PreviewVpkModWorker(BaseWorker):
     animated  = Signal(object, float) # ([frame_paths], framerate) - только если кадров > 1
     blu_ready = Signal(object, float) # BLU командная раскраска - если найдена
     cards_ready = Signal(object)      # [card_dict] - 2D-карточки всех текстур мода
+    #: {меш: {png, frames?, fps?}} - меши с игровой текстурой (у мода её нет)
+    game_meshes_ready = Signal(object)
     materials_ready = Signal(object)  # [material_name] - имена материалов модели (для наложения по мешам)
     skins_ready = Signal(object)      # skin_info - стили модели (skinfamilies) из QC
     #: (ключ оружия, reference SMD мода, своя ли в моде модель) - что именно
@@ -131,6 +134,19 @@ class PreviewVpkModWorker(BaseWorker):
         self._game_reader: Optional[GameVpkReader] = None
         self._p = self._PROGRESS.get(lang, self._PROGRESS['en'])
 
+    @staticmethod
+    def _mod_vtf(pak, vtf_files: List[str], texture: str) -> Optional[bytes]:
+        """Байты VTF мода по пути из VMT (папка-обход в пути не мешает)"""
+        from src.services.mod_textures import texture_key
+
+        want = texture_key(texture)
+        rel = next((v for v in vtf_files
+                    if vpk_mod_models.tail_match(texture_key(v), want)), None)
+        try:
+            return pak[rel].read() if rel else None
+        except Exception:                                    # noqa: BLE001
+            return None
+
     def _game_vtf(self, texture: str) -> Optional[bytes]:
         """Байты игровой текстуры по пути из VMT (карты мода, что смотрят в игру)"""
         self._game_textures_pak()
@@ -201,6 +217,8 @@ class PreviewVpkModWorker(BaseWorker):
                 cards = vpk_mod_cards.build(pak, vtf_files, vmt_files, self._vmt_texts,
                                             self._refs, self._preview_dir, self._game_vtf)
                 vpk_mod_cards.tint(cards, self._vmt_texts, self.misc_vpk_path or '')
+                vpk_mod_cards.animate(cards, pak, self._vmt_texts, self.misc_vpk_path or '',
+                                      self._preview_dir)
                 self._cards = cards
                 # Моделей несколько - карточки только выбранной, а какие её,
                 # станет ясно после разбора (vpk_mod_cards.own ниже)
@@ -298,11 +316,21 @@ class PreviewVpkModWorker(BaseWorker):
                 logger.info(f"VPK мод: карточек выбранной модели {len(shown)} "
                             f"из {len(self._cards)}")
                 self.cards_ready.emit(shown)
+            meshes: dict = {}
             if shown and decomp_dir:
                 meshes, blue = vpk_mod_cards.links(decomp_dir, self._model_materials, shown,
                                                    self._vmt_texts, self.misc_vpk_path or '')
                 logger.info(f"VPK мод: меши -> карточки {meshes}, команды {blue}")
                 self.links_ready.emit(meshes, blue)
+            if decomp_dir and self._model_materials:
+                game = vpk_mod_cards.game_meshes(
+                    decomp_dir, list(self._model_materials), meshes, self._vmt_texts,
+                    self.misc_vpk_path or '',
+                    lambda base: self._mod_vtf(pak, vtf_files, base) or self._game_vtf(base),
+                    self._preview_dir)
+                if game:
+                    logger.info(f"VPK мод: меши с игровой текстурой {sorted(game)}")
+                    self.game_meshes_ready.emit(game)
 
             if self.isInterruptionRequested():
                 return
@@ -540,10 +568,10 @@ class PreviewVpkModWorker(BaseWorker):
 
         from src.data.weapon_model_index import tf2_root_from_misc_vpk
         from src.services import model_decompile_service as mds
-        from src.services.extract_model_service import ExtractModelService
+        from src.services.model_locator import weapon_candidates
 
-        # Класс в fake_mode не важен - _build_paths_to_try смотрит на weapon_key
-        candidates = ExtractModelService._build_paths_to_try(
+        # Класс в режиме не важен - кандидаты строятся по weapon_key
+        candidates = weapon_candidates(
             f"scout_{weapon_key}", weapon_key,
             tf2_root_from_misc_vpk(self.misc_vpk_path),
         )
@@ -720,11 +748,11 @@ class PreviewVpkModWorker(BaseWorker):
         """
         Ищет BLU-вариант текстуры
 
-        Стратегия (в моде):
-          1. QC $texturegroup строка 0 столбец 0 + суффикс _blue
-          2. basename($basetexture) + суффикс _blue
-          3. weapon_key + суффикс _blue (точное совпадение стебля)
-          4. Любой VTF у которого стебель ЗАКАНЧИВАЕТСЯ на _blue (не служебный)
+        Стратегия (в моде), синяя пара по team_names:
+          1. главной текстуры из QC $texturegroup;
+          2. basename($basetexture);
+          3. weapon_key;
+          4. любой синий по имени основной VTF (не служебный)
         Затем:
           5. Игровой VPK - {weapon_key}_blue.vtf
 
@@ -732,71 +760,35 @@ class PreviewVpkModWorker(BaseWorker):
         """
         vtf_data: Optional[bytes] = None
 
-        # Приоритет 1: QC $texturegroup
-        qc_blu_stem: Optional[str] = None
+        # Синяя пара по порядку: главной из QC, $basetexture, имени оружия,
+        # потом любой синий основной VTF (team_names - одно правило имён)
+        reds = []
         if decomp_dir:
             qc_path = self._find_qc_in_dir(decomp_dir)
             if qc_path:
                 try:
                     from src.services.model_build_service import ModelBuildService
                     tg = ModelBuildService.extract_texturegroup_structure(qc_path)
-                    raw = (tg.get('main_texture') or '').strip()
-                    if raw:
-                        base_stem = os.path.splitext(os.path.basename(raw))[0]
-                        qc_blu_stem = (base_stem + "_blue").lower()
-                        logger.info(f"QC BLU texture stem: {qc_blu_stem!r}")
+                    reds.append((tg.get('main_texture') or '').strip())
                 except Exception as exc:
                     logger.debug(f"QC texturegroup для BLU: {exc}")
+        reds += [basetexture_path or '', weapon_key or '']
 
-        if qc_blu_stem:
-            for vtf_rel in vtf_files:
-                vtf_stem = os.path.splitext(os.path.basename(vtf_rel))[0].lower()
-                if vtf_stem == qc_blu_stem:
-                    try:
-                        vtf_data = pak[vtf_rel].read()
-                        logger.info(f"BLU текстура мода (by QC texturegroup): {vtf_rel}")
-                        break
-                    except Exception:
-                        continue
+        def stem_of(path):
+            return os.path.splitext(os.path.basename(path))[0]
 
-        # Приоритет 2: $basetexture + _blue
-        if not vtf_data and basetexture_path:
-            base_stem = os.path.splitext(os.path.basename(basetexture_path))[0]
-            blu_bt_stem = (base_stem + "_blue").lower()
-            for vtf_rel in vtf_files:
-                vtf_stem = os.path.splitext(os.path.basename(vtf_rel))[0].lower()
-                if vtf_stem == blu_bt_stem:
-                    try:
-                        vtf_data = pak[vtf_rel].read()
-                        logger.info(f"BLU текстура мода (by $basetexture_blue): {vtf_rel}")
-                        break
-                    except Exception:
-                        continue
-
-        # Приоритет 3: weapon_key + _blue (точное совпадение стебля)
-        if not vtf_data and weapon_key:
-            wk_blu_stem = (weapon_key + "_blue").lower()
-            for vtf_rel in vtf_files:
-                vtf_stem = os.path.splitext(os.path.basename(vtf_rel))[0].lower()
-                if vtf_stem == wk_blu_stem:
-                    try:
-                        vtf_data = pak[vtf_rel].read()
-                        logger.info(f"BLU текстура мода (by weapon_key_blue): {vtf_rel}")
-                        break
-                    except Exception:
-                        continue
-
-        # Приоритет 4: стебель заканчивается на _blue (не служебный)
-        if not vtf_data:
-            for vtf_rel in vtf_files:
-                stem = os.path.splitext(os.path.basename(vtf_rel))[0].lower()
-                if stem.endswith("_blue") and is_base_vtf(vtf_rel, self._refs):
-                    try:
-                        vtf_data = pak[vtf_rel].read()
-                        logger.info(f"BLU текстура мода (endswith _blue): {vtf_rel}")
-                        break
-                    except Exception:
-                        continue
+        order = [rel for red in reds if red for rel in vtf_files
+                 if is_blue_of(stem_of(red), stem_of(rel))]
+        order += [rel for rel in vtf_files
+                  if stem_of(rel).lower().endswith(BLUE_SUFFIXES)
+                  and is_base_vtf(rel, self._refs)]
+        for vtf_rel in order:
+            try:
+                vtf_data = pak[vtf_rel].read()
+                logger.info(f"BLU текстура мода: {vtf_rel}")
+                break
+            except Exception:
+                continue
 
         # Приоритет 5: игровой VPK
         if not vtf_data and weapon_key and self.textures_vpk_path:

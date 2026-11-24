@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional,
 
 from src.app import part_images
 from src.domain.preview import part_specs
+from src.shared.file_utils import existing_file
 from src.shared.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -41,9 +42,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _existing(path: Optional[str]) -> Optional[str]:
-    """Путь, если файл на месте, иначе None"""
-    return path if path and os.path.isfile(path) else None
+_existing = existing_file
 
 
 def _remove(path: str) -> None:
@@ -229,11 +228,7 @@ class PartsEditor:
 
     def _slot_texture(self, card: str, style: int, team: str) -> Optional[str]:
         """Что лежит на карточке в этом стиле/команде - без разрешения"""
-        from src.domain.preview.texture_state import is_decor
-        t = self.preview.textures
-        if style and not is_decor(card):
-            return _existing(t.skin_overrides.get(style, {}).get(card))
-        return _existing(t.textures.get(team, {}).get(card))
+        return self.preview.textures.own_at(card, style, team)
 
     def _put_slot_texture(self, card: str, path: Optional[str],
                           style: int, team: str) -> None:
@@ -1337,32 +1332,15 @@ class PartsEditor:
             own = self._slot_texture(card, style, team)
         if own:
             return own
-        if style:
-            # Оригинал стиля, у материала части - оригинал стиля исходного.
-            # Не `style_texture`: она отдаёт правку стиля, а на покрашенном
-            # слоте это прошлая склейка - мазки копились бы слоями
-            originals = t.style_game_tex.get(style, {})
-            game = (_existing(originals.get(card))
-                    or _existing(originals.get(t.part_cards.get(card, card))))
-            if game:
-                return game
-        with self._as_team(team):
-            return t.game_base(card)
-
-    def _as_team(self, team: str):
-        """Временно смотрит на состояние глазами другой команды: `game_base`
-        и разрешение текстур читают активную команду"""
-        t = self.preview.textures
-
-        @contextlib.contextmanager
-        def swap():
-            was = t.active_team
-            t.active_team = team
-            try:
-                yield
-            finally:
-                t.active_team = was
-        return swap()
+        # Синяя с «Как красная» - под мазками основа красной, а не её
+        # склейка: иначе красные мазки уехали бы и в синюю
+        if t.inherited(card, style, team):
+            from src.shared.constants import Team
+            return self._compose_base(card, t.red_row(style), Team.RED)
+        # Иначе то же, что карточка показывает без своей картинки: у стиля
+        # его оригинал (кровь гильотины). Столбец, который стиль не меняет,
+        # в кадре носит игровую базу
+        return t.underlay(card, style, team) or t.game_base(card, team)
 
     def _part_layers(self, model: Any, obj_mat: str, slot: str,
                      skip: Optional[tuple] = None,
@@ -1706,9 +1684,7 @@ class PartsEditor:
         анимации сюда не попадают - их склейка и так полная
         """
         with self._lock:
-            # Под замком: `_compose_base` на время смотрит глазами другой
-            # команды (`_as_team`), а склейки теперь кладутся из других
-            # потоков - и `set_team` посреди этого окна откатился бы
+            # Под замком: склейки кладутся из других потоков
             return self._bake_plan(paths)
 
     def _bake_plan(self, paths: Iterable[Optional[str]]) -> Dict[str, Any]:

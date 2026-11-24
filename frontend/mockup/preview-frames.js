@@ -4,7 +4,7 @@
 
 import * as api from './api.js';
 import { t } from './i18n.js';
-import { stage } from './stage.js';
+import { sayError, stage } from './stage.js';
 import { bindAlbum, goTo, SINGLE_TEX } from './album.js';
 import { lastView, applyView } from './preview.js';
 import { cardMenu } from './texture-export.js';
@@ -62,10 +62,18 @@ export function frameNode(name) {
   // Своя картинка снимается тем же путём, что и кладётся: куда именно
   // (команда, стиль), решает домен
   const reset = async () => applyView(await api.setTexture(name, null));
-  fig.addEventListener('contextmenu',
-    (e) => cardMenu(e, name, (lastView?.own_cards || []).includes(name),
-                    Boolean(fig.querySelector('.frame__img img')),
-                    (lastView?.uploaded_cards || []).includes(name) ? reset : null));
+  // Карточка австралия: обычная текстура в золото этого оружия
+  const gild = async () => {
+    const res = await api.gildFromBase();
+    if (res.error) sayError(res.error); else applyView(res);
+  };
+  fig.addEventListener('contextmenu', (e) => {
+    const variant = lastView?.variant_choice;
+    cardMenu(e, name, (lastView?.own_cards || []).includes(name),
+             Boolean(fig.querySelector('.frame__img img')),
+             (lastView?.uploaded_cards || []).includes(name) ? reset : null,
+             variant?.card === name && variant.can_gild ? gild : null);
+  });
   return fig;
 }
 

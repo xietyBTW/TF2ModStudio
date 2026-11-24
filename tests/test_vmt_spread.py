@@ -6,6 +6,7 @@
 """
 
 import unittest
+from types import SimpleNamespace
 
 from src.app.materials_editor import MaterialsEditor
 from src.services import vmt_effects as fx
@@ -92,9 +93,10 @@ class SaveAllTests(unittest.TestCase):
         ed.open_vmt = lambda m, lang="ru": {"material": m, "content": self.store[m],
                                             "original": GAME}
         ed.save_vmt = self._save
+        ed._host = SimpleNamespace(_autosave=lambda: None)
         self.ed = ed
 
-    def _save(self, material, content, original="", lang="ru"):
+    def _save(self, material, content, original="", lang="ru", autosave=True):
         self.store[material] = content
         return {"material": material, "content": content, "edited": True}
 

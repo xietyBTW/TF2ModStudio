@@ -8,7 +8,7 @@
 
 import * as api from './api.js';
 import { ask } from './ask.js';
-import { chooseFiles } from './util.js';
+import { chooseFile } from './util.js';
 import { t } from './i18n.js';
 import { say, sayBusy, sayError, viewer, withViewer } from './stage.js';
 import { applyView, lastView, refreshView, reloadSceneIfFp } from './preview.js';
@@ -78,9 +78,22 @@ export async function dropModel() {
 // дальнейшее, поэтому спрашиваем до показа
 
 /**
+ * Файл модели. В окне приложения - системный выбор с фильтром по тому, что
+ * приложение умеет (список у Python), и путь настоящий: MTL и текстуры OBJ,
+ * .bin у glTF находятся рядом сами. В обычном браузере - свой выбор с тем
+ * же фильтром и загрузка копии. null - отмена
+ */
+async function chooseModelPath() {
+  const res = await api.pickFile('model');
+  if (res.error) { sayError(res.error); return null; }
+  if (res.path !== undefined) return res.path || null;
+  const file = await chooseFile((res.extensions || []).join(','));
+  return file ? api.upload(file) : null;
+}
+
+/**
  * SMD - из Blender; OBJ/GLB/glTF - «из интернета», их приложение разбирает
- * само. Файлы рядом (MTL, .bin, картинки) выбирают вместе с моделью: все
- * ложатся в одну папку, и ссылки из OBJ/glTF находят их.
+ * само
  */
 export async function replaceModel() {
   // У оружия с гирляндами заменить можно и её: каждая замена своя, так что
@@ -89,14 +102,10 @@ export async function replaceModel() {
                                 (lastView || {}).festive_options || [], 'Выбрать файл',
                                 shellGroups(lastView || {}, false));
   if (kind === null) return;
-  const files = await chooseFiles(
-    '.smd,.obj,.glb,.gltf,.mtl,.bin,.png,.jpg,.jpeg,.webp,.tga');
-  const file = files.find((f) => /\.(smd|obj|glb|gltf)$/i.test(f.name));
-  if (!file) { if (files.length) sayError('Среди выбранных файлов нет модели'); return; }
+  const path = await chooseModelPath();
+  if (!path) return;
 
-  say(`Конвертация ${file.name}…`);
-  for (const extra of files) if (extra !== file) await api.upload(extra);
-  const path = await api.upload(file);
+  say(`Конвертация ${path.split(/[\\/]/).pop()}…`);
   if (kind.startsWith(SHELL)) { await replaceShell(kind.slice(SHELL.length), path); return; }
   if (kind) { await replaceGarland(kind, path); return; }
   const first = await api.loadCustomModel(path);

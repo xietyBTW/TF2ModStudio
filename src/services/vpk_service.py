@@ -21,12 +21,8 @@ from .tf2_paths import TF2Paths
 from .debug_service import DebugService
 from .smd_service import SMDService
 from src.data.weapons import SPECIAL_MODES
-from src.data.player_hands import HAND_MODE_KEYS
-from src.data.player_characters import (
-    PLAYER_BODY_MODE_KEYS,
-    SPY_MASK_MODE_KEY,
-    SPY_MDL_PATH,
-)
+from src.data.translations import tr
+from src.data.item_kinds import kind_of
 from src.shared.logging_config import get_logger
 from src.shared.constants import DirectoryPaths, EXTRA_TEX_USE_GAME_ORIGINAL
 from src.shared.file_utils import ensure_directory_exists, copy_file_safe
@@ -131,7 +127,7 @@ class VPKService:
             emit_progress(5, t.get('build_init', 'Initializing build...'))
 
             # Кастомный мод (пользователь загрузил готовый VPK)
-            if mode == "custom":
+            if kind_of(mode).is_mod:
                 from src.services.custom_vpk_service import CustomVPKService
                 if not custom_vpk_source_path:
                     return False, t.get('error_no_custom_vpk', 'No custom VPK file loaded.'), False
@@ -184,7 +180,7 @@ class VPKService:
 
             is_special_mode = mode in SPECIAL_MODES
 
-            _sub_label_init = "Preparing..." if language == "en" else "Подготовка..."
+            _sub_label_init = tr(language, 'build_sub_preparing')
             emit_sub(-1, _sub_label_init)
 
             # Прогресс эмитится самим build_vpk на реальных границах стадий
@@ -213,7 +209,7 @@ class VPKService:
                 return False, t.get('build_cancelled', 'Build cancelled by user'), True
 
             if success:
-                emit_sub(100, "Done" if language == "en" else "Готово")
+                emit_sub(100, tr(language, 'build_sub_done'))
                 emit_progress(100, t.get('build_completed', 'Build completed'))
                 return True, message, False
 
@@ -297,9 +293,8 @@ class VPKService:
         иначе мод игнорируется. VTF не дублируются - зеркальный VMT указывает на
         те же файлы (по console\\-пути внутри мод-VPK)
         """
-        from src.data.player_hands import HAND_MODE_KEYS as _HAND_MODE_KEYS
         from src.data.weapon_quirks import MIRROR_VMT_WEAPON_KEYS as _MIRROR_KEYS
-        if not ((mode in _HAND_MODE_KEYS or weapon_key in _MIRROR_KEYS)
+        if not ((kind_of(mode).is_hands or weapon_key in _MIRROR_KEYS)
                 and original_cdmaterials_path):
             return
         orig_vtf_dir = VPKService._mirror_dir(ctx, original_cdmaterials_path)
@@ -381,23 +376,22 @@ class VPKService:
             (weapon_key, None) при успехе либо (None, error_message), если для
             режима рук не задана arm-модель
         """
-        if mode == "hat" and hat_mdl_path:
+        from src.domain.preview.model_key import model_key_for
+
+        kind = kind_of(mode)
+        if kind.is_hat and hat_mdl_path:
             weapon_key = Path(hat_mdl_path).stem
             logger.info(f"[HAT] hat_mdl_path={hat_mdl_path!r}  →  weapon_key={weapon_key!r}")
             return weapon_key, None
-        if mode in HAND_MODE_KEYS:
-            from src.data.player_hands import HAND_MODES as _HAND_MODES
-            arm_key = _HAND_MODES.get(mode, {}).get('arm_model', '')
+        # Модель рук, тела и масок знает режим (тем же правилом, что у превью)
+        if kind.is_hands:
+            arm_key = model_key_for(mode)
             if not arm_key:
                 return None, f"No arm_model defined for hand mode: {mode}"
             return arm_key, None
-        if mode in PLAYER_BODY_MODE_KEYS:
-            from src.data.player_characters import PLAYER_CHARACTERS as _PC
-            mdl_path = _PC.get(mode, {}).get('mdl_path', '')
+        if kind.model_by_path and not kind.is_hat:
+            mdl_path = model_key_for(mode)
             return (Path(mdl_path).stem if mdl_path else mode), None
-        if mode == SPY_MASK_MODE_KEY:
-            # Маски маскировки: тот же MDL, что и для скина шпиона
-            return Path(SPY_MDL_PATH).stem, None
         return (mode.split('_', 1)[1] if '_' in mode else mode), None
 
     @staticmethod
@@ -475,7 +469,7 @@ class VPKService:
 
         # Для шапок с %s-плейсхолдером: обновляем weapon_key на реальный стем
         # (all_domination_%s -> all_domination_heavy), иначе кэш и имена файлов сломаются
-        if mode == "hat" and hat_mdl_path and "%s" in hat_mdl_path:
+        if kind_of(mode).class_models and hat_mdl_path and "%s" in hat_mdl_path:
             weapon_key = Path(found_mdl_path).stem
             logger.info(f"Hat weapon_key обновлён: {weapon_key}")
 
@@ -483,7 +477,7 @@ class VPKService:
         # в списке гирлянда выглядит как оружие, но перекрашивается только она.
         # Молчать нельзя: пользователь красит «Праздничный пулемёт» и не видит
         # изменений на стволе (items_game: "attached_models")
-        if mode != "hat" and VPKService._is_attachment_only(weapon_key, tf2_misc_vpk):
+        if not kind_of(mode).is_hat and VPKService._is_attachment_only(weapon_key, tf2_misc_vpk):
             ctx.warn(
                 f"'{weapon_key}' - это навесное украшение (гирлянда), а не сам "
                 f"ствол: игра рисует его поверх базового оружия. Красится только "
@@ -683,7 +677,7 @@ class VPKService:
             (None, _ModelSource) - успех
         """
         # Для рук замена SMD-модели не поддерживается
-        replace_model_enabled = False if r.mode in HAND_MODE_KEYS else r.replace_model_enabled
+        replace_model_enabled = kind_of(r.mode).replaceable_model and r.replace_model_enabled
 
         # Пропускаем если model_ready_path задан - пользователь уже указал готовый файл.
         # Диалог выбора файла показываем здесь, после декомпиляции (чтобы знать куда копировать)
@@ -723,7 +717,7 @@ class VPKService:
         if not texture_filename:
             return t['error_texturegroup_not_extracted'].format(qc_path=qc_path), None
 
-        if r.mode == "hat":
+        if kind_of(r.mode).is_hat:
             logger.info(
                 f"[HAT BUILD NAMES]  qc={qc_path!r}\n"
                 f"  weapon_key          = {weapon_key!r}\n"
@@ -733,11 +727,8 @@ class VPKService:
             )
             # Показываем пользователю оригинальные имена из игры (не имена файла-замены)
             if replace_model_smd_path and os.path.basename(replace_model_smd_path):
-                emit_sub(-1,
-                    f"Original game names: model={weapon_key}, texture={texture_filename}"
-                    if r.language == "en" else
-                    f"Оригинальные имена из игры: модель={weapon_key}, текстура={texture_filename}"
-                )
+                emit_sub(-1, tr(r.language, 'build_sub_game_names',
+                                model=weapon_key, texture=texture_filename))
 
         return None, _ModelSource(
             found_mdl_path=found_mdl_path,
@@ -848,24 +839,16 @@ class VPKService:
         flags = r.flags or []
         vtf_options = r.vtf_options or {}
         panel_extra_textures = r.panel_extra_textures or {}
-        strip_paints = (r.mode == "hat" and not r.hat_apply_game_paints)
+        strip_paints = (kind_of(r.mode).asks_game_paints and not r.hat_apply_game_paints)
 
         # Эффективные настройки на материал: пер-текстурный оверрайд
         # поверх глобальных (size/format/flags/options), без оверрайда -
         # глобальные. Замыкание нужно и для главной текстуры, и для
         # panel-extra текстур дальше по коду
-        from src.data.texture_overrides import effective_settings as _eff_settings
-        from src.data.texture_overrides import own_settings as _own_settings
-        _global_tex = {'size': r.size, 'format': r.format_type,
-                       'flags': flags, 'options': vtf_options}
-        material_settings = r.material_settings or {}
-
         def _eff(_mat):
             # Имя карточки и материала модели расходятся (Material.001,
             # пустой ключ главного у одноматериальной модели)
-            own = _own_settings(material_settings, _mat, texture_filename)
-            e = _eff_settings(_global_tex, own)
-            return e['size'], e['format'], e['flags'], e['options']
+            return r.vtf_for(_mat, texture_filename)
 
         # Два контекста на всю запись материалов: куда писать и где искать
         # оригиналы (slots) + как рендерить VTF (tex_ctx), а не дюжина
@@ -1035,7 +1018,7 @@ class VPKService:
         # непересобранный класс грузит оригинальную текстуру игры.
         # Источник: явный список выбранных классов (model_player_per_class)
         # либо legacy %s-шаблон в hat_mdl_path
-        if r.mode == "hat":
+        if kind_of(r.mode).class_models:
             _extra_targets = None
             if r.hat_class_models and len(r.hat_class_models) > 1:
                 # Все выбранные классы, КРОМЕ primary (он уже собран)
@@ -1064,7 +1047,7 @@ class VPKService:
         # Этап 3: доп. ИЗМЕНЁННЫЕ стили-модели шапки - каждый своей
         # моделью и своей текстурой в тот же мод (активный стиль уже
         # собран основным пайплайном выше)
-        if r.mode == "hat" and r.hat_style_builds:
+        if kind_of(r.mode).styles_are_models and r.hat_style_builds:
             # Текстура активного стиля уже записана основным пайплайном -
             # передаём её, чтобы поймать стили, делящие один материал
             _written = {
@@ -1161,9 +1144,7 @@ class VPKService:
         if not built:
             ctx.cleanup(on_error=True, keep_on_error=r.keep_temp_on_error,
                         debug_mode=r.debug_mode)
-            return False, ("Lights could not be built - see the log"
-                           if r.language == 'en' else
-                           "Гирлянду собрать не удалось - подробности в журнале")
+            return False, tr(r.language, 'build_lights_failed')
         return True, ''
 
     @staticmethod
@@ -1274,7 +1255,7 @@ class VPKService:
             # Просто кладём mask_*.vtf/vmt по оригинальному пути игры:
             #   materials/models/player/spy/mask_*.vtf
             # Это прямой override, как у SPECIAL_MODES
-            if mode == SPY_MASK_MODE_KEY:
+            if kind_of(mode).is_spy_mask:
                 from src.services.spy_mask_build import build_spy_masks_vpk
                 result = build_spy_masks_vpk(
                     ctx=ctx,
@@ -1291,13 +1272,16 @@ class VPKService:
                     keep_temp_on_error=keep_temp_on_error,
                     debug_mode=debug_mode,
                     t=t,
+                    vtf_for=r.vtf_for,
                 )
                 return result
 
             # Для critHIT и прочих спец режимов - просто текстуры, без всей этой возни с моделями
             if mode in SPECIAL_MODES:
+                # Одна карточка - главная: её свои настройки под пустым ключом
+                sp_size, sp_fmt, sp_flags, sp_opts = r.vtf_for('')
                 result = BuildService.build_special_mode_vpk(
-                    ctx, mode, image_path, size, format_type, flags, vtf_options,
+                    ctx, mode, image_path, sp_size, sp_fmt, sp_flags, sp_opts,
                     keep_temp_on_error, debug_mode, language, custom_vtf_path
                 )
                 if not result[0]:
@@ -1339,7 +1323,7 @@ class VPKService:
             if is_cancelled():
                 return cancelled_result(ctx)
             emit_progress(80, t.get('build_packing', 'Creating VPK file...'))
-            emit_sub(-1, "Packing VPK..." if language == "en" else "Упаковка VPK...")
+            emit_sub(-1, tr(language, 'build_sub_packing'))
             # Содержимое vpkroot: краткая сводка всегда, полный список - только в
             # debug-режиме (сотни строк на сборку засоряли tf2sg.log)
             if ctx.vpkroot_dir.exists():

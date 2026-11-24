@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from src.data.item_kinds import kind_of
 from src.services import normal_map, qc_skin_parser
 from src.services.texture_service import TextureService
 from src.services.vmt_service import VMTService
@@ -171,7 +172,7 @@ def _write_main_vmt(
         logger.info(f"Создан VMT файл из шаблона: {vmt_path}")
 
     # Для шапок: если пользователь не хочет красок из игры - удаляем прокси красок
-    if mode == "hat" and not hat_apply_game_paints:
+    if kind_of(mode).asks_game_paints and not hat_apply_game_paints:
         VMTService.remove_paint_proxies(str(vmt_path))
         logger.info(f"Удалены прокси красок из VMT файла шапки: {vmt_path}")
 

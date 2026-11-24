@@ -1,7 +1,7 @@
 /*
  * Открытие чужого мода: VPK, ZIP или папка, и какие его модели показать
  *
- * Карточки библиотеки рисует каталог (showModLibrary), здесь - путь от файла
+ * Карточки библиотеки рисует catalog-library.js (showModLibrary), здесь - путь от файла
  * до мода в кадре. Пополнив библиотеку, модуль говорит об этом событием
  * `mods:changed`: каталог перерисует её сам, а этот модуль о нём не знает.
  */
@@ -9,6 +9,7 @@
 import * as api from './api.js';
 import { ask } from './ask.js';
 import { say, sayError, withViewer } from './stage.js';
+import { shootCover } from './cover-shot.js';
 import { chooseFile } from './util.js';
 import { closeCat } from './layout.js';
 import { setMode } from './controls.js';
@@ -23,8 +24,11 @@ import { clearPreview } from './preview.js';
  * источником.
  *
  * Возвращает, открылся ли мод: работу по моду восстанавливают только поверх него
+ *
+ * shoot - снять модель обложкой библиотеки. Только при открытии самого мода:
+ * у работы поверх него лягут правки, а обложка - про мод как он есть
  */
-export async function openMod(mod) {
+export async function openMod(mod, { shoot = false } = {}) {
   const model = await pickModModel(mod);
   if (model === null) return false;
   // Мод-шапка живёт на странице шапок: там она на голове, на персонаже и с
@@ -41,6 +45,8 @@ export async function openMod(mod) {
   // крутит кубик, а ход работы пишет подпись страницы. Без этого две надписи
   // ложились одна на другую
   withViewer((w) => w.showLoading());
+  // Ждать вьювер начинает ДО загрузки: снимает он первую модель после вызова
+  if (shoot) shootCover({ lay: !hat }, (png) => api.saveModShot(mod.name, png));
   const res = await api.loadVpkMod(mod.path, model);
   if (res.error) {
     sayError(res.error);
@@ -113,8 +119,11 @@ function rememberChoice(name, picked) {
 /** Выбирает файл с диска: он попадает в библиотеку и сразу открывается */
 export async function pickVpkMod() {
   const file = await chooseFile('.vpk,.zip');
-  if (!file) return;
+  if (file) await openModFile(file);
+}
 
+/** Файл мода - в библиотеку и сразу на экран */
+async function openModFile(file) {
   say(`Разбор ${file.name}…`);
   // Сохраняем ДО открытия: временную копию, в которую браузер положил файл,
   // рано или поздно чистят, и вернуться к моду было бы не по чему
@@ -122,7 +131,41 @@ export async function pickVpkMod() {
   if (/\.zip$/i.test(file.name)) { await importAndOpen(path); return; }
   const saved = await api.addMod(path);
   if (saved.error) { sayError(saved.error); return; }
-  await openMod({ name: saved.name, path: saved.path });
+  await openMod({ name: saved.name, path: saved.path }, { shoot: true });
+}
+
+const MOD_FILE = /\.(vpk|zip)$/i;
+
+/**
+ * Брошенные на библиотеку файлы. Один - открывается, как выбранный кнопкой.
+ * Несколько - просто ложатся в библиотеку: открыть всё разом нельзя, а
+ * выбирать за человека, какой показать, незачем
+ *
+ * Папку так не принять: из броска страница не узнаёт путь к ней на диске
+ */
+export async function dropModFiles(transfer) {
+  const folder = [...(transfer.items || [])].some(
+    (item) => item.webkitGetAsEntry?.()?.isDirectory);
+  const files = [...(transfer.files || [])].filter((f) => MOD_FILE.test(f.name));
+  if (!files.length) {
+    say(folder ? 'Папку мода откройте ссылкой «или папку»' : 'Сюда бросают VPK или ZIP');
+    return;
+  }
+  if (files.length === 1) { await openModFile(files[0]); return; }
+
+  for (const file of files) {
+    say(`Разбор ${file.name}…`);
+    try {
+      const path = await api.upload(file);
+      const res = MOD_FILE.exec(file.name)[1].toLowerCase() === 'zip'
+        ? await api.importMod(path) : await api.addMod(path);
+      if (res.error) sayError(res.error);
+    } catch (err) {
+      sayError(err.message);
+    }
+  }
+  say('');
+  document.dispatchEvent(new Event('mods:changed'));
 }
 
 /** Папка мода, как её кладут в tf/custom: пакуется в VPK библиотеки */
@@ -154,7 +197,7 @@ async function importAndOpen(path) {
     mod = mods.find((m) => m.name === name);
     if (!mod) return;
   }
-  await openMod(mod);
+  await openMod(mod, { shoot: true });
 }
 
 /**

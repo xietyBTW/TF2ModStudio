@@ -544,51 +544,34 @@ class SpriteBatch {
     scene.add(this.mesh);
   }
 
-  /** Квад и инстансные атрибуты под текущую ёмкость. При росте - новая
-      геометрия, а старая освобождается: three (r160) в dispose отпускает
-      только атрибуты, висящие на геометрии сейчас, и заменённые через
-      setAttribute буферы оставались в видеопамяти до закрытия окна */
+  /** Геометрия под ёмкость - целиком новая: three (r160) в dispose отпускает
+      только текущие атрибуты, и подменённые буферы висели в видеопамяти */
   _buildGeometry() {
     this.geometry = new THREE.InstancedBufferGeometry();
     // Квад ±1; uv: top-left origin (flipY=false)
-    const positions = new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]);
-    const uvs       = new Float32Array([ 0,  1,     1,  1,     1, 0,      0, 0]);
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([-1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0]), 3));
+    this.geometry.setAttribute('uv', new THREE.BufferAttribute(
+      new Float32Array([0, 1,  1, 1,  1, 0,  0, 0]), 2));
     this.geometry.setIndex([0, 1, 2, 0, 2, 3]);
-    this._allocAttributes();
-  }
-
-  _allocAttributes() {
     const n = this.capacity;
-    const mk = (arr, itemSize) => {
-      const a = new THREE.InstancedBufferAttribute(arr, itemSize);
+    const mk = (name, itemSize) => {
+      const a = new THREE.InstancedBufferAttribute(new Float32Array(n * itemSize), itemSize);
       a.setUsage(THREE.DynamicDrawUsage);
+      this.geometry.setAttribute(name, a);
       return a;
     };
-    this.aPos    = mk(new Float32Array(n * 3), 3);
-    this.aRadius = mk(new Float32Array(n), 1);
-    this.aRot    = mk(new Float32Array(n), 1);
-    this.aColor  = mk(new Float32Array(n * 3), 3);
-    this.aAlpha  = mk(new Float32Array(n), 1);
-    this.aUV0    = mk(new Float32Array(n * 4), 4);
-    this.aUV1    = mk(new Float32Array(n * 4), 4);
-    this.aBlend  = mk(new Float32Array(n), 1);
-    this.aOrient = mk(new Float32Array(n), 1);
-    this.aRight  = mk(new Float32Array(n * 3), 3);
-    this.aUp     = mk(new Float32Array(n * 3), 3);
-    const g = this.geometry;
-    g.setAttribute('iPos', this.aPos);
-    g.setAttribute('iRadius', this.aRadius);
-    g.setAttribute('iRot', this.aRot);
-    g.setAttribute('iColor', this.aColor);
-    g.setAttribute('iAlpha', this.aAlpha);
-    g.setAttribute('iUV0', this.aUV0);
-    g.setAttribute('iUV1', this.aUV1);
-    g.setAttribute('iBlend', this.aBlend);
-    g.setAttribute('iOrient', this.aOrient);
-    g.setAttribute('iRight', this.aRight);
-    g.setAttribute('iUp', this.aUp);
+    this.aPos    = mk('iPos', 3);
+    this.aRadius = mk('iRadius', 1);
+    this.aRot    = mk('iRot', 1);
+    this.aColor  = mk('iColor', 3);
+    this.aAlpha  = mk('iAlpha', 1);
+    this.aUV0    = mk('iUV0', 4);
+    this.aUV1    = mk('iUV1', 4);
+    this.aBlend  = mk('iBlend', 1);
+    this.aOrient = mk('iOrient', 1);
+    this.aRight  = mk('iRight', 3);
+    this.aUp     = mk('iUp', 3);
   }
 
   update(sprites) {

@@ -37,6 +37,9 @@ from src.app.preview_controller import (
     ViewmodelController, VpkModController,
 )
 from src.domain.preview.session import PreviewSession
+from src.domain.preview.vmt_edits import VmtEdits
+from src.data.item_kinds import kind_of
+from src.shared.file_utils import existing_file
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -66,9 +69,7 @@ def _variant_label(smd_path: Optional[str], weapon_key: str) -> str:
     return name or 'основной'
 
 
-def _existing_path(path: Optional[str]) -> Optional[str]:
-    """Путь, если файл на месте, иначе None"""
-    return path if path and os.path.isfile(path) else None
+_existing_path = existing_file
 
 
 def _stamps(*texture_maps: Dict[str, str]) -> Dict[str, int]:
@@ -129,6 +130,9 @@ class AppSession:
         self.materials = MaterialsEditor(self)
         self.skybox = SkyboxController(self.preview)
         self.vpk_mod = VpkModController(self.preview)
+        # Правки VMT - в работе открытого предмета (domain/preview/vmt_edits)
+        from src.services.edited_vmt_service import EditedVMTService
+        EditedVMTService.bind(lambda: self.preview.vmt)
         #: Сборка мода и вопросы её воркера
         self.building = BuildEditor(self)
         #: Воркер экспорта UV-шаблона
@@ -264,13 +268,17 @@ class AppSession:
         d.render_hints.connect(lambda h: self._put('render_hints', hints=h or {}))
         v.render_hints.connect(lambda h: self._put('render_hints', hints=h or {}))
         v.failed.connect(self._fail)
+        # Файлы игры, переписанные прелоадером: странице - чтобы сказать
+        from src.services import game_integrity
+        game_integrity.on_change(
+            lambda: self._put('game_integrity', **game_integrity.summary()))
 
         # Чужой мод из VPK: своя модель и свои карточки
         m = self.vpk_mod
         m.progress.connect(lambda text: self._put('progress', text=text))
         m.ready.connect(self._on_model_ready)
-        m.animated.connect(
-            lambda frames, fps: self._put('animated', frames=list(frames), fps=fps))
+        # Анимированные текстуры мода крутятся каждая на своих мешах, через
+        # показ (vpk_mod.animations): общий кадр на все меши красил и чужие
         m.cards.connect(lambda cards: self._put('mod_cards', cards=list(cards)))
         # Имена мешей меняют то, КУДА ложатся текстуры мода: состояние уже
         # обновлено контроллером, странице достаточно перечитать показ
@@ -449,9 +457,13 @@ class AppSession:
         # путь нельзя, поэтому берём модель первого класса, а весь набор
         # запоминаем для сборки.
         # Смена стиля - до подмены моделей: снимок делается ПРОШЛЫМ набором
-        self._remember_hat_style(style if mode == 'hat' else None,
-                                 hat if mode == 'hat' else '')
-        self._hat_models = dict(per_class or {}) if mode == 'hat' else {}
+        kind = kind_of(mode)
+        # Правки VMT - на всю шапку: со стилем той же шапки они переходят
+        carried = (self.preview.vmt if kind.styles_are_models and style is not None
+                   and hat == self._hat_key and not restore else None)
+        self._remember_hat_style(style if kind.styles_are_models else None,
+                                 hat if kind.styles_are_models else '')
+        self._hat_models = dict(per_class or {}) if kind.class_models else {}
         if model_key and '%s' in model_key and self._hat_models:
             model_key = next(iter(self._hat_models.values()))
 
@@ -502,6 +514,8 @@ class AppSession:
         with self._lock:
             self.preview.apply_user_edits(
                 (self._hat_styles.get(self._hat_style) or {}).get('edits'))
+            if carried is not None:
+                self.preview.vmt = carried.merged(self.preview.vmt)
         # Показанный стиль снимком не держим: его правда - живые правки, а
         # снимок остаётся от прошлого ухода и вернул бы старое поверх нового
         self._hat_styles.pop(self._hat_style, None)
@@ -518,7 +532,7 @@ class AppSession:
             # так что ждать своей очереди воркеру почти не придётся. У оружия
             # `style` - строка скина, на которой открыть (Критокола у Бонка)
             self.skins.detect(weapon_key, mode, paths['misc_vpk'], lang=lang,
-                              start_skin=0 if mode == 'hat' else int(style or 0))
+                              start_skin=0 if kind.styles_are_models else int(style or 0))
         self._mode = mode
         self.decor.show_baked(lang)
         return {'started': True, 'mode': mode, 'weapon_key': weapon_key,
@@ -548,7 +562,7 @@ class AppSession:
             main = t.stable_main()
             self._hat_styles[self._hat_style] = {
                 'models': models,
-                'edits': self.preview.user_edits(),
+                'edits': VmtEdits.without(self.preview.user_edits()),
                 # Главную текстуру считаем здесь: в снимке лежат имена
                 # материалов, а какой из них главный, знает только живой сеанс
                 'image_path': t.uploaded_for_mat(main) if main else None,
@@ -584,6 +598,8 @@ class AppSession:
                 'image_path': snap.get('image_path'),
                 'textures': textures,
                 'blu_like_red': list(edits.get('blu_like_red') or ()),
+                # Свои настройки VTF карточек этого стиля (шестерёнка)
+                'texture_overrides': dict(edits.get('texture_overrides') or {}),
                 # Материалы частей черновик не переносит - сборка скажет об этом
                 'part_materials': bool(edits.get('part_materials')),
             })
@@ -837,7 +853,8 @@ class AppSession:
         paths = self.tf2_paths()
         if 'error' in paths:
             return paths
-        if getattr(self, '_mode', '') != 'hat':
+        # Своих моделей по классам нет - их собирает мод или оружие на классе
+        if not kind_of(getattr(self, '_mode', '')).class_models:
             from src.app import mod_hat, weapon_wear
             args = (mod_hat.scene_args(self, paths['root'], lang) if mod_hat.is_hat(self.preview)
                     else weapon_wear.scene_args(self, paths['root']))
@@ -878,9 +895,7 @@ class AppSession:
         проход дешёвый
         """
         from src.data.hats_parser import parse_hats
-
-        def norm(p) -> str:
-            return str(p or '').replace('\\', '/').lower()
+        from src.shared.game_paths import game_path as norm
 
         keys = {norm(k) for k in (keys or (self._hat_key, self.preview.weapon_key))} - {''}
         for h in parse_hats(tf2_root, lang):
@@ -975,29 +990,39 @@ class AppSession:
             return
         self._put_skybox()
 
-    def load_skybox(self, sky_name: str) -> Dict[str, Any]:
-        """Готовит грани стокового неба для показа кубмапой"""
+    def load_skybox(self, sky_name: str, restore: bool = False) -> Dict[str, Any]:
+        """Готовит грани стокового неба для показа кубмапой. `restore` -
+        открыть с сохранённой работой по этому небу"""
         paths = self.tf2_paths()
         if 'error' in paths:
             return paths
 
-        from src.data.skyboxes import SKY_ALL_MAPS_KEY, SKY_PREVIEW_DEFAULT
+        from src.data.skyboxes import SKY_ALL_MAPS_KEY, SKY_PREVIEW_DEFAULT, SKYBOX_MODE
 
-        self._mode = 'skybox'
+        self._mode = SKYBOX_MODE
         # Какое небо перекрывать - знает сборка: без имени мод собрался бы
         # пустым (см. validate_skybox_request). «Все карты» - ключ, а не
         # небо: сборка развернёт его в полный список, а превью показывает
         # одно стоковое небо - своего у пункта нет
         self._sky_name = sky_name
+        self._hat_key, self._vpk_mod_path = '', None
         with self._lock:
             self.preview.mode.enter(_skybox_mode())
+            # Небо - предмет: у другого неба свои грани и панорама, и работа
+            # пишется под его именем, а не под прошлым оружием
+            self.preview.begin_item(sky_name, SKYBOX_MODE)
             self._forget_model()
+        if restore:
+            self._restore_work()
         self._edits_reset()
         # Небеса лежат и в hl2/ - оттуда же и грани, иначе половина списка
         # показывалась бы пустой (см. TF2Paths.skybox_vpks)
         from src.services.tf2_paths import TF2Paths
         shown = SKY_PREVIEW_DEFAULT if sky_name == SKY_ALL_MAPS_KEY else sky_name
         self.skybox.load(shown, TF2Paths.skybox_vpks(paths['root']))
+        pano = self.preview.textures.skybox_pano()
+        if pano:
+            self.skybox.split(pano)
         return {'started': True, 'sky': sky_name}
 
     def set_texture(self, material: str, path: Optional[str]) -> Dict[str, Any]:
@@ -1479,7 +1504,7 @@ class AppSession:
         with self._lock:
             key = self._work_key()
             restored = work_keeper.restore(self.preview, key, asked)
-            if getattr(self, '_mode', '') == 'hat':
+            if kind_of(getattr(self, '_mode', '')).styles_are_models:
                 restored = self._restore_hat_styles(key, asked, restored) or restored
         return restored
 
@@ -1496,15 +1521,17 @@ class AppSession:
         snaps = work_keeper.styles(key, asked)
         saved = work_store.item_of(key)
         left = int(saved.get('style') or 0)
+        vmt = self.preview.vmt          # правки VMT - на всю шапку, не на стиль
         if restored and left != self._hat_style:
             models = (dict(saved.get('per_class') or {})
                       or ({'': saved['model']} if saved.get('model') else {}))
-            snaps[left] = {'models': models, 'edits': self.preview.user_edits(),
-                           'image_path': None}
+            snaps[left] = {'models': models, 'image_path': None,
+                           'edits': VmtEdits.without(self.preview.user_edits())}
             self.preview.forget_user_edits()
         mine = snaps.pop(self._hat_style, None)
         if mine:
             self.preview.apply_user_edits(mine.get('edits'))
+        self.preview.vmt = vmt.merged(self.preview.vmt)
         self._hat_styles = snaps
         return bool(mine or snaps)
 
@@ -1583,7 +1610,7 @@ class AppSession:
         """Есть ли сейчас правки, лежит ли что-то на диске и как оно попало"""
         from src.services import work_store
         key = self._work_key()
-        return {'has_edits': self.preview.has_user_edits(),
+        return {'key': key, 'has_edits': self.preview.has_user_edits(),
                 'autosave': self._autosave_on(),
                 # Черновик автосохранения тоже «есть на диске»: его можно и
                 # вернуть, и забыть - просто в библиотеке его не показывают
@@ -1712,11 +1739,8 @@ class AppSession:
         любого изменения (смена команды, вариант, стиль) и применяет ответ
         целиком. Правила разрешения при этом остаются в домене
         """
-        from src.data.player_hands import HAND_MODE_KEYS
-
         t = self.preview.textures
-        mode = (self.preview.current_object or ('', '', ''))[0]
-        is_hands = bool(mode) and mode in HAND_MODE_KEYS
+        is_hands = kind_of((self.preview.current_object or ('', '', ''))[0]).is_hands
         shown = self._painted(self.preview.visible_textures())
         scene = self._painted(self.preview.scene_textures())
 
@@ -1724,7 +1748,8 @@ class AppSession:
             'textures': shown,
             'stamps': _stamps(shown, scene),
             # Гифки на материалах: кадры для вьювера, он сам гифку не крутит
-            'animations': self.animations.for_scene(scene),
+            'animations': {**self.vpk_mod.animations(scene),
+                           **self.animations.for_scene(scene)},
             # Где на карточке не игровой оригинал - там меню предлагает
             # экспортировать и его
             'own_cards': self.tools.changed_cards(shown),
@@ -1760,6 +1785,8 @@ class AppSession:
             'force_team': t.force_team,
             # Чем станет синяя у командных карточек: выбор под кнопкой BLU
             'blu_choices': t.blu_choices(),
+            # Карточка австралия: игровое, как обычная, как красное, своё
+            'variant_choice': self.materials.variant_view(),
             'can_force_team': self.preview.can_force_team(),
             # Правка QC имеет смысл только у СВОЕЙ готовой модели: у замены
             # геометрии сборка собирает QC сама под игровые материалы
@@ -1940,7 +1967,13 @@ class AppSession:
         qc = decompile_cache.find_cached_qc_for_weapon(key)
         if not qc:
             return []
+        from src.services import smd_service
+
         own = {part.lower() for part in self.preview.part_models}
+        # Основной меш превью показывает всегда, даже когда он сам лежит в
+        # бодигруппе после «пусто» (бассейн пиро): его кнопка должна гореть
+        main = os.path.basename(smd_service.find_reference_smd(
+            os.path.dirname(qc), key) or '').lower()
         out = []
         for name, variants in ModelBuildService.extract_bodygroups(qc):
             if len(variants) < 2:
@@ -1948,15 +1981,19 @@ class AppSession:
             # Снаряд в оружии (граната, ракета, стрела): в кадре он виден,
             # пока его не скрыли, - его правят, своя модель меняет его
             shown = ModelBuildService.projectile_variant(name, variants)
+            if shown is None:
+                shown_main = next((i for i, v in enumerate(variants)
+                                   if v and os.path.basename(v).lower() == main), 0)
             part = (os.path.splitext(os.path.basename(variants[shown]))[0].lower()
                     if shown is not None else '')
             out.append({
                 'name': name,
-                'chosen': int(self._bodygroups.get(name, shown or 0)),
+                'chosen': int(self._bodygroups.get(
+                    name, shown if shown is not None else shown_main)),
                 'variants': ([('виден' if v else 'скрыт') for v in variants]
                              if shown is not None
                              else [_variant_label(v, key) for v in variants]),
-                'default': shown or 0,
+                'default': shown if shown is not None else shown_main,
                 'projectile': shown is not None,
                 'custom': bool(part and part in own),
             })
@@ -2099,7 +2136,10 @@ class AppSession:
             return
         clean = pm.without_uv_maps(got['content'])
         if clean != got['content']:
-            saved = self.materials.save_vmt(name, clean, got.get('original') or got['content'], lang)
+            # Без своего шага отмены: чистка - часть загрузки снаряда, её
+            # шаг обновляет вызывающий (history.refresh)
+            saved = self.materials.save_vmt(name, clean, got.get('original') or got['content'],
+                                            lang, autosave=False)
             if 'error' in saved:
                 logger.warning(f"VMT своего снаряда {name} не поправлен: {saved['error']}")
 

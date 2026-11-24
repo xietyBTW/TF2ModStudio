@@ -69,6 +69,10 @@ def open_vpk_cached(dir_vpk_path: str):
             return cached[1]
         pak = _vpk.open(dir_vpk_path)
         _fix_archive_names(pak)
+        # Файлы игры могли переписать прямо в архиве (прелоадер): сверка с
+        # CRC каталога при чтении, см. game_integrity
+        from src.services import game_integrity
+        game_integrity.guard(pak, dir_vpk_path)
         # Каталог строим ЗДЕСЬ: после публикации объект только читают, и
         # ленивый разбор из чужого потока стал бы гонкой за общий словарь.
         # `tree` пуст ровно до первого разбора - не строим его дважды

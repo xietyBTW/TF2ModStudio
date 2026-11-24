@@ -182,6 +182,20 @@ def set_blu_choice(material: str = '', choice: str = 'game') -> Dict[str, object
 
 
 @endpoint
+def set_variant_choice(choice: str = 'game') -> Dict[str, object]:
+    """Карточка австралия: 'game', 'base' (как обычная) или 'red' (как красное)"""
+    from src.app.session import session
+    return session().materials.set_variant_choice(choice)
+
+
+@endpoint
+def gild_from_base() -> Dict[str, object]:
+    """Обычная текстура в золото этого оружия на карточку австралия"""
+    from src.app.session import session
+    return session().materials.gild_from_base()
+
+
+@endpoint
 def drop_from_style(material: str = '') -> Dict[str, object]:
     """Убирает материал из стиля - он вернётся к базовой текстуре"""
     from src.app.session import session

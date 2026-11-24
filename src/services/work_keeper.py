@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from typing import Dict, Optional
 
+from src.data.item_kinds import kind_of
 from src.domain.preview.session import PreviewSession
 from src.services import work_store
 from src.shared.logging_config import get_logger
@@ -47,7 +48,7 @@ def key_for(mode: str, item: str = '', mod_path: str = '') -> str:
     """
     if not mode:
         return ''
-    if mode == 'custom':
+    if kind_of(mode).is_mod:
         name = os.path.basename(mod_path or '')
         return work_store.key_for('custom', name) if name else ''
     # '\x00' - sentinel панели «модель ещё не грузили»

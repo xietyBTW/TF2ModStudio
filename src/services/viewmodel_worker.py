@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+from src.shared.file_utils import make_preview_dir
 from typing import Optional
 
 from src.services.base_worker import Signal
@@ -166,7 +166,7 @@ class ViewmodelPreviewWorker(BaseWorker):
         reader = GameVpkReader(scene_textures.archives(
             self.mod_vpk_path, self.textures_vpk_path, self.misc_vpk_path))
         try:
-            self._preview_dir = tempfile.mkdtemp(prefix="tf2sg_fp_")
+            self._preview_dir = make_preview_dir("tf2sg_fp_")
 
             tf2_class = self.tf2_class or viewmodel_anims.class_of(self.weapon_key)
             if tf2_class not in viewmodel_anims.CLASS_MODEL_STEM:
@@ -341,9 +341,9 @@ class ViewmodelPreviewWorker(BaseWorker):
 
     def _mdl_candidates(self, weapon_key: str) -> list:
         from src.data.weapon_model_index import tf2_root_from_misc_vpk
-        from src.services.extract_model_service import ExtractModelService
+        from src.services.model_locator import weapon_candidates
         try:
-            return ExtractModelService._build_paths_to_try(
+            return weapon_candidates(
                 f"scout_{weapon_key}", weapon_key,
                 tf2_root_from_misc_vpk(self.misc_vpk_path),
             )

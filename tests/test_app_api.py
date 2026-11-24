@@ -263,6 +263,13 @@ class ControlsTests(unittest.TestCase):
         flags = api.controls_for('skybox')['flags']
         self.assertEqual([row['key'] for row in flags if row['on']],
                          ['POINTSAMPLE'])
+        # Что сборка неба ставит сама, страница показывает включённым
+        self.assertEqual([row['key'] for row in flags if row['forced']],
+                         ['CLAMPS', 'CLAMPT', 'NOLOD'])
+        c = api.controls_for('skybox')
+        self.assertTrue(c['options_locked']['nomipmaps'])
+        self.assertFalse(c['texture_settings'])
+        self.assertEqual(api.controls_for('c_scattergun')['options_locked'], {})
 
     def test_unrestricted_mode_gets_the_whole_format_list(self):
         """Список форматов всегда конкретный, а не «None - сам знаешь»

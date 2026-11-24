@@ -14,9 +14,10 @@ from .model_build_service import ModelBuildService
 from .smd_service import SMDService
 from .vpk_model_pipeline import VpkModelPipeline
 from .texture_build import styles
-from src.data.player_hands import HAND_MODE_KEYS
+from src.data.item_kinds import kind_of
 from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
 from src.shared.logging_config import get_logger
+from src.shared.team_names import blue_name
 
 logger = get_logger(__name__)
 
@@ -57,7 +58,7 @@ def apply_shoulder_isolation(
         source_path|None)] для записи материалов ниже и (возможно
         перенаправленный) image_path главной текстуры
     """
-    if mode not in HAND_MODE_KEYS:
+    if not kind_of(mode).is_hands:
         return [], image_path
     ref_smd, shoulders = _shoulder_candidates(ctx, mode, qc_path, weapon_key, tg_structure)
     srcs = {s: _shoulder_source(s, panel_extra_textures or {}, orig_main_pre_restrict, image_path)
@@ -159,7 +160,7 @@ def _team_promotions(qc_path, panel_blu_textures, shoulders):
     for m, bp in panel_blu_textures.items():
         ml = m.lower()
         if ml in neutral and ml not in sh_set and bp and os.path.isfile(str(bp)):
-            var = (m[:-4] + '_blue') if ml.endswith('_red') else (m + '_blue')
+            var = blue_name(m)
             var = SMDService._sanitize_material_name(var)
             promo[ml] = var
             variant_entries.append((var, m, bp))
@@ -185,7 +186,7 @@ def _blue_shoulders(shoulders, tg_structure, rename, orig_main):
         sl = s.lower()
         bv = None
         if sl.endswith('_red'):
-            bv = s[:-4] + '_blue'
+            bv = blue_name(s)
         else:
             col = next((i for i, m in enumerate(red_row) if m.lower() == sl), None)
             if col is not None and col < len(blu_row):
@@ -237,19 +238,18 @@ def apply_force_team(force_team, mode, qc_path, weapon_key, ctx) -> None:
     нативно-командного. Остальные строки (австралий, ботокиллеры) остаются:
     замена всей группы двумя строками потеряла бы золото. Мутирует QC
     """
-    if force_team and mode not in HAND_MODE_KEYS:
+    if force_team and not kind_of(mode).is_hands:
         try:
             from src.services import qc_skin_parser as _qsp
             if ModelBuildService.extract_skin_info(qc_path).get('is_team'):
                 logger.info("[FORCE TEAM] оружие уже командное - пропуск")
                 return
             from src.services import smd_service
-            from src.data.item_kinds import kind_of
             from src.data.material_filter import is_editable_material as _ed
             # У шапок и персонажей командность в игре ещё не проверена:
             # без меша строки не дописываются, QC остаётся как был
             _kind = kind_of(mode)
-            _ref = (None if _kind.is_hat or _kind.is_character or _kind.is_spy_mask
+            _ref = (None if _kind.model_by_path
                     else smd_service.find_reference_smd(str(ctx.decompile_dir), weapon_key))
             _mesh = SMDService.ordered_unique_materials(_ref) if _ref else []
             _rows = _qsp.parse_texturegroup_rows(qc_path)
@@ -298,7 +298,7 @@ def plan_materials(
         blu_row = []
 
     orig_main_pre_restrict = texture_filename  # col0 (может быть плечи)
-    if mode in HAND_MODE_KEYS:
+    if kind_of(mode).is_hands:
         texture_filename, extra_materials, blu_row = _restrict_to_hands(
             mode, texture_filename, tg_structure)
     else:
@@ -339,7 +339,7 @@ def plan_materials(
     # промоушен): vm_* для плеч + _blu варианты в синих строках.
     # Старый «кастомный» SKIN BUILD путь его перезатёр бы - отключаем
     has_skins = (bool(skin_build_data and skin_build_data.get('tg_overrides'))
-                 and mode not in HAND_MODE_KEYS)
+                 and not kind_of(mode).is_hands)
     # Для «готовой» кастомной модели (keep_materials) ИГРОВОЙ
     # $texturegroup неприменим ВСЕГДА - у меша свои материалы
     # (c_sd_cleaver/mouth/lefteye…), а игровые имена (c_scattergun,

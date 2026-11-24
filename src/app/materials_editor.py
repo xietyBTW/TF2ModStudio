@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from src.data.item_kinds import kind_of
 from src.shared.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -302,6 +303,60 @@ class MaterialsEditor:
         self._host._autosave()
         return self._host.view_state()
 
+    # Карточка австралия: откуда картинка и золото из обычной
+
+    def variant_view(self) -> Optional[Dict[str, Any]]:
+        """Выбор на карточке австралия, пока он включён: что на ней сейчас
+        ('own' - своя картинка), из чего можно выбрать и можно ли сделать
+        золото из обычной (нужно игровое золото - из него палитра)"""
+        from src.domain.preview import variant_card
+
+        p = self._host.preview
+        t = p.textures
+        gold = t.australium_mat_name
+        if not (gold and t.australium_active) or p.custom_vpk_mode:
+            return None
+        return {'card': gold, 'now': variant_card.choice(t), 'options': variant_card.options(t),
+                'can_gild': bool(t.variant_game())}
+
+    def set_variant_choice(self, choice: str = 'game') -> Dict[str, Any]:
+        """Карточка австралия: 'game' - игровое золото, 'base' - как обычная,
+        'red' - у синего золота как красное"""
+        from src.domain.preview import variant_card
+
+        with self._host._lock:
+            ok = variant_card.set_choice(self._host.preview.textures, choice)
+        if not ok:
+            return {'error': 'Неизвестный выбор текстуры австралия'}
+        self._host._autosave()
+        return self._host.view_state()
+
+    def gild_from_base(self) -> Dict[str, Any]:
+        """Обычная текстура в золото этого оружия -> своя картинка австралия
+
+        Обычная - как она видна у показанной команды (своя или игровая, с
+        мазками частей), палитра - игровое золото той же команды. VMT остаётся
+        игровым VMT золота: блеск и кубмапу даёт он"""
+        from src.services.gold_recolor import recolor
+        from src.shared.file_utils import get_temp_file_path
+
+        t = self._host.preview.textures
+        with self._host._lock:
+            gold, team = t.australium_mat_name, t.active_team
+            main = t.stable_main() or t.storage_main_key()
+            base, palette = t.shown_at(main, 0, team), t.variant_game(team)
+        if not (gold and base and palette):
+            return {'error': 'Не из чего сделать золото: нет обычной текстуры или игрового австралия'}
+        try:
+            out = recolor(base, palette, str(get_temp_file_path(prefix='tf2sg_gold_', suffix='.png')))
+        except (OSError, ValueError) as exc:
+            logger.warning(f"золото из обычной: {exc}")
+            return {'error': 'Не удалось перекрасить текстуру'}
+        with self._host._lock:
+            t.set_texture(gold, out)
+        self._host._autosave()
+        return self._host.view_state()
+
     def texture_settings(self, material: str = '') -> Dict[str, Any]:
         """Свои настройки материала или пусто, если он собирается как все"""
         key = self._host._card_key(material)
@@ -349,7 +404,7 @@ class MaterialsEditor:
         mode = getattr(self._host, '_mode', '')
         if not mode:
             return {'error': 'Сначала выберите предмет'}
-        if mode == 'custom':
+        if kind_of(mode).is_mod:
             # Мод из VPK: правится VMT самого мода (путь в архиве вместо
             # ключа оружия), правка - под ключом этого мода
             from src.services.edited_vmt_service import EditedVMTService
@@ -371,11 +426,33 @@ class MaterialsEditor:
         # texture_filename, который сборка и ищет
         return weapon_key, (self._host._card_key(material) or weapon_key)
 
+    def adopt_legacy_vmt(self) -> None:
+        """Старые общие правки VMT (лежали по имени материала и всплывали у
+        любого предмета) - в работу этого предмета, один раз. Зовётся там,
+        где правку видно, - в редакторе VMT. Молча в сборку они не идут"""
+        from src.services.edited_vmt_service import EditedVMTService
+
+        cards = [''] + list(self._host.preview.textures.material_names or [])
+        keys = [t[1] for t in map(self.vmt_target, cards) if isinstance(t, tuple)]
+        # Старый файл убираем, только если работа запишется на диск: без
+        # автосохранения правка жила бы одной памятью и пропала бы со сменой
+        # предмета
+        keep_files = not self._host._autosave_on()
+        with self._host._lock:
+            moved = EditedVMTService.adopt_legacy(keys, remove=not keep_files)
+            # Переезд - не правка человека: своего шага отмены у него нет,
+            # он входит в текущий (иначе Ctrl+Z молча снимал бы правку)
+            if moved and len(self._host.history):
+                self._host.history.refresh(self._host.history.pos,
+                                           self._host._edit_snapshot())
+        if moved:
+            self._host._autosave(step=False)
+
     def _vmt_label(self, edit_key: str, material: str) -> str:
         """Имя материала для страницы - она шлёт его обратно при сохранении.
         У мода из VPK ключ хранения свой (EditedVMTService.mod_key), и
         вернувшись, он не находил карточку: «нет VMT»"""
-        if getattr(self._host, '_mode', '') == 'custom':
+        if kind_of(getattr(self._host, '_mode', '')).is_mod:
             return self._host._card_key(material)
         return edit_key
 
@@ -393,21 +470,17 @@ class MaterialsEditor:
             return target
         weapon_key, edit_key = target
         mode = getattr(self._host, '_mode', '')
+        self.adopt_legacy_vmt()
 
         paths = self._host.tf2_paths()
         tf2_root = '' if 'error' in paths else paths['root']
 
         original = None
-        edited_path = EditedVMTService.get_edited_vmt(edit_key)
-        if edited_path and os.path.exists(edited_path):
+        content = EditedVMTService.get_text(edit_key)
+        if content is not None:
             original = EditedVMTService.read_original_backup(edit_key)
             if original is None and tf2_root:
                 original = self._vmt_original(mode, weapon_key, tf2_root, edit_key, lang)
-            try:
-                with open(edited_path, 'r', encoding='utf-8', errors='replace') as f:
-                    content = f.read()
-            except OSError as exc:
-                return {'error': f'не прочитать правку: {exc}'}
             return {'material': self._vmt_label(edit_key, material), 'content': content,
                     'original': original if original is not None else content,
                     'edited': True}
@@ -432,7 +505,7 @@ class MaterialsEditor:
         """
         from src.services import vmt_source_service
 
-        if mode == 'custom':
+        if kind_of(mode).is_mod:
             return self._mod_vmt_text(weapon_key)
         base = self._host.preview.textures.part_cards.get(edit_key)
         if base is not None:
@@ -456,8 +529,10 @@ class MaterialsEditor:
             return data.decode('cp1251', errors='replace')
 
     def save_vmt(self, material: str = '', content: str = '',
-                 original: str = '', lang: str = 'ru') -> Dict[str, Any]:
-        """Сохраняет правку VMT. Сломанный синтаксис не сохраняется"""
+                 original: str = '', lang: str = 'ru', autosave: bool = True) -> Dict[str, Any]:
+        """Сохраняет правку VMT в работу предмета. Сломанный синтаксис не
+        сохраняется. `autosave` - сразу шагом работы (у правки во все
+        материалы шаг один, на всю правку)"""
         from src.services import vmt_source_service
 
         target = self.vmt_target(material)
@@ -465,10 +540,13 @@ class MaterialsEditor:
             return target
         _weapon_key, edit_key = target
 
-        ok, error, saved = vmt_source_service.save_edit(
-            edit_key, content, original or None, lang)
+        with self._host._lock:
+            ok, error, saved = vmt_source_service.save_edit(
+                edit_key, content, original or None, lang)
         if not ok:
             return {'error': error}
+        if autosave:
+            self._host._autosave()
         return {'material': self._vmt_label(edit_key, material), 'content': saved, 'edited': True}
 
     def save_vmt_all(self, material: str, content: str, before: str, original: str,
@@ -482,7 +560,7 @@ class MaterialsEditor:
         """
         from src.services import vmt_spread
 
-        main = self.save_vmt(material, content, original, lang)
+        main = self.save_vmt(material, content, original, lang, autosave=False)
         if 'error' in main:
             return main
         plan = vmt_spread.plan(before, content, original, bounds)
@@ -501,26 +579,31 @@ class MaterialsEditor:
                 skipped.append({'material': cur['material'], 'reason': '; '.join(problems)})
             if text == cur['content']:
                 continue
-            res = self.save_vmt(other, text, cur['original'], lang)
+            res = self.save_vmt(other, text, cur['original'], lang, autosave=False)
             if 'error' in res:
                 skipped.append({'material': cur['material'], 'reason': res['error']})
             else:
                 updated.append(res['material'])
+        self._host._autosave()
         main['spread'] = {'updated': updated, 'skipped': skipped, 'notes': plan.notes}
         return main
 
     def reset_vmt_all(self, materials: List[str]) -> Dict[str, Any]:
         """«Как в игре» без шестерёнки: правки снимаются у всех материалов"""
-        done = [self.reset_vmt(m) for m in dict.fromkeys(materials)]
+        done = [self.reset_vmt(m, autosave=False) for m in dict.fromkeys(materials)]
+        self._host._autosave()
         return {'reset': [d['material'] for d in done if 'error' not in d]}
 
-    def reset_vmt(self, material: str = '') -> Dict[str, Any]:
-        """Удаляет правку: материал вернётся к игровому оригиналу"""
+    def reset_vmt(self, material: str = '', autosave: bool = True) -> Dict[str, Any]:
+        """Снимает правку: материал вернётся к игровому оригиналу"""
         from src.services.edited_vmt_service import EditedVMTService
 
         target = self.vmt_target(material)
         if isinstance(target, dict):
             return target
         _weapon_key, edit_key = target
-        EditedVMTService.delete_edited_vmt(edit_key)
+        with self._host._lock:
+            EditedVMTService.delete_edited_vmt(edit_key)
+        if autosave:
+            self._host._autosave()
         return {'material': self._vmt_label(edit_key, material), 'edited': False}

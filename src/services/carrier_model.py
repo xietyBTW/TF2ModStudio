@@ -124,9 +124,9 @@ def _candidates(base: str, tf2_root: str) -> list:
     Носитель - всегда обычное оружие, каким бы ни был режим самого предмета,
     поэтому режим подставляется формальный
     """
-    from src.services.extract_model_service import ExtractModelService
+    from src.services.model_locator import weapon_candidates
     try:
-        return ExtractModelService._build_paths_to_try(f"scout_{base}", base, tf2_root)
+        return weapon_candidates(f"scout_{base}", base, tf2_root)
     except Exception as exc:                                  # noqa: BLE001
         logger.debug(f"[носитель] пути {base} не собрались: {exc}")
         return [f"models/weapons/c_models/{base}/{base}.mdl"]

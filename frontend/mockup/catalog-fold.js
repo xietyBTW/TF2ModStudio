@@ -7,6 +7,7 @@
  */
 
 import { t } from './i18n.js';
+import { matchTypos } from './typo-search.js';
 
 const drops = [];
 //: С какой длины в списке есть поиск: файлов PCF 136, коллекций около
@@ -125,52 +126,6 @@ function searchBox(buttons) {
   requestAnimationFrame(() => input.focus());
   wrap.append(input, empty);
   return wrap;
-}
-
-/*
- * Опечатки - тем же правилом, что поиск каталога в Python (text_search.py):
- * до трёх букв точно, с четырёх одна опечатка, с восьми две, и ищется она в
- * начале слов. Правило менять в обоих местах
- */
-const typoBudget = (w) => (w.length < 4 ? 0 : w.length < 8 ? 1 : 2);
-
-/** Правок до лучшего начала слова (Дамерау-Левенштейн), больше limit - limit + 1 */
-function prefixTypos(q, w, limit) {
-  const n = q.length;
-  const m = Math.min(w.length, n + limit);
-  let before = [];
-  let prev = Array.from({ length: m + 1 }, (_, j) => j);
-  for (let i = 1; i <= n; i += 1) {
-    const cur = [i];
-    for (let j = 1; j <= m; j += 1) {
-      let best = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (q[i - 1] !== w[j - 1]));
-      if (i > 1 && j > 1 && q[i - 1] === w[j - 2] && q[i - 2] === w[j - 1]) {
-        best = Math.min(best, before[j - 2] + 1);
-      }
-      cur.push(best);
-    }
-    if (Math.min(...cur) > limit) return limit + 1;
-    [before, prev] = [prev, cur];
-  }
-  return Math.min(...prev);
-}
-
-/** -1 - мимо, иначе сколько слов запроса нашлось только с опечаткой */
-function matchTypos(raw, words) {
-  const text = raw.replace(/ё/g, 'е');
-  const parts = text.split(/[^0-9a-zа-я]+/).filter(Boolean);
-  let typos = 0;
-  for (const word of words) {
-    const q = word.replace(/ё/g, 'е');
-    if (text.includes(q)) continue;
-    const limit = typoBudget(q);
-    if (limit && parts.some((w) => prefixTypos(q, w, limit) <= limit)) {
-      typos += 1;
-      continue;
-    }
-    return -1;
-  }
-  return typos;
 }
 
 function pickOption(d, i) {

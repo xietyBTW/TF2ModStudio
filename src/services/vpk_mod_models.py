@@ -215,9 +215,19 @@ def textures_of(materials: Sequence[str], cdmaterials: Sequence[str],
     return {k for k in textures if k in named or ends(k, wanted)}
 
 
-def _tail_match(a: str, b: str) -> bool:
+def tail_match(a: str, b: str) -> bool:
     """Один путь - конец другого: мод лежит в папке-обходе (console/...)"""
     return a == b or a.endswith('/' + b) or b.endswith('/' + a)
+
+
+def material_vmt(mat: str, cdmaterials: Sequence[str], vmt_text) -> str:
+    """Текст VMT материала модели так, как его ищет игра: `<$cdmaterials>/<имя>`
+    по порядку папок, потом без папки. `vmt_text(путь)` - текст или пусто"""
+    for cd in (*cdmaterials, ''):
+        text = vmt_text('/'.join(p for p in (cd.replace('\\', '/').strip('/'), mat) if p))
+        if text:
+            return text
+    return ''
 
 
 def mesh_links(materials: Sequence[str], cdmaterials: Sequence[str], vmt_text,
@@ -235,17 +245,14 @@ def mesh_links(materials: Sequence[str], cdmaterials: Sequence[str], vmt_text,
 
     out: Dict[str, str] = {}
     for mat in materials:
-        for cd in (*cdmaterials, ''):
-            text = vmt_text('/'.join(p for p in (cd.replace('\\', '/').strip('/'), mat) if p))
-            if text:
-                break
-        else:
+        text = material_vmt(mat, cdmaterials, vmt_text)
+        if not text:
             continue
         base = vmt_parse.parse(text).path('$basetexture')
         if not base:
             continue
         key = texture_key(base)
-        card = next((c for c, k in card_keys.items() if _tail_match(k, key)), None)
+        card = next((c for c, k in card_keys.items() if tail_match(k, key)), None)
         if card:
             out[mat] = card
     return out

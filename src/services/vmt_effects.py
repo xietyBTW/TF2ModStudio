@@ -112,9 +112,9 @@ _SHEEN_TINTED = ["game", *[v for v, _ru, _en in _sheen_presets()]]
 
 
 def _tinted(field: dict) -> dict:
-    """Поле цвета блеска видно, пока узор не свой и блеск не чёрный"""
+    """Поле цвета блеска видно, пока узор не свой, блеск не чёрный и цвет свой"""
     return {**field, "show_if": {**field.get("show_if", {}), "pattern": _SHEEN_TINTED,
-                                 "dark!": "on"}}
+                                 "dark!": "on", "tint!": "game"}}
 
 
 # Поля форм. Подписи парами (ru, en): переводит Python, как и сами сниппеты
@@ -155,16 +155,20 @@ EFFECTS: Dict[str, dict] = {
             {"key": "pattern", "type": "choice", "label": ("Узор", "Pattern"),
              "default": "game", "builder": True,
              "choices": [("game", "Как в игре", "As in game"), *_sheen_presets()]},
+            # Цвет купленного: оттенок ставит прокси игры, маска без цвета
+            {"key": "tint", "type": "choice", "label": ("Цвет блеска", "Sheen color"), "default": "own",
+             "choices": [("own", "Свой", "Own"),
+                         ("game", "Как у купленного блеска", "As the bought sheen")]},
             # Чёрный блеск готового узора: узор уходит в красный канал, оттенок
             # без красного (sheen_palette). У своего узора гамму выбирают
             # цвета его слоёв, поле ему не нужно
             {"key": "dark", "type": "choice", "label": ("Вид", "Look"),
-             "default": "off", "show_if": {"pattern": _SHEEN_TINTED[1:]},
+             "default": "off", "show_if": {"pattern": _SHEEN_TINTED[1:], "tint!": "game"},
              "choices": [("off", "Светится", "Glows"),
                          ("on", "Чёрный, затемняет", "Black, darkens")]},
             *[_tinted(f) for f in _color_fields(("Цвет", "Color"))],
             {"key": "bright", "type": "range", "label": ("Яркость", "Brightness"),
-             "min": 0.3, "max": 3, "step": 0.1, "default": 1},
+             "min": 0.3, "max": 3, "step": 0.1, "default": 1, "show_if": {"tint!": "game"}},
             # Длина своего узора задана в конструкторе
             {"key": "length", "type": "range",
              "label": ("Длина прохода, сек", "Sweep length, s"),
@@ -175,13 +179,13 @@ EFFECTS: Dict[str, dict] = {
              "choices": [("flat", "Ровный, узор виден целиком", "Even, the whole pattern shows"),
                          ("live", "Живой, как в игре", "Live, as in game")]},
             {"key": "when", "type": "choice", "label": ("Когда", "When"),
-             "default": "game",
+             "default": "game", "show_if": {"tint!": "game"},
              "choices": [("game", "С киллстриком, как в игре", "With a killstreak, as in game"),
                          ("always", "Всегда, на любом оружии", "Always, on any weapon")]},
             {"key": "pause", "type": "range",
              "label": ("Пауза между бликами, сек", "Pause between sweeps, s"),
              "min": 0, "max": 10, "step": 0.5, "default": 5,
-             "show_if": {"when": "always"}},
+             "show_if": {"when": "always", "tint!": "game"}},
         ],
     },
     CRIT: {
@@ -340,6 +344,8 @@ def values(key: str, text: str) -> Dict[str, object]:
         if pause is not None:
             out["when"] = "always"
             out["pause"] = _num(pause, 0, 10, 5)
+        if _value(text, MARK + "sheengame") is not None:
+            out["tint"] = "game"
     elif key == CRIT and _value(text, MARK + "critred") is not None:
         bright = _num(_value(text, MARK + "critbright"), 0.3, 3, 1)
         out["bright"] = round(bright, 1)
@@ -504,7 +510,8 @@ def _sheen(vals: Dict[str, object], text: str, bounds: Optional[dict],
            game: str = '') -> Dict[str, object]:
     """Свой цвет блеска: наш Equals ниже AnimatedWeaponSheen перезаписывает
     цвет, который игра ставит каждый кадр"""
-    always = vals.get("when") == "always"
+    game_tint = vals.get("tint") == "game"     # его ставит прокси игры: «Всегда» с ним нет
+    always = vals.get("when") == "always" and not game_tint
     has_game_sheen = _has_proxy(text, "AnimatedWeaponSheen")
     if not always and not has_game_sheen:
         return {"error": "У материала нет блеска киллстрика (прокси AnimatedWeaponSheen). "
@@ -519,17 +526,18 @@ def _sheen(vals: Dict[str, object], text: str, bounds: Optional[dict],
     painted = bool(sheen_library.ID_RE.match(pattern))
     palette = sheen_palette.palette_of(pattern) if painted else None
     # Чёрный: оттенок без красного на маске в красном канале (darkened)
-    dark = (palette == sheen_palette.COLD if painted
-            else vals.get("dark") == "on" and sheen_library.is_pattern(pattern))
+    dark = not game_tint and (palette == sheen_palette.COLD if painted
+                              else vals.get("dark") == "on" and sheen_library.is_pattern(pattern))
     bright = _num(vals.get("bright"), 0.3, 3, 1)
-    rainbow = vals.get("color_mode") == "rainbow" and not painted and not dark
+    rainbow = vals.get("color_mode") == "rainbow" and not (painted or dark or game_tint)
     # Шейдер берёт цвет линейным: цвет палитры переводим, иначе он бледнее
     tint = (sheen_palette.tint(sheen_palette.COLD if dark else sheen_palette.WARM, bright)
             if dark or rainbow or painted
             else tuple(_to_linear(c) * bright for c in _from_hex(vals.get("color"))))
 
     out = _drop_keys(_strip_marked_proxies(text, _SHEEN_MARK), MARK + "sheen")
-    keys = [(MARK + "sheen", _fmt_vec(tint, 6)), (MARK + "sheenbright", f"{bright:g}")]
+    keys = [(MARK + "sheen", _fmt_vec(tint, 6)), (MARK + "sheenbright", f"{bright:g}"),
+            *([(MARK + "sheengame", "1")] if game_tint else [])]
     # Свой узор - своя маска у ЭТОГО материала (моды подменяют общую маску
     # всего оружия). Кадры крутит тот же прокси игры: пауза между проходами
     # по-прежнему сокращается с серией убийств. Файл маски достроит сборка
@@ -550,8 +558,8 @@ def _sheen(vals: Dict[str, object], text: str, bounds: Optional[dict],
         length = data["length"] if painted else vals.get("length")
         frames = sheen_patterns.frames_for(_num(length, 1, 8, 2.5))
         aspect = stencil["aspect"] if stencil else sheen_builder.DEFAULT_ASPECT
-        keys.append(("$sheenmapmask",
-                     sheen_patterns.custom_name(pattern, aspect, frames, rotate, dark)))
+        keys.append(("$sheenmapmask", sheen_patterns.custom_name(
+            pattern, aspect, frames, rotate, dark, game_tint)))
     elif (sheen_patterns.parse(_value(out, "$sheenmapmask") or "")
           or sheen_patterns.parse_custom(_value(out, "$sheenmapmask") or "")):
         # Назад к маске материала (у мода она могла быть своя), иначе стоковая
@@ -570,8 +578,9 @@ def _sheen(vals: Dict[str, object], text: str, bounds: Optional[dict],
     if rainbow:
         tail += _rainbow(MARK + "sheen", _num(vals.get("speed"), 0.5, 10, 3), bright,
                          _SHEEN_MARK)
-    tail += _proxy("Equals", [("srcVar1", MARK + "sheen"), ("resultVar", "$sheenmaptint")],
-                   _SHEEN_MARK)
+    if not game_tint:
+        tail += _proxy("Equals", [("srcVar1", MARK + "sheen"), ("resultVar", "$sheenmaptint")],
+                       _SHEEN_MARK)
     if own and stencil:
         # Раскладка своей маски закреплена: игра у киллстрик-оружия каждый
         # кадр ставит свою (InitParams), наши Equals ниже её перебивают

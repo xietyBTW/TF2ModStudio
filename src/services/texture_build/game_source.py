@@ -13,6 +13,7 @@ from src.services.tf2_vpk_extract_service import TF2VPKExtractService
 from src.services.vmt_service import VMTService
 from src.shared.file_utils import copy_file_safe
 from src.shared.logging_config import get_logger
+from src.shared.team_names import is_blue, team_form
 
 logger = get_logger(__name__)
 
@@ -199,6 +200,15 @@ def read_vmt_basetexture(vmt_path: str) -> Optional[str]:
         return None
 
 
+def find_vmt_or_red(name, ctx, slots):
+    """Родной VMT материала, а у дописанного синего (золото «сделать
+    командным») - VMT его красного: своего в игре нет, вид тот же"""
+    found = find_original_vmt(name, ctx, slots)
+    if not found and is_blue(name):
+        found = find_original_vmt(team_form(name)[0], ctx, slots)
+    return found
+
+
 def find_original_vmt(name, ctx, slots):
     """Родной VMT материала по путям $cdmaterials модели (или None)
 
@@ -266,9 +276,8 @@ def basetexture_chosen(edited_vmt, game_vmt) -> bool:
         base = read_vmt_basetexture(str(path)) if path else None
         if not base:
             return None
-        base = base.replace('\\', '/').lower().strip('/')
-        base = base[len('materials/'):] if base.startswith('materials/') else base
-        return base[:-4] if base.endswith('.vtf') else base
+        from src.shared.game_paths import texture_key
+        return texture_key(base)
 
     if not (game_vmt and Path(game_vmt).exists()):
         return False

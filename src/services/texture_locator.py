@@ -17,6 +17,9 @@ from src.services import qc_skin_parser, texture_guess, vmt_tint
 from src.services.game_vpk_reader import GameVpkReader
 from src.services.material_resolver import MaterialResolver
 from src.shared.logging_config import get_logger
+from src.shared.skin_rows import blu_twin, find_name
+from src.data.tf2_classes import PROBE_TOKENS
+from src.shared.game_paths import game_path
 
 logger = get_logger(__name__)
 
@@ -202,11 +205,9 @@ def team_partner(by_lower: dict, mat_lower: str) -> Optional[str]:
     Имена материалов SMD и $texturegroup иногда расходятся префиксом пути -
     тогда сверяем по хвосту
     """
-    blu = by_lower.get(mat_lower)
-    if blu is None:
-        blu = next((v for k, v in by_lower.items()
-                    if mat_lower.endswith(k) or k.endswith(mat_lower)), None)
-    return blu
+    keys = list(by_lower)
+    idx = find_name(keys, mat_lower)
+    return by_lower[keys[idx]] if idx >= 0 else None
 
 
 def blu_tex_names(model, mat_names: Optional[list], weapon_key: str) -> list:
@@ -268,25 +269,13 @@ def blu_multi_sources(paks: list, model, mat_names: list,
     red_family = [t.lower() for t in model.layout.base_rows[0]]
     blu_family = model.layout.second_row
     for mat_name in mat_names:
-        idx = _column_of(red_family, mat_name.lower())
+        idx = find_name(red_family, mat_name)
         if idx < 0 or idx >= len(blu_family):
             logger.debug(f"[3D] BLU multi: mat '{mat_name}' не найден в RED family")
             continue
         blu_tex_name = blu_family[idx]
         yield mat_name, blu_tex_name, _blu_multi_vtf(
             paks, model.cdmaterials, blu_tex_name, arm_folder)
-
-
-def _column_of(red_family: list, mat_lower: str) -> int:
-    """Столбец материала в строке RED (case-insensitive, затем по хвосту)"""
-    try:
-        return red_family.index(mat_lower)
-    except ValueError:
-        return next(
-            (i for i, r in enumerate(red_family)
-             if mat_lower.endswith(r) or r.endswith(mat_lower)),
-            -1
-        )
 
 
 def _blu_multi_vtf(paks: list, cdmaterials: list, blu_tex_name: str,
@@ -316,10 +305,19 @@ def variant_name(model) -> Optional[str]:
     return variant_tex
 
 
+def variant_blu_name(model, variant_tex: Optional[str]) -> Optional[str]:
+    """Синее золото или None: у Посла в скине 3 свой `c_ambassador_blue_gold`,
+    у клеймора синяя строка та же, что красная. Правило синей строки стиля -
+    skin_rows.blu_twin (австралий в игре - стиль со скинами 2 и 3)"""
+    rows = list(getattr(getattr(model, 'layout', None), 'all_rows', None) or [])
+    low = (variant_tex or '').lower()
+    red = next((i for i, row in enumerate(rows) if row and row[0].lower() == low), -1)
+    blue = blu_twin(rows, red) if red > 0 else 0
+    return rows[blue][0].lower() if blue else None
+
+
 # Шапка без QC и доп. текстуры по фиксированному пути
 
-_TF2_CLASSES = ["heavy", "scout", "soldier", "pyro",
-                "demoman", "engineer", "medic", "sniper", "spy"]
 
 _WORKSHOP_SWAPS = [
     ("materials/models/player/items",
@@ -339,10 +337,11 @@ def hat_vtf_paths(weapon_key: str) -> list:
     `%s` в пути раскрывается во все классы, каждый путь пробуется ещё и в
     папках workshop/workshop_partner
     """
-    mdl = weapon_key.replace("\\", "/").lower()
+    mdl = game_path(weapon_key)
     if "%s" in mdl:
         mdl_candidates = []
-        for cls in _TF2_CLASSES:
+        # Подрывник в путях - `demo` (tf2_classes)
+        for cls in PROBE_TOKENS:
             try:
                 v = mdl % cls
             except (TypeError, ValueError):
@@ -468,6 +467,9 @@ def style_pairs(layout, item_rows=()) -> tuple:
     styles = [idx for _label, idx in qc_skin_parser.selector_spec(layout).styles]
     styles += [idx for idx in item_rows
                if 0 < idx < len(rows) and idx not in styles and rows[idx] not in rows[:idx]]
+    # Синяя строка стиля (огонь Горящих рукавиц) - со своей текстурой
+    styles += [twin for twin in (blu_twin(rows, idx) for idx in list(styles))
+               if twin and twin not in styles]
     for idx in styles:
         if not 0 <= idx < len(rows):
             continue

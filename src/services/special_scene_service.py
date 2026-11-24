@@ -62,20 +62,19 @@ def find_scene_model(class_name: str = 'soldier') -> Tuple[str, str]:
 
 
 def vtf_to_png(vtf_path: str) -> str:
-    """VTF -> PNG во временный файл. Пустая строка, если не вышло"""
+    """VTF -> PNG во временный файл (общим декодером превью). Пустая
+    строка, если не вышло"""
+    from src.shared.file_utils import get_temp_file_path
+    from src.services.vtf_preview_service import vtf_bytes_to_png
+
     try:
-        from PIL import Image
-
-        from src.shared.file_utils import get_temp_file_path
-        from src.services.vtflib_wrapper import VTFLib
-
-        rgba, width, height = VTFLib.read_vtf_as_rgba(vtf_path)
-        png = str(get_temp_file_path(prefix='tf2_scene_tex_', suffix='.png'))
-        Image.frombytes('RGBA', (width, height), rgba).save(png)
-        return png
-    except Exception as exc:                      # noqa: BLE001 - VTFLib своё
+        with open(vtf_path, 'rb') as f:
+            data = f.read()
+    except OSError as exc:
         logger.warning(f"VTF→PNG сцены: {exc}")
         return ''
+    png = str(get_temp_file_path(prefix='tf2_scene_tex_', suffix='.png'))
+    return vtf_bytes_to_png(data, png) or ''
 
 
 def game_texture(mode: str, vpk_paths: List[Optional[str]]) -> str:

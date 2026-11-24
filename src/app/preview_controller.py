@@ -150,6 +150,7 @@ class Preview3DController:
         w.blu_ready.connect(self._on_blu_ready)
         w.blu_multi_material.connect(self._on_blu_multi_material)
         w.blu_same_as_red.connect(self._on_blu_same_as_red)
+        w.australium_blu_ready.connect(self._on_australium_blu_ready)
         w.australium_ready.connect(self._on_australium_ready)
         w.render_hints.connect(lambda hints: self.render_hints.emit(hints or {}))
         w.scene_extra.connect(self._on_scene_extra)
@@ -219,6 +220,12 @@ class Preview3DController:
         t.australium_frame = png_path
         t.australium_mat_name = mat_name or None
         self.australium_ready.emit(png_path, mat_name)
+
+    def _on_australium_blu_ready(self, png_path: str, mat_name: str) -> None:
+        """Синее золото (Посол): карточка австралия становится командной"""
+        t = self._session.textures
+        t.australium_blu_frame = png_path or None
+        t.australium_blu_mat = mat_name or None
 
     def _on_blu_same_as_red(self, twins) -> None:
         self._session.textures.blu_twins = {

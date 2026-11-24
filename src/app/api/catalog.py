@@ -153,10 +153,11 @@ def _character_icon(mode: str, cls: str) -> str:
     класса, тот же, что на странице звуков), руки - та самая текстура рук,
     которую карточка и правит, маски - значок маскировки
     """
-    from src.data.player_characters import CLASS_ICON, DISGUISE_ICON, SPY_MASK_MODE_KEY
+    from src.data.item_kinds import kind_of
+    from src.data.player_characters import CLASS_ICON, DISGUISE_ICON
     from src.data.player_hands import hands_icon
 
-    if mode == SPY_MASK_MODE_KEY:
+    if kind_of(mode).is_spy_mask:
         return DISGUISE_ICON
     return hands_icon(mode) or CLASS_ICON.format(cls.lower())
 
@@ -304,13 +305,12 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     на всю категорию («hat»), и по нему предмет не назвать. Нужен только для
     предлагаемого имени VPK
     """
-    from src.data.player_characters import PLAYER_BODY_MODE_KEYS, SPY_MASK_MODE_KEY
     from src.data.item_kinds import kind_of
-    from src.data.player_hands import HAND_MODE_KEYS
     from src.data.simple_models import category_of_mode
     from src.data.skyboxes import SKYBOX_MODE
     from src.domain.format_choices import (
-        VTF_FLAGS, VTF_FORMATS, allowed_flags_for_mode, allowed_formats_for_mode,
+        SKYBOX_FORCED_FLAGS, SKYBOX_FORCED_OPTIONS, VTF_FLAGS, VTF_FORMATS,
+        allowed_flags_for_mode, allowed_formats_for_mode,
     )
 
     from src.data.weapons import VTF_ONLY_SPECIAL_MODES
@@ -321,12 +321,11 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     # и правила показа у них общие: модель подменять нечем, стилей нет
     is_crit = mode == 'critHIT' or (bool(mode) and mode in VTF_ONLY_SPECIAL_MODES)
     is_skybox = mode == SKYBOX_MODE
-    is_hands = bool(mode) and mode in HAND_MODE_KEYS
-    is_body = bool(mode) and mode in PLAYER_BODY_MODE_KEYS
-    is_spy_mask = mode == SPY_MASK_MODE_KEY
+    kind = kind_of(mode)
+    is_hands, is_body, is_spy_mask = kind.is_hands, kind.is_character, kind.is_spy_mask
     is_normal = bool(mode) and not (is_crit or is_skybox or is_hands or is_body)
     # Предмет оружия из каталога (не снаряд и не реквизит насмешки)
-    held_weapon = (is_normal and kind_of(mode).is_weapon
+    held_weapon = (is_normal and kind.held
                    and not category_of_mode(mode))
     # Надетое (ботинки, щит, парашют, рюкзак знамени): от первого лица его не
     # видно, вместо этого - «На персонаже». Горн знамени - своя запись каталога
@@ -338,6 +337,7 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
     model_like = is_normal or is_hands or is_body
 
     allowed_flags = allowed_flags_for_mode(mode)
+    forced_flags = SKYBOX_FORCED_FLAGS if is_skybox else ()
 
     return {
         'mode': mode,
@@ -357,8 +357,13 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         # копия в разметке разъезжается с доменной, и страница присылала в
         # сборку подписи вместо имён - флаги на них терялись
         'flags': [{'key': key, 'label': label, 'adv': adv,
-                   'on': allowed_flags is None or key in allowed_flags}
+                   'on': allowed_flags is None or key in allowed_flags,
+                   'forced': key in forced_flags}
                   for key, label, adv in VTF_FLAGS],
+        # Опции, которые сборка режима ставит сама: имя -> значение
+        'options_locked': dict(SKYBOX_FORCED_OPTIONS) if is_skybox else {},
+        # Свои настройки карточки: сборка неба пишет все грани одними
+        'texture_settings': not is_skybox,
         'flags_enabled': not is_crit,
         'gamma': allowed_flags is None,
         'normal_map': model_like and not is_crit,
@@ -366,9 +371,9 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         'shoulders': is_hands,
         # Краски из игры - только у шапок: они красятся командным цветом через
         # VMT, и у оружия такой краски нет
-        'hat_paints': mode == 'hat',
+        'hat_paints': kind.asks_game_paints,
         # «На персонаже»: шапка, надетое оружие и оружие в руках - на классе
-        'wear': mode == 'hat' or worn_only,
+        'wear': kind.worn_on_player or worn_only,
         # Инструменты
         'extract_model': model_like,
         'extract_texture': model_like,
@@ -396,7 +401,7 @@ def controls_for(mode: str, key: str = '') -> Dict[str, object]:
         'taunt': category_of_mode(mode) == 'taunt',
         # War Paint игры: игра кладёт их на оружие в руках. Есть ли они у
         # этой пушки, страница узнаёт у каталога, когда модель приедет
-        'warpaint': (is_normal and kind_of(mode).is_weapon
+        'warpaint': (is_normal and kind.held
                      and not category_of_mode(mode)),
         'misc': not (is_hands or is_spy_mask),
         # Редактор VMT - там, где материал модели: у крита и неба

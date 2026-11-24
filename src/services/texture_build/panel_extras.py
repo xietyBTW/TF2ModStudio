@@ -146,7 +146,7 @@ def render_panel_extras(extras: dict, fixed_handled, ctx, slots, _eff) -> None:
         if _edited and os.path.exists(_edited):
             continue
         _v_vmt = slots.vmt(_pet_name.lower())   # как у рендера ниже
-        _orig = game_source.find_original_vmt(_pet_name, ctx, slots)
+        _orig = game_source.find_vmt_or_red(_pet_name, ctx, slots)
         if _orig and not _v_vmt.exists():
             copy_file_safe(_orig, _v_vmt)
             VMTService.update_vmt_basetexture_path(
@@ -210,9 +210,18 @@ def run_extra_render_jobs(
         except Exception as exc:
             return name, False, exc
 
+    # Правки VMT - снимок потока сборки: в потоках пула его нет, и они
+    # читали бы правки открытого сейчас предмета
+    from src.services.edited_vmt_service import EditedVMTService
+    edits = EditedVMTService.snapshot()
+
+    def _one_pinned(job):
+        with EditedVMTService.use(edits):
+            return _one(job)
+
     max_workers = min(len(jobs), (os.cpu_count() or 4))
     with _cf.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="vtf") as ex:
-        results = list(ex.map(_one, jobs))
+        results = list(ex.map(_one_pinned, jobs))
 
     for name, ok, err in results:
         if err is not None:

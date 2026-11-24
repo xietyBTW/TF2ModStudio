@@ -61,6 +61,29 @@ class ListSavedTests(unittest.TestCase):
             self.assertFalse((root / 'hat__demo').exists())
             self.assertTrue((root / 'c_knife__c_knife').exists())
 
+    def test_shot_lands_only_on_the_work_still_in_frame(self):
+        """Снимок ждёт, пока сцена успокоится: открыли другой предмет - это
+        уже не та работа, и чужая модель на обложке хуже никакой"""
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        from src.app.api import saved_works
+        buf = BytesIO()
+        Image.new('RGBA', (64, 64)).save(buf, 'PNG')
+        png = base64.b64encode(buf.getvalue()).decode()
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._folder(root, 'hat__demo', 1000.0)
+            frame = mock.Mock()
+            frame.work_state.return_value = {'key': 'c_knife__c_knife'}
+            with mock.patch.object(work_store, 'WORK_DIR', root), \
+                    mock.patch('src.app.session.session', return_value=frame):
+                self.assertIn('error', saved_works.save_work_shot('hat__demo', png))
+                frame.work_state.return_value = {'key': 'hat__demo'}
+                self.assertIn('shot', saved_works.save_work_shot('hat__demo', png))
+            self.assertTrue((root / 'hat__demo' / work_store.SHOT).is_file())
+
     def test_draft_nobody_saved_stays_out_of_the_library(self):
         """Открыл предмет, что-то тронул - это ещё не мод"""
         with TemporaryDirectory() as tmp:

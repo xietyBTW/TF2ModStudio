@@ -98,13 +98,13 @@ export function clearPreview() {
   withViewer((w) => w.resetViewer());
 }
 
-export async function startPreview(item) {
+export async function startPreview(item, { restore = false } = {}) {
   clearPreview();
 
   // У неба нет модели: вьювер ставит его кубмапой, а не мешем
   if (item.type === 'skybox') {
     say('Извлечение граней неба…');
-    const res = await api.loadSkybox(item.sky || item.key);
+    const res = await api.loadSkybox(item.sky || item.key, restore);
     if (res.error) sayError(res.error);
     return;
   }
@@ -293,7 +293,7 @@ export function applyView(st) {
 
   showMaterials(st.materials.length ? st.materials : Object.keys(st.textures),
                 st.textures, Boolean(st.style));
-  showBluChoices(st.blu_choices || {});
+  showBluChoices(st.blu_choices || {}, st.variant_choice);
   showStyleBar(st);
 
   // У одноматериальной модели ключ служебный (SINGLE_TEX_KEY) - имени меша с
@@ -484,25 +484,39 @@ const BLU_CHOICES = [['game', 'Игровая'], ['red', 'Как красная'
  * Своя синяя кладётся как любая картинка, и тогда выбирать нечего - ряда нет,
  * вернуть игровую можно из меню карточки
  */
-function showBluChoices(choices) {
+function showBluChoices(choices, variant) {
   for (const fig of stage.album.querySelectorAll('.frame')) {
-    const now = choices[fig.dataset.mat];
-    if (!now || now === 'own') continue;
-    const row = document.createElement('div');
-    row.className = 'frame__blu';
-    for (const [value, label] of BLU_CHOICES) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = t(label);
-      b.classList.toggle('is-active', value === now);
-      b.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (value !== now) applyView(await api.setBluChoice(fig.dataset.mat, value));
-      });
-      row.appendChild(b);
+    const mat = fig.dataset.mat;
+    if (variant && variant.card === mat) {
+      choiceRow(fig, VARIANT_CHOICES.filter(([v]) => variant.options.includes(v)),
+                variant.now, (value) => api.setVariantChoice(value));
+      continue;
     }
-    fig.querySelector('.frame__img').appendChild(row);
+    choiceRow(fig, BLU_CHOICES, choices[mat], (value) => api.setBluChoice(mat, value));
   }
+}
+
+//: Откуда картинка карточки австралия: [значение, подпись]
+const VARIANT_CHOICES = [['game', 'Игровая'], ['red', 'Как красная'], ['base', 'Как обычная']];
+
+/** Ряд выбора на карточке. Своя картинка ('own') - выбирать нечего, ряда нет:
+ *  вернуть игровую можно из меню карточки */
+function choiceRow(fig, entries, now, pick) {
+  if (!now || now === 'own') return;
+  const row = document.createElement('div');
+  row.className = 'frame__blu';
+  for (const [value, label] of entries) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = t(label);
+    b.classList.toggle('is-active', value === now);
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (value !== now) applyView(await pick(value));
+    });
+    row.appendChild(b);
+  }
+  fig.querySelector('.frame__img').appendChild(row);
 }
 
 /**

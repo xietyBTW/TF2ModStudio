@@ -23,6 +23,7 @@ import { openVmtEditor } from './vmt.js';
 import { applyView, markEditedStyles } from './preview.js';
 import { syncParts } from './parts.js';
 import { syncNormal } from './normals.js';
+import { shootCover, layFlat } from './cover-shot.js';
 
 
 // Что показывать: решает Python
@@ -81,6 +82,7 @@ export function applyControls(c, hasItem = true) {
   // импортируя modeControls (модули грузятся по кругу, и при старте
   // переменной ещё нет)
   document.documentElement.dataset.item = hasItem ? '1' : '';
+  document.documentElement.toggleAttribute('data-no-texset', c.texture_settings === false);
   document.dispatchEvent(new Event('controls:changed'));
   document.querySelectorAll('[data-cond]').forEach((el) => {
     const shown = Boolean(c[COND_KEY[el.dataset.cond]])
@@ -168,9 +170,31 @@ function showFlagChecks(c) {
       }
     }
     [...box.querySelectorAll('.check')].forEach((label, i) => {
-      label.querySelector('input').disabled =
-        !c.flags_enabled || !mine[i] || !mine[i].on;
+      const input = label.querySelector('input');
+      lockCheck(input, mine[i]?.forced ? true : undefined);
+      if (!mine[i]?.forced) input.disabled = !c.flags_enabled || !mine[i] || !mine[i].on;
     });
+  }
+  // Опции, которые сборка режима ставит сама (у неба - без мипов)
+  const locked = c.options_locked || {};
+  document.querySelectorAll('.build__col[data-col="options"] > .check input').forEach((input) => {
+    lockCheck(input, locked[checkName(input.closest('.check'))]);
+  });
+}
+
+/** Запирает галку в значении `value`, которое за человека решает сборка;
+ *  `undefined` - отпирает, и запертое включение не уезжает в другой режим */
+function lockCheck(input, value) {
+  if (value !== undefined) {
+    if (!input.dataset.locked) input.dataset.was = input.checked ? '1' : '';
+    input.dataset.locked = '1';
+    input.checked = Boolean(value);
+    input.disabled = true;
+  } else if (input.dataset.locked) {
+    input.checked = input.dataset.was === '1';
+    delete input.dataset.locked;
+    delete input.dataset.was;
+    input.disabled = false;
   }
 }
 
@@ -347,6 +371,9 @@ async function keepWork() {
   if (res.error) { notifyApp(res.error, 'error'); return; }
   notifyApp('Работа сохранена - она в разделе «Кастомный мод»');
   showWork(res);
+  // Обложка - то, что сейчас в кадре: модель с правками уже стоит
+  shootCover({ lay: layFlat, fresh: false, follow: true },
+             (png) => api.saveWorkShot(res.key, png));
 }
 
 async function restoreWork() {

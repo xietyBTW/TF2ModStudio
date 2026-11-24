@@ -47,16 +47,19 @@ class BuildWorker(StandardWorker):
         t = TRANSLATIONS.get(r.language, TRANSLATIONS['en'])
         if self._prepare is not None:
             self._prepare(self.sub_progress.emit)
-        success, message, cancelled = VPKService.build_with_progress(
-            r,
-            model_file_callback=None,
-            extra_texture_callback=self._request_extra_texture_callback,
-            extra_model_callback=self._request_extra_model_callback if r.replace_model_enabled else None,
-            texture_mismatch_callback=self._texture_mismatch_callback if r.model_ready_path else None,
-            progress_callback=self.progress.emit,
-            sub_progress_callback=self.sub_progress.emit,
-            cancel_callback=self.isInterruptionRequested,
-        )
+        # Правки VMT - снимком из запроса: человек мог уже открыть другой предмет
+        from src.services.edited_vmt_service import EditedVMTService
+        with EditedVMTService.use(r.vmt_edits):
+            success, message, cancelled = VPKService.build_with_progress(
+                r,
+                model_file_callback=None,
+                extra_texture_callback=self._request_extra_texture_callback,
+                extra_model_callback=self._request_extra_model_callback if r.replace_model_enabled else None,
+                texture_mismatch_callback=self._texture_mismatch_callback if r.model_ready_path else None,
+                progress_callback=self.progress.emit,
+                sub_progress_callback=self.sub_progress.emit,
+                cancel_callback=self.isInterruptionRequested,
+            )
 
         if cancelled:
             return False, t.get('build_cancelled', 'Build cancelled by user')

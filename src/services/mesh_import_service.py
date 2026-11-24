@@ -52,6 +52,9 @@ MAX_STUDIO_SKINS = 32
 SIMPLIFY_TARGET_TRIANGLES = 60000
 
 SUPPORTED_EXTENSIONS = ('.obj', '.gltf', '.glb')
+#: Чем можно заменить модель: SMD из Blender и форматы «из интернета». Один
+#: список на фильтр окна выбора, страницу и проверку загрузки
+MODEL_EXTENSIONS = ('.smd',) + SUPPORTED_EXTENSIONS
 
 Vec3 = Tuple[float, float, float]
 

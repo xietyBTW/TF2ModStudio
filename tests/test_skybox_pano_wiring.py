@@ -93,3 +93,41 @@ class SkyboxPanoWiringTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SkyboxSwitchTests(unittest.TestCase):
+    """Другое небо - другой предмет: панорама «Все карты» не переезжает на
+    выбранное небо, а работа пишется под именем неба"""
+
+    def setUp(self):
+        self.session = AppSession()
+        self.paths = patch.object(self.session, 'tf2_paths', return_value={'root': 'C:/tf2'})
+        self.paths.start()
+        self.load = patch.object(self.session.skybox, 'load').start()
+        self.split = patch.object(self.session.skybox, 'split').start()
+
+    def tearDown(self):
+        patch.stopall()
+
+    def _pano(self, path='C:/pano.png'):
+        from src.domain.preview.texture_state import Team
+        self.session.preview.textures.textures[Team.RED][SKY_PANO_KEY] = path
+
+    def test_other_sky_starts_clean(self):
+        from src.data.skyboxes import SKY_ALL_MAPS_KEY
+        self.session.load_skybox(SKY_ALL_MAPS_KEY)
+        self._pano()
+        self.session.preview.textures.skybox_split_faces = {'up': 'C:/up.png'}
+        with patch('src.domain.preview.texture_state._existing', side_effect=lambda p: p):
+            self.session.load_skybox('sky_upward')
+            self.assertIsNone(self.session.preview.textures.skybox_pano())
+        self.assertEqual(self.session.preview.textures.skybox_split_faces, {})
+        self.assertEqual(self.session._work_key(), 'skybox__sky_upward')
+
+    def test_same_sky_keeps_its_pano(self):
+        self.session.load_skybox('sky_upward')
+        self._pano()
+        with patch('src.domain.preview.texture_state._existing', side_effect=lambda p: p):
+            self.session.load_skybox('sky_upward')
+            self.assertEqual(self.session.preview.textures.skybox_pano(), 'C:/pano.png')
+        self.split.assert_called_with('C:/pano.png')

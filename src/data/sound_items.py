@@ -12,9 +12,10 @@ from __future__ import annotations
 import re
 from typing import Dict, Tuple
 
+from src.data.tf2_classes import CLASSES
+
 _SOUND_KEY = re.compile(r'"(sound_[a-z0-9_]+)"\s+"([^"]+)"')
-_CLASS_ON = re.compile(
-    r'"(scout|soldier|pyro|demoman|heavy|engineer|medic|sniper|spy)"\s+"1"')
+_CLASS_ON = re.compile(r'"(' + '|'.join(CLASSES) + r')"\s+"1"')
 
 
 def _item_classes(game, block: str) -> set:

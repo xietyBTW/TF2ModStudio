@@ -8,6 +8,8 @@ import string
 from pathlib import Path
 from typing import List, Optional, Tuple
 from src.shared.paths import install_dir
+from src.data.tf2_classes import CLASSES, PROBE_TOKENS, class_of_model, with_class
+from src.shared.game_paths import game_path
 
 #: Номер TF2 в Steam: по нему в библиотеке лежит appmanifest_440.acf
 TF2_APP_ID = "440"
@@ -298,13 +300,8 @@ class TF2Paths:
 
 # Кандидаты MDL-путей для шапок (единая логика для сборки/превью/извлечения)
 
-#: Токены классов в путях к моделям. У подрывника файлы называются `_demo`,
-#: но старые моды встречаются и с `_demoman` - держим оба, кандидаты всё равно
-#: перебираются по порядку
-_TF2_CLASSES = (
-    "heavy", "scout", "soldier", "pyro",
-    "demo", "demoman", "engineer", "medic", "sniper", "spy",
-)
+#: Токены классов в путях моделей (у подрывника `_demo`) в порядке перебора
+_TF2_CLASSES = PROBE_TOKENS
 
 
 def build_hat_mdl_candidates(mdl_rel: str) -> list:
@@ -321,8 +318,7 @@ def build_hat_mdl_candidates(mdl_rel: str) -> list:
     Все пути приводятся к нижнему регистру (в VPK ключи - lowercase).
     Используется в сборке, 3D-превью и извлечении
     """
-    import re
-    norm = mdl_rel.replace("\\", "/").lower()
+    norm = game_path(mdl_rel)
 
     # 1. %s -> классы
     if "%s" in norm:
@@ -357,15 +353,11 @@ def build_hat_mdl_candidates(mdl_rel: str) -> list:
                 break
 
     # 3. Суффиксы класса (_heavy -> остальные классы)
-    cls_pat = re.compile(
-        r'_(heavy|scout|soldier|pyro|demoman|engineer|medic|sniper|spy)\.mdl$'
-    )
     extra = []
     for c in list(paths):
-        if cls_pat.search(c):
-            for cls in _TF2_CLASSES:
-                # группа всегда оканчивается на .mdl - подставляем явно
-                variant = cls_pat.sub(f'_{cls}.mdl', c)
+        if c.endswith('.mdl') and class_of_model(c):
+            for cls in CLASSES:
+                variant = with_class(c, cls)
                 if variant not in paths and variant not in extra:
                     extra.append(variant)
     paths += extra

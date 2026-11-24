@@ -27,33 +27,66 @@ export function showBodygroups(groups) {
   bar.innerHTML = '';
   bar.hidden = !groups.length || work.dataset.scene !== 'item';
   if (bar.hidden) return;
-  for (const g of groups) {
-    // Группа - своим блоком: в панели кадра между группами черта
-    const part = document.createElement('span');
-    part.className = 'vcorner__part';
-    const label = document.createElement('span');
-    label.className = 'label label--inline';
+  // «Пусто или одна часть» - не состояние, а выключатель куска: у бассейна
+  // пиро их четыре (бассейн, зажигалка, канистра, уточка), и по ряду
+  // «Состояние · …» на каждый панель уезжала за край кадра
+  const toggles = groups.filter((g) => !g.projectile && g.variants.length === 2
+    && g.variants.includes('без части'));
+  const states = toggles.length > 1 ? groups.filter((g) => !toggles.includes(g)) : groups;
+  for (const g of states) {
     // Снаряд в оружии - не состояние, а деталь: виден, пока его правят
-    label.textContent = g.projectile
+    const title = g.projectile
       ? (g.custom ? 'Свой снаряд в оружии' : 'Снаряд в оружии')
-      : groups.length > 1 ? `Состояние · ${g.name}` : 'Состояние модели';
-    part.appendChild(label);
-    bar.appendChild(part);
+      : states.length > 1 ? `Состояние · ${g.name}` : 'Состояние модели';
+    const part = addPart(bar, title);
     g.variants.forEach((name, i) => {
-      const b = document.createElement('button');
-      b.className = 'tag' + (i === g.chosen ? ' is-active' : '');
-      b.textContent = name;
-      b.addEventListener('click', async () => {
-        if (i === g.chosen) return;
-        closeParts();
-        say('Собираю состояние…');
-        const res = await api.setBodygroup(g.name, i);
-        if (res.error) { sayError(res.error); return; }
-        applyView(res);
-      });
-      part.appendChild(b);
+      part.appendChild(bodyButton(name, i === g.chosen, () => g.chosen === i ? null : i, g));
     });
   }
+  if (toggles.length > 1) {
+    const part = addPart(bar, 'Части');
+    for (const g of toggles) {
+      const blank = g.variants.indexOf('без части');
+      const shown = 1 - blank;
+      const b = bodyButton(g.variants[shown], g.chosen === shown,
+        () => (g.chosen === shown ? blank : shown), g);
+      // Основной меш модели превью рисует всегда - выключать его нечем
+      if (g.default === shown) {
+        b.classList.add('is-active');
+        b.disabled = true;
+      }
+      part.appendChild(b);
+    }
+  }
+}
+
+/** Блок панели с подписью: между блоками черта */
+function addPart(bar, title) {
+  const part = document.createElement('span');
+  part.className = 'vcorner__part';
+  const label = document.createElement('span');
+  label.className = 'label label--inline';
+  label.textContent = title;
+  part.appendChild(label);
+  bar.appendChild(part);
+  return part;
+}
+
+/** Кнопка варианта бодигруппы. `next()` - какой вариант включить, null - ничего */
+function bodyButton(name, active, next, group) {
+  const b = document.createElement('button');
+  b.className = 'tag' + (active ? ' is-active' : '');
+  b.textContent = name;
+  b.addEventListener('click', async () => {
+    const choice = next();
+    if (choice === null) return;
+    closeParts();
+    say('Собираю состояние…');
+    const res = await api.setBodygroup(group.name, choice);
+    if (res.error) { sayError(res.error); return; }
+    applyView(res);
+  });
+  return b;
 }
 
 //: Подписи видов гирлянды. Ключи задаёт Python (festive_decor / items_game)

@@ -176,6 +176,22 @@ def _unpack(blob: Optional[bytes]) -> List[bytes]:
     return pngs
 
 
+def vtf_bytes_to_png_bytes(data: Optional[bytes]) -> Optional[bytes]:
+    """PNG первого кадра VTF в памяти (кэш общий с остальным превью)"""
+    if not data:
+        return None
+    # Имя временного VTF - по содержимому: два одновременных запроса с
+    # общим именем перезаписали бы файл друг другу, а кэш запомнил бы чужое
+    label = hashlib.blake2b(data, digest_size=8).hexdigest()
+    pngs = _decode_pngs(data, tempfile.gettempdir(), label, all_frames=False)
+    return pngs[0] if pngs else None
+
+
+def png_size(png: bytes) -> tuple:
+    """(ширина, высота) из заголовка PNG"""
+    return struct.unpack(">II", png[16:24])
+
+
 def vtf_bytes_to_png(data: Optional[bytes], out_png_path: str,
                      tmp_dir: Optional[str] = None) -> Optional[str]:
     """

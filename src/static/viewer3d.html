@@ -280,8 +280,11 @@ import * as _select from './js/viewer_select.js';
 import * as _tex from './js/viewer_textures.js';
 import { createAnims as _createAnims } from './js/viewer_anims.js';
 import { createFire as _createFire } from './js/viewer_fire.js';
+import { createFitPivot as _createFitPivot, fitPose as _fitPoseOf,
+         fitFromNode as _fitFromNode } from './js/viewer_fit_pivot.js';
 import { buildSoldierGroup } from './js/viewer/soldier.js';
 import { SRC_FACE_MAP, buildSkyCube } from './js/viewer/skybox.js';
+import { snapshotWaiter as _snapshotWaiter } from './js/viewer_snapshot.js';
 
 // Что было на window до модуля: в конце отличаем свой API от чужого
 const _globalsBefore = new Set(Object.keys(window));
@@ -1015,9 +1018,6 @@ let _fitMode = false;
 // поверх оружия. Гизмо, G/R/S и числа у обеих одни и те же
 let _fitTarget = 'model';
 let _fitControls = null;
-// Оси SMD -> оси сцены: (x, y, z) -> (x, z, −y), как в SmdToObjService
-const _FIT_C = new THREE.Matrix4().set(1, 0, 0, 0,  0, 0, 1, 0,  0, -1, 0, 0,  0, 0, 0, 1);
-const _FIT_CT = _FIT_C.clone().transpose();
 
 function _isGhost(obj) {
   return obj.isMesh && obj.material && !Array.isArray(obj.material)
@@ -1032,16 +1032,8 @@ function _fitNode() {
   return _ensureFitGroup();
 }
 
-/** Числа подгонки в осях SMD -> положение узла в осях сцены */
-function _fitPose(scale, rotate, offset) {
-  const d = Math.PI / 180;
-  const R = new THREE.Matrix4().makeRotationZ(rotate[2] * d)
-    .multiply(new THREE.Matrix4().makeRotationY(rotate[1] * d))
-    .multiply(new THREE.Matrix4().makeRotationX(rotate[0] * d));
-  const M = _FIT_C.clone().multiply(R).multiply(_FIT_CT);
-  return { quat: new THREE.Quaternion().setFromRotationMatrix(M),
-           scale, pos: new THREE.Vector3(offset[0], offset[2], -offset[1]) };
-}
+// Числа подгонки <-> положение узла: js/viewer_fit_pivot.js
+const _fitPose = (scale, rotate, offset) => _fitPoseOf(THREE, scale, rotate, offset);
 
 /** Гирлянда встаёт по своей подгонке (единица - где её вешает игра) */
 function _placeDecorFit() {
@@ -1063,7 +1055,7 @@ function _ensureFitGroup() {
   currentModel.add(_fitGroup);
   // attach() у TransformControls сам включает visible: вне режима гизмо
   // висело бы над моделью, у которой просто выставили числа подгонки
-  if (_fitControls && _fitMode && _fitTarget === 'model') _fitControls.attach(_fitGroup);
+  if (_fitControls && _fitMode && _fitTarget === 'model') _attachGizmo(_fitGroup);
   return _fitGroup;
 }
 
@@ -1099,6 +1091,16 @@ function _placeFit(group, f) {
   group.position.copy(f.pos);
 }
 
+// Гизмо держит опору в центре модели, а не её ноль: js/viewer_fit_pivot.js
+const _pivot = _createFitPivot(THREE);
+
+function _attachGizmo(node) {
+  if (!_fitControls) return;
+  if (!node) { _fitControls.detach(); return; }
+  _pivot.sync(node);
+  _fitControls.attach(_pivot.object);
+}
+
 function _stepFitTween() {
   if (!_fitTween) return;
   const { group, from, to } = _fitTween;
@@ -1113,21 +1115,7 @@ function _stepFitTween() {
   if (k >= 1) _fitTween = null;
 }
 
-/** Обратно: трансформ группы -> числа подгонки в осях SMD */
-function _fitFromGroup(group) {
-  // Масштаб только равномерный: сборке нужен один множитель
-  const s = (group.scale.x + group.scale.y + group.scale.z) / 3;
-  group.scale.setScalar(s);
-  const M = _FIT_CT.clone().multiply(new THREE.Matrix4().makeRotationFromQuaternion(group.quaternion)).multiply(_FIT_C);
-  // Fit.matrix() у Python - Rz·Ry·Rx, у THREE это порядок 'ZYX'
-  const e = new THREE.Euler().setFromRotationMatrix(M, 'ZYX');
-  const deg = (v) => Math.round(v * 180 / Math.PI * 10) / 10;
-  const p = group.position;
-  const r1 = (v) => Math.round(v * 10) / 10;
-  return { scale: Math.round(s * 1000) / 1000,
-           rotate: [deg(e.x), deg(e.y), deg(e.z)],
-           offset: [r1(p.x), r1(-p.z), r1(p.y)] };
-}
+const _fitFromGroup = (group) => _fitFromNode(THREE, group);
 
 window.setFitMode = function(on, target = 'model') {
   _fitMode = Boolean(on);
@@ -1143,11 +1131,14 @@ window.setFitMode = function(on, target = 'model') {
       // стрелки по её собственным осям смотрели вкось и расходились с клавишами
       _fitControls.setSpace('world');
       _fitControls.addEventListener('dragging-changed', e => { controls.enabled = !e.value; });
-      _fitControls.addEventListener('objectChange', () => _fitOpEmit());
+      _fitControls.addEventListener('objectChange', () => {
+        const node = _fitNode();
+        if (node && _fitControls.object === _pivot.object) _pivot.apply(node);
+        _fitOpEmit();
+      });
       scene.add(_fitControls);
     }
-    const group = _fitNode();
-    if (group) _fitControls.attach(group); else _fitControls.detach();
+    _attachGizmo(_fitNode());
     _fitControls.enabled = true;
   } else if (_fitControls) {
     // Enter или «Готово» посреди G/R/S: трансформ уже отдан - подтверждаем,
@@ -1176,7 +1167,7 @@ window.setFitTool = function(mode) {
   if (_bendOn) { _fitControls.detach(); return; }
   _fitControls.setMode(mode);
   const node = _fitMode ? _fitNode() : null;
-  if (node && _fitControls.object !== node) _fitControls.attach(node);
+  if (node && _fitControls.object !== _pivot.object) _attachGizmo(node);
 };
 
 // Модальные операции, как в Blender
@@ -1216,10 +1207,12 @@ window.startFitOp = function(tool) {
   if (_fitOp) _fitOpCancel();
   _fitTween = null;                 // рукой - значит с того места, где модель сейчас
   group.updateMatrixWorld(true);
-  const pivotWorld = new THREE.Vector3().setFromMatrixPosition(group.matrixWorld);
+  // Опора - центр модели, а не её ноль (js/viewer_fit_pivot.js)
+  const pivotWorld = _pivot.centerWorld(group);
   _fitOp = {
     tool, axis: null,
     start: { pos: group.position.clone(), quat: group.quaternion.clone(), scale: group.scale.x },
+    center: group.position.clone().add(_pivot.centerIn(group, group.quaternion, group.scale.x)),
     mouse0: { x: _mouse.x, y: _mouse.y },
     pivot: _screenOf(pivotWorld), pivotWorld,
   };
@@ -1351,6 +1344,10 @@ function _fitOpApply() {
     // Экранный угол по часовой (y вниз) - в мировом это против оси на камеру
     const q = new THREE.Quaternion().setFromAxisAngle(axis, -angle);
     group.quaternion.copy(q.multiply(start.quat));
+  }
+  if (op.tool === 'scale' || op.tool === 'rotate') {
+    // Поворот и масштаб - вокруг центра модели: он остаётся на месте
+    group.position.copy(op.center).sub(_pivot.centerIn(group, group.quaternion, group.scale.x));
   } else {
     // Сдвиг в плоскости камеры на глубине опоры: пиксели -> мировые единицы
     const r = renderer.domElement.getBoundingClientRect();
@@ -1565,9 +1562,9 @@ window.setViewRig = function(rig) {
   if (_viewRig && currentModel) _applyFirstPersonRig(currentModel);
 };
 
-function applyTexture(object, tex) {
+function applyTexture(object, tex, which = () => true) {
   object.traverse(child => {
-    if (!child.isMesh) return;
+    if (!child.isMesh || !which(child)) return;
     // Preserve the material name so applyMaterialMap can still match by name
     const prevMatName = child.material && !Array.isArray(child.material)
       ? child.material.name : '';
@@ -1603,6 +1600,9 @@ function _loadTextureThen(dataUrl, onLoaded) {
   );
 }
 
+// Снимок обложки (js/viewer_snapshot.js): FP, крит и скайбокс - сцена, не предмет
+window.snapshotWhenSettled = _snapshotWaiter(THREE, renderer, scene, () => currentModel,
+  o => !_isGhost(o), () => !_viewRig && !_isCritHitMode && !_skinned && !_isSkyboxMode);
 // Анимирует CritHIT billboard массивом уже загруженных Three.js текстур
 function _animateCritSprite(textures, fps) {
   if (_critAnimTimer !== null) { clearInterval(_critAnimTimer); _critAnimTimer = null; }
@@ -1661,13 +1661,10 @@ window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale
       });
       console.log(_meshLog);
 
-      // Грузим текстуру ПОСЛЕ того как OBJ уже в сцене - исключает race condition
-      if (texDataUrl && texDataUrl.length > 0) {
-        _loadTextureThen(texDataUrl, tex => {
-          // Применяем только если модель не сменилась за время загрузки
-          if (currentModel === object) applyTexture(object, tex);
-        });
-      }
+      // Грузим после OBJ и только на ту же модель. Свои картинки материалов
+      // (работа) могли приехать раньше игровой, она их не перекрывает
+      if (texDataUrl) _loadTextureThen(texDataUrl, tex => currentModel === object
+        && applyTexture(object, tex, c => !_wantedUrl[c.name] && !_wantedUrl[c.material?.name]));
 
       // Сначала неподвижные текстуры: картинка в общей раздаче сняла бы
       // анимацию со своего материала
@@ -3385,6 +3382,11 @@ function animate() {
   const playing = !!(_skinned && _skinned.action && !_skinned.action.paused);
   _stepCameraFly();
   _stepFitTween();
+  // Опора гизмо за моделью: её двигают и числа, и G/R/S, и автоподгонка.
+  // Пока гизмо тянут, ведёт оно само
+  if (_fitControls && _fitControls.object === _pivot.object && !_fitControls.dragging) {
+    _pivot.sync(_fitNode());
+  }
   controls.update();
   // Инспектор - только у обычной модели (не CritHIT); модели не стало - гаснет
   if (_inspectMode && (!currentModel || _isCritHitMode)) _setInspectMode(false);

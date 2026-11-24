@@ -19,7 +19,8 @@ SNIPER = ([['c_sniperrifle', 'c_sniperrifle_gold']] * 8
 class ForceTeamRowsTests(unittest.TestCase):
 
     def test_australium_rows_survive(self):
-        """Снайперка: BLU-строки 1/3/5/7 синие, золото 8/9 не тронуто"""
+        """Снайперка: BLU-строки 1/3/5/7 синие, у золота 8/9 синяя 9-я:
+        синий австралий в игре - свой скин"""
         rows = q.force_team_rows(SNIPER, ['c_sniperrifle'])
         self.assertEqual(len(rows), 10)
         for i in (0, 2, 4, 6):
@@ -27,7 +28,7 @@ class ForceTeamRowsTests(unittest.TestCase):
         for i in (1, 3, 5, 7):
             self.assertEqual(rows[i], ['c_sniperrifle_blue', 'c_sniperrifle_gold'])
         self.assertEqual(rows[8], SNIPER[8])
-        self.assertEqual(rows[9], SNIPER[9])
+        self.assertEqual(rows[9], ['c_sniperrifle_gold_blue'] * 2)
 
     def test_result_is_native_team(self):
         """После синтеза раскладка читается командной, как у медигана"""
@@ -42,7 +43,8 @@ class ForceTeamRowsTests(unittest.TestCase):
             + [['c_grenadelauncher_gold', 'c_grenadelauncher_gold']] * 2,
             ['c_grenadelauncher'])
         self.assertEqual(rows[1][0], 'c_grenadelauncher_blue')
-        self.assertEqual(rows[2:], [['c_grenadelauncher_gold'] * 2] * 2)
+        self.assertEqual(rows[2:], [['c_grenadelauncher_gold'] * 2,
+                                    ['c_grenadelauncher_gold_blue'] * 2])
 
     def test_single_row_gets_blue_pair(self):
         self.assertEqual(q.force_team_rows([['c_shotgun']], ['c_shotgun']),
@@ -104,7 +106,8 @@ class ApplyForceTeamQcTests(unittest.TestCase):
             out = q.parse_texturegroup_rows(str(qc))
         self.assertEqual(len(out), 10)
         self.assertEqual(out[1], ['c_sniperrifle_blue', 'c_sniperrifle_gold'])
-        self.assertEqual(out[9], ['c_sniperrifle_gold', 'c_sniperrifle_gold'])
+        self.assertEqual(out[8], ['c_sniperrifle_gold', 'c_sniperrifle_gold'])
+        self.assertEqual(out[9], ['c_sniperrifle_gold_blue', 'c_sniperrifle_gold_blue'])
 
 
 if __name__ == '__main__':

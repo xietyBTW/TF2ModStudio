@@ -10,10 +10,9 @@
  */
 
 import * as api from './api.js';
-import { fileSize, plural } from './util.js';
-import { openMod, pickVpkMod, pickModFolder } from './mod-library.js';
-import { ask } from './ask.js';
-import { say, sayError } from './stage.js';
+import { plural } from './util.js';
+import { showModLibrary, bindLibraryDrop } from './catalog-library.js';
+import { say } from './stage.js';
 import {
   root,
   catalog,
@@ -40,7 +39,7 @@ import { diagDlg, diagSay } from './diagnostics.js';
 import { applyLook } from './settings.js';
 import { setMode, modeControls } from './controls.js';
 import { pcfNodes } from './particles/state.js';
-import { startPreview, startHatWork, clearPreview, resetView, lastModel } from './preview.js';
+import { startPreview, clearPreview, resetView, lastModel } from './preview.js';
 import { flipList } from './motion.js';
 import { clearCovers, fillCover } from './catalog-cover.js';
 import { showWindowed } from './catalog-window.js';
@@ -64,6 +63,8 @@ export const els = {
 export const sel = { section: 'weapons', category: 'weapon', cls: null,
               type: null, region: null, collection: null, mode: 'normal',
               query: '' };
+
+bindLibraryDrop();
 
 /** Рисует ряд фильтров; null-кнопка «Все» снимает ограничение. Без all
  *  «Все» нет: категория оружия - всегда одна */
@@ -194,208 +195,12 @@ function classTag(item) {
 }
 
 /** Сколько предметов показано. Пусто - счётчик прячется, о нуле скажет note */
-function showCount(n) {
+export function showCount(n) {
   const el = document.getElementById('cat-count');
   el.hidden = n === 0;
   el.textContent = n + ' ' + plural(n, 'предмет', 'предмета', 'предметов');
 }
 
-// Импорт ZIP или папки пополнил библиотеку - перерисовать, если она открыта
-document.addEventListener('mods:changed', () => {
-  if (sel.category === 'custom') showModLibrary();
-});
-
-/**
- * Категория «Кастомный мод»: дверь к файлу и всё, что через неё уже прошло
- *
- * Мод - это ВЫБОР предмета, а не действие над загруженным: он заменяет собой
- * и модель, и текстуры. Поэтому живёт в каталоге рядом с оружием и шапками, а
- * не в ряду кнопок под моделью.
- */
-export async function showModLibrary() {
-  clearCovers(els.grid);
-  els.note.hidden = false;
-  els.note.textContent = 'Свои работы и моды из VPK. Предмет из списка оружия '
-    + 'открывается игровым - сохранённая работа открывается отсюда.';
-
-  // Сверху моды из VPK (первой - дверь к новому файлу), под полосой - свои
-  // работы: в одной сетке они путались, хвост модов уезжал в ряд к работам
-  const open = document.createElement('button');
-  open.className = 'pick pick--open';
-  open.innerHTML = `<span class="pick__box"></span>
-    <span class="pick__name">Открыть мод…</span>
-    <span class="mono">VPK или ZIP</span>`;
-  open.addEventListener('click', pickVpkMod);
-  const folder = document.createElement('button');
-  folder.className = 'pick pick--open';
-  folder.innerHTML = `<span class="pick__box"></span>
-    <span class="pick__name">Открыть папку мода…</span>
-    <span class="mono">как в tf/custom</span>`;
-  folder.addEventListener('click', pickModFolder);
-  els.grid.append(open, folder);
-
-  const mods = await api.modLibrary();
-  for (const mod of mods) {
-    const card = document.createElement('button');
-    card.className = 'pick pick--mod';
-    card.innerHTML = `<span class="pick__box"></span>
-      <span class="pick__name"></span><span class="mono"></span>`;
-    card.querySelector('.pick__name').textContent = mod.name;
-    card.querySelector('.mono').textContent = fileSize(mod.size);
-    card.addEventListener('click', () => openMod(mod));
-    showModIcon(card, mod);
-
-    // Удаление - на самой карточке: искать папку на диске ради этого не
-    // должно быть нужно. Спрашиваем подтверждение: файл уйдёт насовсем
-    const drop = document.createElement('span');
-    drop.className = 'pick__drop';
-    drop.title = 'Убрать из библиотеки (исходный файл останется)';
-    drop.textContent = '×';
-    drop.addEventListener('click', async (e) => {
-      e.stopPropagation();                  // не открыть заодно
-      // Про исходный файл говорим прямо: в библиотеке лежит НАША копия, и
-      // «убрать» здесь не трогает то, что человек когда-то выбрал на диске
-      const yes = await ask({
-        title: 'Убрать мод из библиотеки',
-        text: `${mod.name}\nУдалится копия в библиотеке. Исходный файл, который вы открывали, останется на месте.`,
-        ok: 'Убрать',
-      });
-      if (!yes) return;
-      const res = await api.removeMod(mod.name);
-      if (res.error) { sayError(res.error); return; }
-      await showModLibrary();
-    });
-    card.append(drop);
-    els.grid.append(card);
-  }
-
-  const rule = document.createElement('div');
-  rule.className = 'catalog__rule';
-  rule.textContent = 'Мои работы';
-  els.grid.append(rule);
-  const works = await showWorks();
-  if (!works) rule.remove();
-  // Счётчик строится мимо fillGrid, обновить его надо самим: иначе тут
-  // висит число от прошлой категории
-  showCount(works + mods.length);
-}
-
-/**
- * Обложка мода на карточке
- *
- * Готовую ставим сразу, недостающую просим построить - по одной и не блокируя
- * список: первое открытие каталога иначе ждало бы декодирования всех текстур
- * библиотеки.
- */
-async function showModIcon(card, mod) {
-  const put = (path) => {
-    if (!path) return;
-    const img = document.createElement('img');
-    img.className = 'pick__icon';
-    img.alt = '';
-    img.addEventListener('error', () => img.remove());
-    img.src = api.fileUrl(path);
-    card.querySelector('.pick__box').append(img);
-  };
-
-  if (mod.icon) { put(mod.icon); return; }
-  const res = await api.modIcon(mod.name);
-  // Карточка могла уехать, пока строилась обложка (удалили, сменили раздел)
-  if (card.isConnected) put(res.icon);
-}
-
-/**
- * Сохранённые работы - карточками, как предметы
- *
- * Работа не возвращается молча при открытии предмета: список оружия
- * показывает игру, а свой обрез открывается отсюда, иначе к игровому было бы
- * не вернуться.
- */
-async function showWorks() {
-  const list = await api.works();
-  if (!list.length) return 0;
-
-  for (const work of list) {
-    const card = document.createElement('button');
-    card.className = 'pick pick--work';
-    card.innerHTML = `<span class="pick__box"></span>
-      <span class="pick__name"></span><span class="mono"></span>`;
-    card.querySelector('.pick__name').textContent = work.name;
-    card.querySelector('.mono').textContent = whenSaved(work.saved_at);
-    if (work.icon) {
-      const img = document.createElement('img');
-      img.className = 'pick__icon';
-      img.loading = 'lazy';
-      img.alt = '';
-      img.addEventListener('error', () => img.remove());
-      img.src = api.iconUrl(work.icon);
-      card.querySelector('.pick__box').appendChild(img);
-    }
-    card.addEventListener('click', () => openWork(work));
-
-    // Удаление - как у модов, на самой карточке. Работа уходит насовсем:
-    // копии, как у мода из VPK, у неё нет
-    const drop = document.createElement('span');
-    drop.className = 'pick__drop';
-    drop.title = 'Удалить работу';
-    drop.textContent = '×';
-    drop.addEventListener('click', async (e) => {
-      e.stopPropagation();                  // не открыть заодно
-      const yes = await ask({
-        title: 'Удалить работу',
-        text: `${work.name}\nРабота удалится насовсем вместе с её файлами. Игровой предмет не изменится.`,
-        ok: 'Удалить',
-      });
-      if (!yes) return;
-      const res = await api.deleteWork(work.key);
-      if (res.error) { sayError(res.error); return; }
-      await showModLibrary();
-    });
-    card.append(drop);
-    els.grid.append(card);
-  }
-  return list.length;
-}
-
-/** Когда сохранено - словами: точное время тут ничего не решает */
-function whenSaved(stamp) {
-  const days = Math.floor((Date.now() / 1000 - (stamp || 0)) / 86400);
-  if (days <= 0) return 'сегодня';
-  if (days === 1) return 'вчера';
-  // Целой фразой: словарь узнаёт «{} дня назад», а слово по отдельности
-  // оставляло бы «3 days назад»
-  return plural(days, `${days} день назад`, `${days} дня назад`, `${days} дней назад`);
-}
-
-/**
- * Открывает работу: тот же предмет, но с восстановленными правками
- *
- * Ключ модели передаём явно. Из режима его выводит Python, но только у
- * оружия: у шапки модель задаётся выбором в каталоге, и без ключа работа по
- * шапке не открывалась вовсе. Мод из VPK - вообще не предмет каталога:
- * он грузится файлом, а правки к нему возвращаются следом.
- */
-async function openWork(work) {
-  document.querySelector('.title__name').textContent = work.name;
-  document.querySelector('.title__meta').textContent = 'сохранённая работа';
-  closeCat();
-  say('Открываю работу…');
-
-  if (work.mod) {
-    // Мод не открылся (отказ, отмена выбора модели) - в кадре прошлый
-    // предмет, и работа легла бы на него
-    if (!await openMod({ name: work.name, path: work.mod })) return;
-    const back = await api.restoreWork();
-    if (back.error) sayError(back.error);
-    return;
-  }
-
-  await setMode(work.mode, work.item_key || '');
-  if (work.mode === 'hat') { await startHatWork(work); return; }
-  const res = await api.loadPreview(work.mode, null, work.item_key || null,
-                                    work.per_class || null, null, true);
-  if (res.error) sayError(res.error);
-}
 
 async function choose(button, item) {
   els.grid.querySelectorAll('.pick').forEach((p) => p.classList.remove('is-active'));

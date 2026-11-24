@@ -457,18 +457,23 @@ def add_part_columns(rows: List[List[str]],
     Returns:
         (новые строки, {имя части в строке: материал, чей VMT она берёт})
     """
+    from src.shared.skin_rows import SkinTable
+
     rows = [list(r) for r in rows]
+    col_of = SkinTable(rows).col_of
     variants: Dict[str, str] = {}
     for part, base in parts:
-        head = [n.lower() for n in rows[0]] if rows else []
-        col = head.index(base.lower()) if base.lower() in head else -1
+        col = col_of(base)
         if col < 0:
             variants[part] = base
             continue
+        # Имя меша в группе может отличаться от base префиксом пути
+        # (find_name): сравниваем со своим столбцом базовой строки
+        head = rows[0][col]
         for r, row in enumerate(rows):
-            source = row[col] if col < len(row) else base
-            name = (part if source.lower() == base.lower()
-                    else variant_name(part, base, source, r))
+            source = row[col] if col < len(row) else head
+            name = (part if source.lower() == head.lower()
+                    else variant_name(part, head, source, r))
             if variants.get(name, source).lower() != source.lower():
                 name = f"{part}_s{r}"
             variants[name] = source

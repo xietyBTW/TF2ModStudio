@@ -55,6 +55,10 @@ class BuildRequest:
     # decor_build). Элемент: {'kind', 'mdl', 'fit', 'textures': {материал:
     # {'red': png, 'blu': png}}}
     decor_builds: Optional[list] = None
+    # Правки VMT предмета снимком (domain/preview/vmt_edits.VmtEdits): сборка
+    # идёт фоном и читает их через EditedVMTService.use, а не с предмета,
+    # который человек тем временем мог сменить
+    vmt_edits: Optional[object] = None
     # Части модели, ставшие своими материалами (src/services/part_materials.py):
     # [{name, base, tris, sources}] - сборка переносит их треугольники в SMD
     # под новым именем и пишет им VMT по образцу исходного материала
@@ -98,3 +102,11 @@ class BuildRequest:
     skybox_sky_names: Optional[list] = None
     # {грань: путь} ручные грани - приоритетнее нарезки панорамы
     skybox_face_overrides: Optional[Dict[str, str]] = None
+
+    def vtf_for(self, card: str, main: str = '') -> tuple:
+        """(size, format, flags, options) VTF карточки `card`: её свои
+        настройки (шестерёнка) поверх общих. `main` - имя главного материала:
+        у одноматериальной модели его настройки лежат под пустым ключом"""
+        from src.data.texture_overrides import own_settings, vtf_settings
+        return vtf_settings(self.size, self.format_type, self.flags, self.vtf_options,
+                            own_settings(self.material_settings or {}, card, main))

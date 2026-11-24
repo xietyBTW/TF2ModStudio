@@ -46,6 +46,14 @@ class KindOfTests(unittest.TestCase):
                      kind.is_spy_mask, kind.is_weapon]
             self.assertEqual(sum(flags), 1, f"{mode}: {flags}")
 
+    def test_vpk_mod_is_held_like_a_weapon(self):
+        """Мод из VPK: вид от первого лица и War Paint, как у оружия"""
+        from src.app import api
+        kind = kind_of("custom")
+        self.assertTrue(kind.is_mod and kind.held and not kind.can_force_team)
+        controls = api.controls_for("custom")
+        self.assertTrue(controls["first_person"] and controls["warpaint"])
+
     def test_same_object_for_same_mode(self):
         """Вид - значение, а не состояние: можно сравнивать и кэшировать"""
         self.assertIs(kind_of("hat"), kind_of("hat"))

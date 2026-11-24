@@ -12,7 +12,7 @@ from src.app.api._common import _lang, _t, endpoint, logger
 #: Что страница вправе менять. Остальное в конфиге (геометрия окна, последние
 #: флаги) относится к окну приложения и правится не отсюда
 _SETTINGS_KEYS = (
-    'tf2_game_folder', 'export_folder', 'export_image_format', 'language',
+    'tf2_game_folder', 'preloader_path', 'export_folder', 'export_image_format', 'language',
     'theme', 'sv_pure_bypass', 'particles_group_tree', 'keep_temp_files',
     'debug_mode', 'material_blacklist', 'save_edits',
     # Раскладка окна: хранится, чтобы пережить перезапуск
@@ -144,6 +144,59 @@ def set_folder_picker(picker) -> None:
     """Подключает диалог выбора папки окна приложения"""
     global _folder_picker
     _folder_picker = picker
+
+
+#: Системный выбор файла: (начальная папка, фильтры pywebview) -> путь или ''
+_file_picker = None
+
+
+def set_file_picker(picker) -> None:
+    """Подключает диалог выбора файла окна приложения"""
+    global _file_picker
+    _file_picker = picker
+
+
+def _file_kinds() -> Dict[str, tuple]:
+    """Вид файла -> (ключ подписи фильтра в переводах, расширения)"""
+    from src.services.mesh_import_service import MODEL_EXTENSIONS
+    return {'model': ('file_kind_models', MODEL_EXTENSIONS),
+            # Чем запускают прелоадер: RUNME.bat, exe, ярлык (окно Windows
+            # само раскрывает ярлык в файл, на который он ведёт)
+            'preloader': ('file_kind_preloader', ('.bat', '.cmd', '.exe', '.py', '.lnk'))}
+
+
+@endpoint
+def check_preloader(path: str = '') -> Dict[str, object]:
+    """Нашлись ли у прелоадера по выбранному пути копии файлов игры:
+    {ok, files}. Ничего не сохраняет - сохраняют настройки"""
+    from src.services import preloader_backups
+    found = preloader_backups.find(path)
+    return {'ok': bool(found), 'files': preloader_backups.count_files(found)}
+
+
+@endpoint
+def pick_file(kind: str = 'model', lang: str = 'ru') -> Dict[str, object]:
+    """
+    Выбор файла системным окном с фильтром по тому, что приложение умеет
+
+    Путь настоящий, а не копия загрузки: файлы рядом (MTL и текстуры у OBJ,
+    .bin у glTF) находятся сами. В обычном браузере окна нет - тогда
+    `extensions`, и страница откроет свой выбор с тем же фильтром
+    """
+    from src.data.translations import tr
+
+    label, exts = _file_kinds().get(kind) or ('', ())
+    if not exts:
+        return {'error': 'Неизвестный вид файла: {}'.format(kind)}
+    if _file_picker is None:
+        return {'extensions': list(exts)}
+    label = tr(lang, label)
+    mask = ';'.join(f'*{e}' for e in exts)
+    try:
+        return {'path': _file_picker('', (f'{label} ({mask})',)) or ''}
+    except Exception as exc:                    # noqa: BLE001 - граница с окном
+        logger.warning(f"диалог выбора файла: {exc}")
+        return {'error': str(exc)}
 
 
 @endpoint
@@ -338,6 +391,7 @@ def set_settings(values: Optional[Dict[str, object]] = None,
         cfg = AppConfig.load_config()
         was_cap = _cache_cap(cfg.get('model_cache_mb'))
         was_root = (cfg.get('tf2_game_folder') or '').strip()
+        was_preloader = (cfg.get('preloader_path') or '').strip()
         for key, value in (values or {}).items():
             if key not in _SETTINGS_KEYS:
                 continue
@@ -369,6 +423,9 @@ def set_settings(values: Optional[Dict[str, object]] = None,
         threading.Thread(target=enforce_cache_limit, daemon=True).start()
     from src.app.session import session
     session().parts.refresh_parts_animation()
+    if (cfg.get('preloader_path') or '').strip() != was_preloader:
+        from src.services import game_integrity
+        game_integrity.forget_sources()
     if (cfg.get('tf2_game_folder') or '').strip() != was_root:
         # На новом ПК папку игры выбирают уже после старта, и прогрев при
         # запуске прошёл впустую: индексы (эффекты частиц - 13 с) строились

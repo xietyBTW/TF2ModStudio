@@ -1271,6 +1271,14 @@
         </button>
       </span>
     </div>
+    <!-- Только у файла, который прелоадер переписал прямо в игре: править
+         оригинал или установленный мод. Сравнение всегда с оригиналом -->
+    <div class="seg params__source" id="psource" hidden>
+      <button type="button" class="is-active" data-psource="original"
+              title="Файл, как его выпустила игра">Оригинал</button>
+      <button type="button" data-psource="installed"
+              title="Файл с модом, который прелоадер вписал в игру">Установленный мод</button>
+    </div>
 
     <!-- Действия открываются правой кнопкой - на системе в каталоге, на
          группе, модуле и параметре в дереве, как в панели приложения.
@@ -1692,6 +1700,21 @@
             </svg>
           </button>
         </div>
+      </div>
+      <!-- Прелоадер переписывает частицы и небо прямо в файлах игры, а
+           оригиналы держит у себя: оттуда их берёт game_integrity -->
+      <div class="field">
+        <label class="field__label" for="cfg-preloader">Прелоадер</label>
+        <div class="pathpick">
+          <input class="input" id="cfg-preloader" type="text" placeholder="…/casual-preloader">
+          <button class="pathpick__btn" type="button" data-pick="cfg-preloader"
+                  title="Выбрать папку" aria-label="Выбрать папку">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M1.5 12.5v-9h4.5l1.5 1.5h7v7.5z"/>
+            </svg>
+          </button>
+        </div>
+        <span class="field__note">Папка casual-preloader, если ставите моды через него. Пусто - не пользуетесь</span>
       </div>
       <div class="field">
         <label class="field__label" for="cfg-bypass">Обход sv_pure</label>

@@ -119,6 +119,23 @@
 .pick--open .pick__box::after { content: "+"; }
 .pick--open:hover .pick__box { color: var(--accent); }
 
+/* Вторая дверь той же карточки: папка вместо файла */
+.pick__alt {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--ink-mute);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pick__alt:hover { color: var(--accent); }
+
+/* Над библиотекой тащат файл: дверь показывает, куда он ляжет */
+.catalog__grid.is-drop .pick--add .pick__box {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 
 /* Мод в библиотеке: удаление - на самой карточке. Крестик виден ВСЕГДА, а не
    по наведению: у кадров в альбоме прятать инструменты можно (их там ищут

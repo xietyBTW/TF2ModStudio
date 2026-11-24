@@ -29,6 +29,10 @@ const fxNames = new Map();
 //: Какой файл открыт - чтобы по щелчку в списке эффектов не перечитывать его
 let loadedFile = '';
 let loadedShort = '';
+let loadedInstalled = false;
+//: Файлы, которые человек выбрал править в установленном виде, - до конца сеанса
+const installedFiles = new Set();
+let keepListShown = false;
 //: Что сейчас в списке слева: дерево открытого файла или эффекты игры. Эффект,
 //: выбранный в «Все эффекты игры», открывает свой файл, но список остаётся
 //: списком: человек смотрит эффекты подряд, и прыжок в дерево файла это
@@ -489,13 +493,37 @@ export function showParticleFrame(on) {
 let loadTurn = 0;
 let pickTurn = 0;
 
+const sourceBox = document.getElementById('psource');
+
+function showSource(data) {
+  sourceBox.hidden = !data.patched;
+  for (const b of sourceBox.querySelectorAll('[data-psource]')) {
+    b.classList.toggle('is-active', (b.dataset.psource === 'installed') === !!data.installed);
+  }
+}
+
+// Тот же файл в другом виде: открываем заново на той же системе
+sourceBox.addEventListener('click', async (e) => {
+  const want = e.target.closest('[data-psource]')?.dataset.psource;
+  if (!want || !loadedFile || (want === 'installed') === loadedInstalled) return;
+  const file = loadedFile;
+  if (want === 'installed') installedFiles.add(file); else installedFiles.delete(file);
+  await loadPcf(file, '', pSystem, { keepList: keepListShown });
+  // Отказался в «Открыть другой файл?» - выбор остаётся прежним
+  if (loadedInstalled !== (want === 'installed')) {
+    if (want === 'installed') installedFiles.delete(file); else installedFiles.add(file);
+  }
+});
+
 /**
  * Загружает PCF и показывает эффект `system` (пусто - первый). `keepList` -
  * открыли из списка эффектов игры: список остаётся, дерево файла не рисуем.
  */
 export async function loadPcf(source, label = '', system = '', { keepList = false } = {}) {
+  const installed = installedFiles.has(source);
   // Правки частиц живут только в открытом файле: другой файл их выбросит
-  if (loadedFile && source !== loadedFile && (await api.particleHistory()).unsaved) {
+  if (loadedFile && (source !== loadedFile || installed !== loadedInstalled)
+      && (await api.particleHistory()).unsaved) {
     const go = await ask({
       title: t('Открыть другой файл?'),
       text: t(`Правки в ${loadedShort} не сохранены и пропадут.`),
@@ -508,13 +536,16 @@ export async function loadPcf(source, label = '', system = '', { keepList = fals
   const short = label || source.replace(/^particles\//, '');
   say(`Разбор ${short}…`);
   if (!keepList) els.grid.innerHTML = '';
-  const data = await api.loadParticles(source, system);
+  const data = await api.loadParticles(source, system, installed);
   if (mine !== loadTurn || data.cancelled) return;
   if (data.error) { sayError(data.error); return; }
 
   setTree(data.tree || []);
   setDiff(data.diff || {});
   loadedFile = source;
+  loadedInstalled = !!data.installed;
+  keepListShown = keepList;
+  showSource(data);
   applyToolsMenu();            // «Сохранить PCF» - теперь есть что
   // Выпадашка показывает открытый файл, если дерево - его, из списка эффектов
   // игры она остаётся на «Все эффекты», как и сам список

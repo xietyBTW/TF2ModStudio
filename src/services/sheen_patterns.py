@@ -82,6 +82,17 @@ def texture_name(pattern: str, frames: int, rotate: bool = False) -> str:
     return f"{PREFIX}{pattern}{'_r' if rotate else ''}_{int(frames)}"
 
 
+def along_height(pic):
+    """
+    Кадр узора для оружия, длинного по Z: длина - по вертикали маски
+
+    Поворот, а не транспонирование: верх маски - верх оружия (наибольший Z),
+    и начало узора там пускало блеск сверху вниз, а у остального оружия он
+    идёт от рукояти. Картинки слоёв заодно не зеркалятся
+    """
+    return np.ascontiguousarray(np.transpose(pic, (1, 0, 2))[::-1])
+
+
 def rotated(name: str) -> bool:
     """Маска повёрнута на 90°: оружие длинное по Z, маска лежит по X и Z
     (vmt_effects.sheen_mask_params, «stencil»), а рисуется длиной по X"""
@@ -103,17 +114,34 @@ def parse(name: str) -> Optional[Tuple[str, int]]:
 
 
 #: Маска конструктора: id узора (свой u… или шаблон p_…), (в моде) отпечаток
-#: содержимого, пропорция, «r» - повёрнута, «k» - чёрный блеск, кадры
+#: содержимого, пропорция, «r» - повёрнута, «k» - чёрный блеск, «g» - без
+#: цвета (красит цвет купленного блеска), кадры
 _CUSTOM_RE = re.compile(
-    r'^tf2sg/sheen/(u[0-9a-f]{8}|p_[a-z0-9]+)(?:_h[0-9a-f]{8})?_a(\d+)(r?)(k?)_(\d+)$')
+    r'^tf2sg/sheen/(u[0-9a-f]{8}|p_[a-z0-9]+)(?:_h[0-9a-f]{8})?_a(\d+)(r?)(k?)(g?)_(\d+)$')
 
 
 def custom_name(pattern_id: str, aspect: float, frames: int, rotate: bool = False,
-                dark: bool = False) -> str:
+                dark: bool = False, game_tint: bool = False) -> str:
     """Своя маска из конструктора: id узора, пропорция оружия ×10 («r» -
-    маска повёрнута, «k» - только красный канал для чёрного блеска), кадры"""
+    маска повёрнута, «k» - только красный канал для чёрного блеска, «g» -
+    без цвета, его даёт игра), кадры"""
     return (f"{PREFIX}{pattern_id}_a{int(round(max(0.5, min(12.0, aspect)) * 10))}"
-            f"{'r' if rotate else ''}{'k' if dark else ''}_{int(frames)}")
+            f"{'r' if rotate else ''}{'k' if dark and not game_tint else ''}"
+            f"{'g' if game_tint else ''}_{int(frames)}")
+
+
+def game_tinted(name: str) -> bool:
+    """Маска без цвета: блеск красит цвет, который игрок купил (оттенок
+    ставит прокси игры AnimatedWeaponSheen, наш его не перебивает)"""
+    m = _CUSTOM_RE.match(str(name or '').strip().lower().replace('\\', '/'))
+    return bool(m and m.group(5))
+
+
+def colourless(pic):
+    """Кадр без цвета: форма узора во всех каналах. Шейдер красит маску
+    оттенком по каналам, и цвет слоя смешался бы с цветом игрока"""
+    pic[..., :3] = pic[..., :3].max(axis=-1, keepdims=True)
+    return pic
 
 
 def darkened(name: str) -> bool:
@@ -133,7 +161,7 @@ def parse_custom(name: str) -> Optional[Tuple[str, float, int]]:
     m = _CUSTOM_RE.match(str(name or '').strip().lower().replace('\\', '/'))
     if not m:
         return None
-    frames = int(m.group(5))
+    frames = int(m.group(6))
     if not MIN_FRAMES <= frames <= MAX_FRAMES:
         return None
     return m.group(1), int(m.group(2)) / 10.0, frames
@@ -325,14 +353,15 @@ def materialize(vpkroot_dir: Path, folder: Optional[str] = None,
                     raise RuntimeError(f"sheen pattern {own[0]} not found in "
                                        f"{sheen_builder.library_dir()}")
                 dark = darkened(short)
-                if sheen_library.ID_RE.match(own[0]):
+                game_tint = game_tinted(short)
+                if sheen_library.ID_RE.match(own[0]) and not game_tint:
                     # Гамма своего узора - по его цветам СЕЙЧАС: узор могли
                     # перекрасить после того, как эффект встал в VMT
                     gamut.append(sheen_palette.palette_of(own[0]))
                     dark = gamut[-1] == sheen_palette.COLD
                 short = (f"{PREFIX}{own[0]}_h{digest}_a{int(round(own[1] * 10))}"
                          f"{'r' if rotated(short) else ''}{'k' if dark else ''}"
-                         f"_{own[2]}")
+                         f"{'g' if game_tint else ''}_{own[2]}")
             elif not parse(short):
                 return m.group(0)
             wanted.add(short)
@@ -369,7 +398,10 @@ def materialize(vpkroot_dir: Path, folder: Optional[str] = None,
             if data is None:
                 raise RuntimeError(f"sheen pattern {pattern_id} not found in "
                                    f"{sheen_builder.library_dir()}")
-            if sheen_library.ID_RE.match(pattern_id):
+            if game_tinted(short):
+                # Цвет даст игра: узор только формой
+                pics = [colourless(p) for p in sheen_builder.render(data["spec"], count, aspect)]
+            elif sheen_library.ID_RE.match(pattern_id):
                 # Свой узор: гамма по цветам слоёв (sheen_palette)
                 pics = sheen_builder.render(data["spec"], count, aspect,
                                             palette="cold" if darkened(short) else "warm")
@@ -384,8 +416,7 @@ def materialize(vpkroot_dir: Path, folder: Optional[str] = None,
             pattern, count = parse(short)
             pics = frames(pattern, count)
         if rotated(short):
-            # Длина узора - по вертикали маски (ось Z оружия)
-            pics = [np.ascontiguousarray(np.transpose(p, (1, 0, 2))) for p in pics]
+            pics = [along_height(p) for p in pics]
         _write(pics, target)
         logger.info(f"[sheen] маска узора {target.relative_to(root).as_posix()} ({count} кадров)")
         made += 1

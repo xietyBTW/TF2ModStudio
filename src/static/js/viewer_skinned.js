@@ -49,8 +49,10 @@ export function buildSkinnedScene(THREE, data, makeMaterial) {
   // у не добавленного меша она единичная - и поворот группы (оси Source ->
   // оси Three.js) применялся дважды: руки растягивало в шипы
   group.updateMatrixWorld(true);
-  for (const { mesh } of meshes) {
-    mesh.bind(skeleton, mesh.matrixWorld);
+  const ownSkeletons = new Map();
+  for (const { mesh, inverses } of meshes) {
+    mesh.bind(inverses ? ownSkeleton(THREE, skeleton, inverses, mesh.matrixWorld, ownSkeletons)
+                       : skeleton, mesh.matrixWorld);
   }
 
   // Реквизит насмешки в кадре не всё время: игра прячет и достаёт его
@@ -178,9 +180,30 @@ function createPart(THREE, part, makeMaterial) {
     mesh.frustumCulled = false;   // вьюмодель всегда перед камерой
     if (part.kind === 'weapon') pullForward(mesh);
     else cullBackFaces(THREE, mesh);
-    out.push({ name: group.material, mesh, kind: part.kind });
+    out.push({ name: group.material, mesh, kind: part.kind, inverses: part.boneInverses });
   }
   return out;
+}
+
+// Те же кости, но обратные матрицы - позы покоя самого предмета, а не руки
+//
+// Предмет насмешки мягко поделён между костями (голова в банке, мешок,
+// верёвка), и запекание в позу руки ошибалось там на 5-13 единиц. Python
+// присылает P⁻¹ по слотам (3x4 по строкам), а три.js умножает ещё и на
+// bindMatrix - поэтому справа обратная матрица меша. Один скелет на часть
+export function ownSkeleton(THREE, skeleton, inverses, bindMatrix, cache) {
+  if (cache && cache.has(inverses)) return cache.get(inverses);
+  const unbind = bindMatrix.clone().invert();
+  const list = skeleton.boneInverses.map((m) => m.clone());
+  for (const [slot, m] of Object.entries(inverses)) {
+    const i = Number(slot);
+    if (!list[i]) continue;
+    list[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+                m[8], m[9], m[10], m[11], 0, 0, 0, 1).multiply(unbind);
+  }
+  const own = new THREE.Skeleton(skeleton.bones, list);
+  if (cache) cache.set(inverses, own);
+  return own;
 }
 
 // Дорожки кадров -> THREE.AnimationClip
@@ -193,13 +216,15 @@ export function createClip(THREE, clip, bones) {
     const bone = (track.name && bones.find(b => b.name === track.name))
               || bones[track.bone];
     if (!bone) continue;
+    // Свои кадры у дорожки - у реквизита, что стоит рядом со своей анимацией
+    const times = track.times || clip.times;
     if (track.positions && track.positions.length) {
       tracks.push(new THREE.VectorKeyframeTrack(
-        `${bone.name}.position`, clip.times, track.positions));
+        `${bone.name}.position`, times, track.positions));
     }
     if (track.quaternions && track.quaternions.length) {
       tracks.push(new THREE.QuaternionKeyframeTrack(
-        `${bone.name}.quaternion`, clip.times, track.quaternions));
+        `${bone.name}.quaternion`, times, track.quaternions));
     }
   }
   if (tracks.length === 0) return null;

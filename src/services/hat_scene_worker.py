@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+from src.shared.file_utils import make_preview_dir
 from typing import Dict, Optional
 
 from src.data import stock_loadout
@@ -121,7 +121,7 @@ class HatScenePreviewWorker(BaseWorker):
         reader = GameVpkReader(scene_textures.archives(
             self.mod_vpk_path, self.textures_vpk_path, self.misc_vpk_path))
         try:
-            self._preview_dir = tempfile.mkdtemp(prefix='tf2sg_wear_')
+            self._preview_dir = make_preview_dir('tf2sg_wear_')
             classes = [c for c in CLASS_MODEL_STEM if c in self.hat_models]
             self.classes_available.emit(classes)
             if not classes:

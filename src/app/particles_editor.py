@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from src.app.edit_history import EditHistory
 from src.app.particle_effects_catalog import EffectCatalog
 from src.app.particle_simple_panel import SimplePanel
+from src.data.translations import tr
 from src.shared.logging_config import get_logger
 from src.shared.paths import export_dir
 
@@ -135,7 +136,8 @@ class ParticlesEditor:
         #: Крутилки простого режима поверх открытого PCF
         self.simple = SimplePanel(self)
 
-    def load_particles(self, source: str, system: str = '') -> Dict[str, Any]:
+    def load_particles(self, source: str, system: str = '',
+                       installed: bool = False) -> Dict[str, Any]:
         """
         Разбирает PCF и отдаёт всё, что нужно рендереру, открытым сразу на
         системе `system` (пусто или нет такой - первый корень)
@@ -154,6 +156,7 @@ class ParticlesEditor:
         if 'error' in paths:
             return paths
 
+        from src.services import game_integrity
         from src.services.particle_editor_service import (
             ParticleEditorService, diff_systems, system_hierarchy,
         )
@@ -161,10 +164,19 @@ class ParticlesEditor:
         with self._load_lock:
             self._load_seq += 1
             mine = self._load_seq
+        game = source.startswith('particles/')
         svc = ParticleEditorService()
         try:
-            if source.startswith('particles/'):
+            if game:
                 svc.load_from_game(paths['root'], source)
+                patched = game_integrity.is_patched(source)
+                stock = svc.systems_json()
+                if installed and patched:
+                    # Править установленный мод: тот же файл, как он лежит
+                    # в игре. Сток - оригинал, прочитанный выше
+                    svc = ParticleEditorService()
+                    with game_integrity.as_installed():
+                        svc.load_from_game(paths['root'], source)
             else:
                 svc.load_file(source)
         except Exception as exc:                     # noqa: BLE001 - граница
@@ -177,13 +189,13 @@ class ParticlesEditor:
         # как есть, а он читает rootName. Пустая сцена после загрузки
         # выглядит поломкой - что-то показываем сразу
         root = system if system in systems else (tree[0]['key'] if tree else '')
-        if source.startswith('particles/'):
-            # Только что прочитан из игры - он и есть сток: разбирать тот же
-            # файл второй раз ради «всё совпадает» незачем. Системы стока
-            # запоминаем: правки дальше сравниваются с ними
-            svc._stock_systems = systems
+        if game:
+            # Сток уже прочитан - разбирать его второй раз незачем. Системы
+            # стока запоминаем: правки дальше сравниваются с ними, и у
+            # установленного мода видно, чем он отличается от игры
+            svc._stock_systems = stock
             diff = {name: entry['status']
-                    for name, entry in diff_systems(systems, systems).items()}
+                    for name, entry in diff_systems(systems, stock).items()}
         else:
             diff = None
         with self._load_lock:
@@ -201,6 +213,9 @@ class ParticlesEditor:
             # без игрового собрата - пусто
             'diff': self._particle_diff_all(systems) if diff is None else diff,
             'rootName': root,
+            # Прелоадер вписал в игру свою версию: страница даёт выбрать
+            'patched': game and patched,
+            'installed': game and patched and installed,
         }
 
     def _shown_materials(self, tf2_root: str) -> Dict[str, dict]:
@@ -835,14 +850,12 @@ class ParticlesEditor:
                 first = re.sub(r'_style\d+', '_style1', mdl)
                 name = names.get(first)
                 if name:
-                    word = 'style' if lang == 'en' else 'стиль'
-                    name = f"{name} ({word} {style.group(1)})"
+                    name = tr(lang, 'label_style_n', name=name, n=style.group(1))
             return 'hat', name or base
         if base.endswith('_arms'):
             cls = base[2:-5] if base.startswith('c_') else base[:-5]
             who = names.get(f'models/player/{cls}.mdl', cls)
-            hands = 'hands' if lang == 'en' else 'руки'
-            return 'arms', f"{who} ({hands})"
+            return 'arms', tr(lang, 'label_hands_of', who=who)
         if mdl.startswith('models/weapons/') or base.startswith('c_'):
             return 'weapon', names.get('c:' + base, base)
         return 'other', base
@@ -914,26 +927,16 @@ class ParticlesEditor:
     def _cp_model_candidates(mode: str, key: str, root: str):
         """(ключ кэша, пути MDL в VPK) - тем же правилом, что у 3D-превью
         (`smd_locator.mdl_candidates`), чтобы кэш был общий"""
-        from src.data.player_characters import PLAYER_BODY_MODE_KEYS
-        from src.data.player_hands import HAND_MODE_KEYS
+        from src.data.item_kinds import kind_of
         from src.domain.preview.model_key import model_key_for
-        from src.services.extract_model_service import ExtractModelService
-        from src.services.tf2_paths import build_hat_mdl_candidates
+        from src.services.model_locator import mdl_candidates
 
-        if mode == 'hat':
-            if not key:
-                raise ValueError('У шапки нужен путь модели')
-            return key, build_hat_mdl_candidates(key)
-        if mode in PLAYER_BODY_MODE_KEYS:
-            mdl = model_key_for(mode)
-            return mdl, [mdl]
-        if mode in HAND_MODE_KEYS:
-            arm = model_key_for(mode)
-            return arm, ExtractModelService._build_paths_to_try(mode, arm, root)
-        weapon_key = model_key_for(mode)
-        if not weapon_key:
-            raise ValueError(f'У «{mode}» нет модели')
-        return weapon_key, ExtractModelService._build_paths_to_try(mode, weapon_key, root)
+        # У шапки модель - выбор в каталоге, у остальных её знает режим
+        is_hat = kind_of(mode).is_hat
+        ref = key if is_hat else model_key_for(mode)
+        if not ref:
+            raise ValueError('У шапки нужен путь модели' if is_hat else f'У «{mode}» нет модели')
+        return ref, mdl_candidates(mode, ref, root)
 
     @staticmethod
     def _qc_in(directory: str) -> Optional[str]:

@@ -113,6 +113,74 @@ def test_baked_garland_goes_to_the_build_with_every_native_emptied(monkeypatch):
     assert entry["empty"] == ["models/x_xmas.mdl", "models/x_festivizer.mdl"]
 
 
+def test_garland_is_recognised_by_its_light_materials():
+    from src.services import festive_decor
+
+    assert festive_decor.wears_garland(["c_scattergun", "festive_lights_red"])
+    assert festive_decor.wears_garland(["models/weapons/xms_colored_lights"])
+    assert not festive_decor.wears_garland(["c_scattergun", "c_scattergun_blue"])
+    assert not festive_decor.wears_garland([])
+
+
+def _mod_editor(materials, kind="weapon"):
+    from src.app.decor_editor import DecorEditor
+
+    preview = PreviewSession()
+    preview.custom_vpk_mode = True
+    preview.custom_vpk_kind = kind
+    preview.custom_model_materials = list(materials)
+    host = SimpleNamespace(preview=preview, _shown_weapon=lambda: "c_scattergun",
+                           tf2_paths=lambda: {"root": "root"})
+    return DecorEditor(host)
+
+
+def test_mod_with_its_own_garland_empties_the_natives(monkeypatch):
+    """Чужой мод с вшитой гирляндой: у праздничного оружия их было бы две"""
+    from src.services import festive_decor
+
+    monkeypatch.setattr(festive_decor, "kinds", lambda key, root: {
+        "xmas": "models/x_xmas.mdl", "festivizer": "models/x_festivizer.mdl"})
+    worn = _mod_editor(["c_scattergun", "festive_lights_red"])
+    assert worn.builds("root") == [{"kind": "", "mdl": "", "textures": {},
+                                    "empty": ["models/x_xmas.mdl", "models/x_festivizer.mdl"]}]
+    # Родная гирлянда в превью повисла бы второй поверх вшитой
+    assert worn.festive_options() == []
+
+    plain = _mod_editor(["c_scattergun"])
+    assert plain.builds("root") == []
+    assert plain.festive_options() == ["xmas", "festivizer"]
+
+    # Мод перекрашивает саму гирлянду: огоньки те же, но пустышкой стала бы она
+    garland = _mod_editor(["festive_lights_red", "festivizer_battery"], kind="garland")
+    assert garland.builds("root") == []
+
+
+def test_custom_mod_build_empties_natives_and_says_so(monkeypatch, tmp_path):
+    from src.services import decor_bake as bake
+    from src.services.custom_vpk_service import CustomVPKService
+
+    ctx = SimpleNamespace(vpkroot_dir=tmp_path)
+    made = []
+    monkeypatch.setattr(bake, "build_empty", lambda ctx, mdl, **kw: made.append(mdl))
+    entries = [{"kind": "", "mdl": "", "empty": ["a.mdl", "b.mdl"]}]
+    note = CustomVPKService._empty_native_decor(ctx, entries, "", "", "", "", "en")
+    assert made == ["a.mdl", "b.mdl"]
+    assert "removed" in note
+
+    # Своя гирлянда автора мода остаётся его работой
+    made.clear()
+    (tmp_path / "a.mdl").write_bytes(b"IDST")
+    CustomVPKService._empty_native_decor(ctx, entries, "", "", "", "", "en")
+    assert made == ["b.mdl"]
+
+    def broken(ctx, mdl, **kw):
+        raise FileNotFoundError(mdl)
+
+    monkeypatch.setattr(bake, "build_empty", broken)
+    assert "two" in CustomVPKService._empty_native_decor(ctx, entries, "", "", "", "", "en")
+    assert CustomVPKService._empty_native_decor(ctx, [{"mdl": "m"}], "", "", "", "", "en") == ""
+
+
 def test_build_keeps_the_weapon_and_skips_the_baked_garland_model():
     baked = [{"kind": "xmas", "mdl": "m", "bake": True, "textures": {}}]
     assert not VPKService._is_decor_only(BuildRequest(decor_builds=baked))

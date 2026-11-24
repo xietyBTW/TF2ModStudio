@@ -339,6 +339,77 @@ class ModIconTests(unittest.TestCase):
     def test_icon_of_an_unknown_mod_is_none(self):
         self.assertIsNone(mod_library_service.icon('нет-такого.vpk'))
 
+    @staticmethod
+    def _png(size=(64, 64)) -> bytes:
+        from io import BytesIO
+        from PIL import Image
+        buf = BytesIO()
+        Image.new('RGBA', size, (255, 0, 0, 128)).save(buf, 'PNG')
+        return buf.getvalue()
+
+    def test_shot_wins_over_the_texture_cover(self):
+        self._fake_icon()
+        shot = mod_library_service.save_shot(self.mod.name, self._png())
+        item = mod_library_service.items()[0]
+        self.assertEqual(item['icon'], str(shot))
+        self.assertTrue(item['shot'])
+        self.assertEqual(mod_library_service.icon(self.mod.name), shot)
+
+    def test_without_shot_the_list_asks_for_one(self):
+        self.assertFalse(mod_library_service.items()[0]['shot'])
+
+    def test_shot_of_an_older_mod_version_is_retaken(self):
+        shot = mod_library_service.save_shot(self.mod.name, self._png())
+        os.utime(shot, (0, 0))
+        self.assertFalse(mod_library_service.items()[0]['shot'])
+
+    def test_shot_is_shrunk_to_icon_size(self):
+        from PIL import Image
+        shot = mod_library_service.save_shot(self.mod.name, self._png((512, 512)))
+        with Image.open(shot) as img:
+            self.assertEqual(img.size, (256, 256))
+
+    def test_not_a_png_is_refused(self):
+        self.assertIsNone(mod_library_service.save_shot(self.mod.name, b'not png'))
+        self.assertIsNone(mod_library_service.save_shot('нет-такого.vpk', self._png()))
+        self.assertIsNone(mod_library_service.save_shot(self.mod.name,
+                                                        self._png((2048, 8))))
+
+    def test_new_shot_drops_shots_of_old_framing(self):
+        old = mod_library_service._icon_path(self.mod.name, '.shot.png')
+        old.write_bytes(b'png')
+        mod_library_service.save_shot(self.mod.name, self._png())
+        self.assertFalse(old.exists())
+
+    def test_target_is_learned_once_and_forgotten_with_a_newer_mod(self):
+        """Что заменяет мод, узнаётся открытием VPK - не на каждый показ"""
+        from src.app.api import tools
+        with patch.object(tools, 'mod_target', return_value={
+                'mdl': 'models/weapons/c_models/c_claymore/c_claymore.mdl',
+                'kind': 'weapon', 'hat': None}) as opened:
+            first = tools.mod_info(self.mod.name, 'en')
+            again = tools.mod_info(self.mod.name, 'en')
+        self.assertEqual(opened.call_count, 1)
+        self.assertEqual(first, again)
+        self.assertEqual(first['title'], 'Eyelander')
+        self.assertTrue(first['icon'].endswith('c_claymore.mdl'))
+
+        target = mod_library_service._icon_path(self.mod.name,
+                                                mod_library_service.TARGET_SUFFIX)
+        os.utime(target, (0, 0))                 # запомнено про прошлую версию
+        self.assertIsNone(mod_library_service.read_target(self.mod.name))
+
+    def test_unknown_target_leaves_the_card_as_it_was(self):
+        from src.app.api import tools
+        with patch.object(tools, 'mod_target', return_value={'error': 'нет'}):
+            self.assertEqual(tools.mod_info(self.mod.name, 'en'),
+                             {'name': self.mod.name})
+
+    def test_removing_a_mod_takes_its_shot(self):
+        shot = mod_library_service.save_shot(self.mod.name, self._png())
+        mod_library_service.remove(self.mod.name)
+        self.assertFalse(shot.exists())
+
 
 class AutosaveTests(unittest.TestCase):
     """Когда сеанс вообще берётся сохранять работу"""

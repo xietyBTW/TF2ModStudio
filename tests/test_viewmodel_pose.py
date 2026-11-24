@@ -125,6 +125,16 @@ class BonemergeTests(unittest.TestCase):
             viewmodel_pose.bonemerge_skinning(str(self.weapon), other),
         )
 
+    def test_bone_names_match_ignoring_case(self):
+        """Движок ищет кость через Q_stricmp: `Weapon_Bone` метлы ведёт
+        `weapon_bone` руки, а сцена получает имя кости руки"""
+        prop = self.dir / "prop_reference.smd"
+        prop.write_text(_smd([("Weapon_Bone", None)]), encoding="utf-8")
+        mats = viewmodel_pose.bonemerge_skinning(str(prop), self.pose)
+        self.assertEqual(_at(mats, 0, (0, 0, 0)), (-12.0, 0.0, 0.0))
+        self.assertEqual(viewmodel_pose.driving_bones(str(prop), self.pose),
+                         {0: "weapon_bone"})
+
     def test_only_bones_listed_in_bonemerge_take_the_hand_position(self):
         """Совпадение имён - не повод сливать кость
 

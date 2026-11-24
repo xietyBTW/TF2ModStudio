@@ -23,6 +23,8 @@ from typing import List, Dict, Optional, Callable
 from src.data import items_game_kv
 from src.data.weapon_model_index import get_items_game_path
 from src.shared.paths import data_dir
+from src.data.tf2_classes import CLASSES, model_token
+from src.shared.game_paths import game_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,22 +54,12 @@ def _cache_file(language: str = "en") -> Path:
     """Кэш этого языка. Имена в нём локализованы, общий файл их бы смешал."""
     return _CACHE_DIR / f"hats_cache_{_CACHE_VERSION}_{_lang_file(language)}.json"
 
-_CLASS_NAMES = [
-    "scout", "soldier", "pyro", "demoman",
-    "heavy", "engineer", "medic", "sniper", "spy",
-]
+_CLASS_NAMES = list(CLASSES)
 
 _SLOT_COSMETIC = {"head", "misc", "hat", "secondary", "tertiary", "utility", "action"}
 
-#: Как класс называется В ПУТЯХ К МОДЕЛЯМ. Совпадает с именем класса везде,
-#: кроме подрывника: файлы у него `..._demo.mdl` (в игре 910 таких моделей и ни
-#: одной `_demoman`). Раскрывая %s именем класса, мы получали несуществующий
-#: путь - и подрывник молча оставался без шапки в собранном моде.
-_MODEL_CLASS_TOKEN = {"demoman": "demo"}
-
-
-def _model_token(class_name: str) -> str:
-    return _MODEL_CLASS_TOKEN.get(class_name.lower(), class_name)
+#: Как класс называется В ПУТЯХ К МОДЕЛЯМ (у подрывника `_demo`), см. tf2_classes
+_model_token = model_token
 
 
 # Структура предмета
@@ -290,7 +282,7 @@ def _extract_per_class_models(block: str) -> Dict[str, str]:
     for cls, path in re.findall(r'"([^"]+)"\s+"([^"]*\.mdl)"', sub, re.IGNORECASE):
         cls_l = cls.lower()
         if cls_l in _CLASS_NAMES and cls_l not in result:
-            result[cls_l] = path.replace("\\", "/").lower()
+            result[cls_l] = game_path(path)
     return result
 
 
@@ -326,7 +318,7 @@ def _extract_style_models(block: str, classes: List[str],
         if not pcm:
             flat = _flat_value(styleblk, "model_player")
             if flat and flat.lower().endswith(".mdl"):
-                flat = flat.replace("\\", "/").lower()
+                flat = game_path(flat)
                 target = classes if classes else list(_CLASS_NAMES)
                 if "%s" in flat:
                     pcm = {c: flat.replace("%s", _model_token(c)) for c in target}
@@ -520,7 +512,7 @@ def _parse_items_game(filepath: str,
             continue
 
         # Нормализуем слеши
-        mdl_path = mdl_path.replace("\\", "/").lower()
+        mdl_path = game_path(mdl_path)
 
         # Только player items
         if not (mdl_path.startswith("models/player/items") or

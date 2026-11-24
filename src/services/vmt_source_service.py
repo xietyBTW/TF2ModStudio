@@ -11,7 +11,6 @@ VPK, что дописать при сохранении
 from __future__ import annotations
 
 import os
-import re
 from typing import List, Optional, Tuple
 
 from src.shared.logging_config import get_logger
@@ -29,30 +28,26 @@ def resolve_target(mode: str, hat_mdl: Optional[str] = None,
     По нему же ищется сохранённая правка, поэтому ошибка тут означает «правка
     потерялась»
     """
-    from src.data.player_characters import PLAYER_BODY_MODE_KEYS, PLAYER_CHARACTERS
-    from src.data.player_hands import HAND_MODE_KEYS, HAND_MODES
+    from src.data.item_kinds import kind_of
     from src.data.weapons import weapon_key_from_mode
+    from src.domain.preview.model_key import model_key_for
 
     if not mode:
         return None
 
-    if mode == 'hat':
+    kind = kind_of(mode)
+    if kind.is_hat:
         if not hat_mdl:
             return None
-        key = hat_mdl.replace('\\', '/').lower()
+        from src.shared.game_paths import game_path
+        key = game_path(hat_mdl)
         return key, (hat_display or key)
 
-    if mode in HAND_MODE_KEYS:
-        arm = HAND_MODES.get(mode, {}).get('arm_model', '')
-        return (arm, arm) if arm else None
-
-    if mode in PLAYER_BODY_MODE_KEYS:
-        # Путь MDL: под ним превью кладёт разобранную модель в кэш
-        # (model_key_for), и по нему же редактор находит $cdmaterials. Поле
-        # `mdl_key`, которое тут читалось, из данных персонажей давно убрали -
-        # и у тел классов редактор VMT молча был недоступен
-        mdl = PLAYER_CHARACTERS.get(mode, {}).get('mdl_path', '')
-        return (mdl, mdl) if mdl else None
+    # Руки - модель предплечья, тело - путь MDL: под ним превью кладёт
+    # разобранную модель в кэш, и по нему же редактор находит $cdmaterials
+    if kind.is_hands or kind.is_character:
+        ref = model_key_for(mode)
+        return (ref, ref) if ref else None
 
     key = weapon_key_from_mode(mode)
     return (key, key) if key else None
@@ -62,7 +57,8 @@ def extract_original(mode: str, weapon_key: str, tf2_root_dir: str,
                      material_name: Optional[str] = None,
                      language: str = 'en') -> Optional[str]:
     """Путь к извлечённому из игры оригиналу VMT (шапки и остальное)"""
-    if mode == 'hat':
+    from src.data.item_kinds import kind_of
+    if kind_of(mode).is_hat:
         return _extract_hat_vmt(weapon_key, tf2_root_dir, material_name)
     return extract_weapon_vmt(weapon_key, tf2_root_dir, material_name, language)
 
@@ -98,14 +94,13 @@ def _extract_hat_vmt(hat_mdl: str, tf2_root_dir: str,
         # Нет кэша - без декомпиляции путь к материалам неизвестен
         return None
 
+    from src.data.tf2_classes import strip_class
+
     rows = qc_skin_parser.parse_texturegroup_rows(qc_path)
     skin0_textures = list(rows[0]) if rows else []
     if not skin0_textures:
         stem = os.path.splitext(os.path.basename(hat_mdl))[0]
-        stem = re.sub(
-            r'_(heavy|scout|soldier|pyro|demoman|engineer|medic|sniper|spy)$',
-            '', stem, flags=re.IGNORECASE,
-        )
+        stem = strip_class(stem)
         skin0_textures = [stem]
 
     return _extract_from_qc(qc_path, tf2_root_dir,

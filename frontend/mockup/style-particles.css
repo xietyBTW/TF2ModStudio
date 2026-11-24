@@ -280,6 +280,7 @@
 
 /* Переключатель «обычный / эксперт» - над списком, той же строкой */
 .params__modes { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
+.params__source { margin: 4px 0 6px; }
 /* Отмена и возврат правок - справа в шапке параметров, у самих правок */
 .params__hist { display: flex; gap: 2px; margin-left: auto; }
 .params__hist .ptools__btn { width: 26px; height: 26px; }

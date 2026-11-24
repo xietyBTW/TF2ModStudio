@@ -90,6 +90,7 @@ export async function openSettings() {
   showFindTf2(!cfg.tf2_ok);
   showTours();
   document.getElementById('cfg-export').value = v.export_folder || '';
+  document.getElementById('cfg-preloader').value = v.preloader_path || '';
   document.querySelectorAll('[data-pick]').forEach((b) => { b.hidden = !cfg.folder_picker; });
   fillSelect('cfg-format', cfg.formats, v.export_image_format);
   fillSelect('cfg-lang', cfg.languages, v.language);
@@ -301,6 +302,7 @@ document.getElementById('cfg-save').addEventListener('click', async () => {
   const res = await api.setSettings({
     tf2_game_folder: document.getElementById('cfg-tf2').value,
     export_folder: document.getElementById('cfg-export').value,
+    preloader_path: document.getElementById('cfg-preloader').value,
     export_image_format: document.getElementById('cfg-format').value,
     language: document.getElementById('cfg-lang').value,
     theme: document.getElementById('cfg-theme').value,

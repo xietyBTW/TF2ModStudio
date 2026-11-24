@@ -76,8 +76,7 @@ SECTION_NAMES: Dict[str, str] = {
 
 #: Классы игры. У реплики класс стоит прямо в имени записи - это самый точный
 #: источник из всех, что есть: у оружия его приходится угадывать
-CLASSES = ('scout', 'soldier', 'pyro', 'demoman', 'heavy',
-           'engineer', 'medic', 'sniper', 'spy')
+from src.data.tf2_classes import CLASSES  # noqa: E402
 
 #: Картинка для того, чей это звук. Ключ `mat/…` уходит в общий `icon_png`,
 #: который достаёт её прямо из игрового архива

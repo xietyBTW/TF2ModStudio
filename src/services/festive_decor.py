@@ -81,6 +81,17 @@ class Decor:
                 "groups": self.groups}
 
 
+#: Материалы огоньков родных гирлянд (сняты с игровых моделей обреза,
+#: дробовика, одноручника и куная). По ним гирлянду узнают и в чужой модели
+LIGHT_MATERIALS = ('festive_lights', 'xms_colored_lights')
+
+
+def wears_garland(materials) -> bool:
+    """Есть ли у модели огоньки гирлянды - мод, в который она уже вшита"""
+    return any(str(m).replace('\\', '/').rsplit('/', 1)[-1].lower().startswith(LIGHT_MATERIALS)
+               for m in materials or ())
+
+
 def kinds(weapon_key: str, tf2_root: str) -> Dict[str, str]:
     """{вид: путь MDL} гирлянд, которые игра вешает на эту модель"""
     from src.data import viewmodel_anims

@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+from src.data.translations import tr
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -70,8 +71,7 @@ def build_decor_models(
             continue
         stem = Path(mdl).stem
         if emit_sub:
-            emit_sub(-1, f"Lights: {stem}..." if language == "en"
-                     else f"Гирлянда: {stem}...")
+            emit_sub(-1, tr(language, 'build_sub_lights', name=stem))
         try:
             _build_one(ctx, entry, mdl, stem, misc_vpk, textures_vpk,
                        studiomdl_exe, tf_dir, size, format_type, flags,
@@ -147,6 +147,8 @@ def write_materials(vpkroot_dir, entry: dict, model, ref: str, original_cd: List
                     patched: str, work: Path, *, misc_vpk: str, textures_vpk: str,
                     size, format_type, flags, vtf_options) -> None:
     """VMT (и свои VTF) каждого материала гирлянды в папку `patched`"""
+    from src.data.texture_overrides import vtf_settings
+    base_size, base_format, base_flags, base_options = size, format_type, flags, vtf_options
     from src.services import festive_decor
     from src.services.game_vpk_reader import GameVpkReader
 
@@ -156,6 +158,9 @@ def write_materials(vpkroot_dir, entry: dict, model, ref: str, original_cd: List
     out_dir = Path(vpkroot_dir, "materials", *patched.replace('\\', '/').split('/'))
     out_dir.mkdir(parents=True, exist_ok=True)
     images = _images_by_material(entry.get('textures') or {}, team_map)
+    # Свои настройки VTF карточки (шестерёнка): синий материал - своей красной
+    red_of = {str(blu).lower(): red for red, blu in team_map.items()}
+    settings = entry.get('settings') or {}
     reader = GameVpkReader([textures_vpk, misc_vpk])
     try:
         for name in materials:
@@ -172,6 +177,9 @@ def write_materials(vpkroot_dir, entry: dict, model, ref: str, original_cd: List
                 logger.info(f"[гирлянда] {stem}: VMT {name} не найден - пропуск")
                 continue
             if image and os.path.isfile(image):
+                own = settings.get(name.lower()) or settings.get(red_of.get(name.lower(), ''))
+                size, format_type, flags, vtf_options = vtf_settings(
+                    base_size, base_format, base_flags, base_options, own)
                 # Лампочки мигают кадрами игровой текстуры - своя картинка
                 # раскладывается на те же кадры (festive_decor.blink_like)
                 stock = _stock_frames(reader, text, work / "stock", name)

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 from src.domain.preview import part_specs
+from src.domain.preview.vmt_edits import VmtEdits
 from src.domain.preview.mode import PreviewState
 from src.domain.preview.texture_state import (
     DECOR_PREFIX, SINGLE_TEX_KEY, PreviewTextureState, _existing, is_decor,
@@ -51,7 +52,7 @@ EDIT_FIELDS = (
     # такая же правка, как своя геометрия предмета
     'decor_fit', 'decor_bends', 'decor_models', 'decor_wrapped', 'decor_baked',
     # Своя модель снаряда в оружии - та же правка геометрии
-    'part_models',
+    'part_models', 'vmt_edits',
 )
 
 
@@ -171,6 +172,10 @@ class PreviewSession:
     mod_maps: Dict[str, dict] = field(default_factory=dict)
     #: {материал: путь VMT в архиве мода} - его открывает редактор VMT
     mod_vmts: Dict[str, str] = field(default_factory=dict)
+    #: {превью: {frames, fps}} кадров, что крутит AnimatedTexture, и {меш: превью}
+    #: игровых текстур мода (не scene_extra: ту чистит выход из FP)
+    mod_frames: Dict[str, dict] = field(default_factory=dict)
+    mod_game_textures: Dict[str, str] = field(default_factory=dict)
     #: {материал: {size, format, flags, options}} - СВОИ настройки сборки.
     #: Разреженно: есть запись ⟺ материал собирается не как все остальные
     texture_overrides: Dict[str, dict] = field(default_factory=dict)
@@ -233,6 +238,7 @@ class PreviewSession:
     #: слой}}. Свойство предмета, как разрезы: номера деталей - его геометрии.
     #: Деталей, которых здесь нет, раскладывает автомат
     paintkit_layouts: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    vmt: VmtEdits = field(default_factory=VmtEdits)
 
     # Вариантные стили
     #: Материалы, ЯВНО добавленные пользователем в стиль через «+»: {skin: {mat}}.
@@ -390,14 +396,13 @@ class PreviewSession:
         if self.own_styles:
             source = self.textures.part_cards.get(part, '')
             return bool(style) and source in (self.skin_chosen.get(style) or set())
-        rows = (self.textures.skin_info or {}).get('rows') or []
         base = next((b for b, entries in self.part_materials.items()
                      for e in entries if e['name'] == part), '')
-        head = [str(n).lower() for n in rows[0]] if rows else []
-        if not base or base.lower() not in head or not 0 < style < len(rows):
-            return False
-        row, col = rows[style], head.index(base.lower())
-        return col < len(row) and str(row[col]).lower() != base.lower()
+        return bool(base) and self.textures.table.changes(style, base)
+
+    def __post_init__(self) -> None:
+        self.textures.pair_styles = lambda: not self.own_styles
+        self.textures.custom_geometry = lambda: bool(self.custom_smd_path)
 
     @property
     def own_styles(self) -> bool:
@@ -408,11 +413,7 @@ class PreviewSession:
     def gold_row(self) -> int:
         """Первая строка Australium в таблице скинов игровой модели (0 - нет).
         Australium в игре - тот же скин, только с материалом `_gold`"""
-        rows = (self.textures.skin_info or {}).get('rows') or []
-        base = str(rows[0][0]).lower() if rows and rows[0] else ''
-        return next((r for r, row in enumerate(rows)
-                     if row and str(row[0]).lower() != base
-                     and str(row[0]).lower().endswith('_gold')), 0)
+        return self.textures.table.gold_row()
 
     def styles(self) -> List[Any]:
         """Стили для полосы стилей: [(подпись, индекс скина)]
@@ -429,10 +430,7 @@ class PreviewSession:
     def style_rows(self, style: int) -> List[int]:
         """Строки таблицы скинов, которые и есть этот стиль: у Australium их
         две (RED и BLU одинаковые), у Bloody гильотины одна"""
-        rows = (self.textures.skin_info or {}).get('rows') or []
-        if not 0 < style < len(rows):
-            return [style] if style else []
-        return [r for r, row in enumerate(rows) if r and row == rows[style]]
+        return self.textures.table.style_rows(style)
 
     def style_suffix(self, style: int) -> str:
         """Хвост имени материала стиля своей модели: `<материал>_bloody`"""
@@ -446,9 +444,8 @@ class PreviewSession:
 
     @property
     def active_style(self) -> int:
-        """Активный вариантный стиль (0 - базовый, у него правил нет)"""
-        t = self.textures
-        return t.active_skin if (t.skin_info and t.active_skin) else 0
+        """Активный стиль (0 - база); на BLU у стиля с синей парой - она (style_row)"""
+        return self.textures.style_row
 
     def style_candidates(self) -> List[str]:
         """Материалы, которые ещё можно добавить в активный стиль"""
@@ -595,7 +592,7 @@ class PreviewSession:
                 path = t.resolve_mesh(mat)
                 if path:
                     out[mat] = path
-            return {**self.scene_extra_textures, **out}
+            return {**self.scene_extra_textures, **self.mod_game_textures, **out}
 
         # Вариантный стиль показывает СВОЁ поверх базы: материал без
         # переопределения наследует базовую текстуру, а не остаётся пустым.
@@ -651,17 +648,15 @@ class PreviewSession:
         со своей текстурой в сцене: её же сцена и вернёт, когда карточку
         сменят. У глаз её нет, и уберовские глаза оставались бы на модели
         """
-        rows = (self.textures.skin_info or {}).get('rows') or []
-        if not rows:
+        table = self.textures.table
+        if not table:
             return {}
-        head = rows[0]
+        head = table.rows[0]
         scene = self.scene_textures()
         out: Dict[str, List[str]] = {}
         for mat in self.misc_materials:
-            low = mat.lower()
-            meshes = [head[col] for row in rows[1:] for col, name in enumerate(row)
-                      if name.lower() == low and col < len(head)
-                      and head[col].lower() != low and head[col] in scene]
+            meshes = [head[col] for _row, col in table.cells(mat)
+                      if head[col].lower() != mat.lower() and head[col] in scene]
             if meshes:
                 out[mat] = list(dict.fromkeys(meshes))
         return out
@@ -744,8 +739,7 @@ class PreviewSession:
         не пишет
         """
         from src.data.pickups import PICKUP_MODE_PREFIX
-        from src.data.player_characters import PLAYER_BODY_MODE_KEYS, SPY_MASK_MODE_KEY
-        from src.data.player_hands import HAND_MODE_KEYS
+        from src.data.item_kinds import kind_of
         from src.data.weapons import SPECIAL_MODES
         from src.data.weapon_quirks import MATERIAL_ONLY_WEAPON_KEYS, NO_BLU_WEAPON_KEYS
 
@@ -755,9 +749,7 @@ class PreviewSession:
         # '\x00' - sentinel панели «модель ещё не грузили»
         if not mode or not key or key == '\x00':
             return False
-        if mode in ('hat', 'custom') or mode in HAND_MODE_KEYS:
-            return False
-        if mode in PLAYER_BODY_MODE_KEYS or mode == SPY_MASK_MODE_KEY:
+        if not kind_of(mode).can_force_team:
             return False
         # Аптечки и патроны нейтральны: командного варианта у них нет и
         # синтезировать его не из чего
@@ -809,6 +801,7 @@ class PreviewSession:
             'australium_user_tex': t.australium_user_tex,
             'force_team': bool(t.force_team),
             'blu_like_red': sorted(t.blu_like_red),
+            'variant_source': dict(t.variant_source),
             'texture_maps': {mat: dict(maps)
                              for mat, maps in self.texture_maps.items()},
             'texture_overrides': {mat: dict(settings)
@@ -853,7 +846,7 @@ class PreviewSession:
             'decor_models': dict(self.decor_models),
             'decor_wrapped': dict(self.decor_wrapped),
             'decor_baked': self.decor_baked,
-            'part_models': dict(self.part_models),
+            'part_models': dict(self.part_models), **self.vmt.as_edits(),
         }
 
     def part_material_names(self) -> List[str]:
@@ -912,6 +905,7 @@ class PreviewSession:
         t.australium_user_tex = edits.get('australium_user_tex') or None
         t.force_team = bool(edits.get('force_team'))
         t.blu_like_red = {str(m) for m in edits.get('blu_like_red') or ()}
+        t.variant_source = {str(k): str(v) for k, v in (edits.get('variant_source') or {}).items()}
         self.texture_maps = {mat: dict(maps) for mat, maps
                              in (edits.get('texture_maps') or {}).items()}
         self.texture_overrides = {mat: dict(settings) for mat, settings
@@ -988,6 +982,7 @@ class PreviewSession:
         self.decor_baked = str(edits.get('decor_baked') or '')
         self.part_models = {str(part): str(smd) for part, smd
                             in (edits.get('part_models') or {}).items() if smd}
+        self.vmt.apply(edits)
 
     def forget_user_edits(self) -> None:
         """Сброс правок предмета - «начать с чистого» без смены предмета"""
@@ -997,6 +992,7 @@ class PreviewSession:
         self.textures.australium_user_tex = None
         self.textures.force_team = False
         self.textures.blu_like_red = set()
+        self.textures.variant_source = {}
         self.skin_chosen = {}
         self.texture_maps = {}
         self.texture_overrides = {}
@@ -1005,7 +1001,7 @@ class PreviewSession:
         self.part_bases = {}
         self.part_regions = {}
         self.part_cuts = {}
-        self.paintkit_layouts = {}
+        self.paintkit_layouts, self.vmt = {}, VmtEdits()
         self.part_materials = {}
         self.sync_part_cards()
         self.part_edge = 0.0
@@ -1036,7 +1032,7 @@ class PreviewSession:
         self.custom_vpk_kind = ''
         self.custom_vpk_mdl = ''
         self.mod_maps = {}
-        self.mod_vmts = {}
+        self.mod_vmts, self.mod_frames, self.mod_game_textures = {}, {}, {}
 
     def forget_decor_look(self, kind: str) -> None:
         """Правки гирлянды вида `kind`, привязанные к её геометрии: краска,
@@ -1085,7 +1081,7 @@ class PreviewSession:
         # Карты мода - про его материалы, у чужой модели их имена совпали бы
         # с игровыми, и диалог показал бы карты мода не тому материалу
         self.mod_maps = {}
-        self.mod_vmts = {}
+        self.mod_vmts, self.mod_frames, self.mod_game_textures = {}, {}, {}
         # webview перезагружается - что было наложено, больше не актуально
         self.applied_3d_tex = {}
         self.team_framerate = 0.0
@@ -1121,6 +1117,7 @@ class PreviewSession:
         t = self.textures
         t.textures = {Team.RED: {}, Team.BLU: {}}
         t.blu_like_red = set()
+        t.variant_source = {}
         t.material_names = []
         t.main_material = None
         t.reset_skybox()
@@ -1137,7 +1134,7 @@ class PreviewSession:
         self.part_bases = {}
         self.part_regions = {}
         self.part_cuts = {}
-        self.paintkit_layouts = {}
+        self.paintkit_layouts, self.vmt = {}, VmtEdits()
         self.part_materials = {}
         self.sync_part_cards()
         self.part_edge = 0.0

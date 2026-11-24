@@ -22,12 +22,13 @@ from typing import Optional
 
 from src.shared.logging_config import get_logger
 from src.shared.paths import data_dir
+from src.shared.game_paths import game_path
 
 logger = get_logger(__name__)
 
 _CACHE_DIR = data_dir() / "cache" / "decompiled"
 _META_FILENAME = "_cache_meta.json"
-_CACHE_VERSION = 4  # v3: vpk_mtime вместо mdl_hash; v4: SMD дописаны геометрией, которую терял Crowbar (mdl_mesh)
+_CACHE_VERSION = 5  # v3: vpk_mtime вместо mdl_hash; v4: SMD дописаны геометрией, которую терял Crowbar (mdl_mesh); v5: разборы до сверки с CRC игры могли собрать модель, подменённую прелоадером (game_integrity)
 
 # Мягкий потолок размера кэша. После сохранения новой записи кэш само-урезается
 # до этого размера, удаляя самые давно использованные записи (LRU по mtime папки;
@@ -201,13 +202,13 @@ def find_same_model(vpk_path: str, mdl_rel_path: str) -> Optional[str]:
     в кэше трижды (`heavy`, `models/player/heavy.mdl`, `__player_heavy`) -
     три запуска Crowbar. Годность та же, что у `get_cached_decompile`
     """
-    want = mdl_rel_path.replace("\\", "/").lower()
+    want = game_path(mdl_rel_path)
     stamp = _vpk_mtime(vpk_path)
     for entry, meta in _entries():
         if (meta.get("version") == _CACHE_VERSION
                 and meta.get("vpk_mtime") == stamp
                 and os.path.normcase(str(meta.get("vpk_path") or "")) == os.path.normcase(vpk_path)
-                and str(meta.get("mdl_rel_path") or "").replace("\\", "/").lower() == want
+                and game_path(meta.get("mdl_rel_path")) == want
                 and (entry / str(meta.get("qc_filename") or "")).is_file()):
             return str(entry)
     return None

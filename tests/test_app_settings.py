@@ -220,3 +220,21 @@ class PickFolderTests(unittest.TestCase):
             res = api.pick_folder(str(Path(tmp) / 'нет' / 'такой'))
             self.assertEqual(res, {'path': ''})
             self.assertEqual(Path(seen[0]), Path(tmp).resolve())
+
+
+def test_model_picker_filters_supported_formats():
+    """Окно выбора модели показывает только то, что приложение умеет"""
+    from src.app.api import app_settings
+    from src.services.mesh_import_service import MODEL_EXTENSIONS
+
+    seen = {}
+    old = app_settings._file_picker
+    try:
+        app_settings.set_file_picker(lambda start, types: seen.setdefault('types', types) and 'C:/m.obj')
+        assert app_settings.pick_file('model', 'en') == {'path': 'C:/m.obj'}
+        assert seen['types'] == ('Models (*.smd;*.obj;*.gltf;*.glb)',)
+        app_settings.set_file_picker(None)
+        assert app_settings.pick_file('model')['extensions'] == list(MODEL_EXTENSIONS)
+        assert 'error' in app_settings.pick_file('nope')
+    finally:
+        app_settings.set_file_picker(old)

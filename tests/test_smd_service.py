@@ -175,7 +175,16 @@ class SMDServiceTests(unittest.TestCase):
             (base / "weapon_mesh.smd").write_text("x", encoding="utf-8")
             found = smd_service.find_reference_smd(str(base), "weapon")
             self.assertTrue(found.endswith("weapon_mesh.smd"))
-    
+
+    def test_service_word_inside_the_model_name_is_not_a_service_file(self):
+        """`balloon_animal_pyro.smd` - надувной зверь, а не анимация"""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "balloon_animal_pyro.smd").write_text("x", encoding="utf-8")
+            (base / "balloon_animal_pyro_physics.smd").write_text("x", encoding="utf-8")
+            found = smd_service.find_reference_smd(str(base), "balloon_animal_pyro")
+            self.assertTrue(found.endswith("balloon_animal_pyro.smd"))
+
     def test_merge_triangles_without_original_names(self):
         merged = SMDService._merge_triangles([("mat", ["1 2 3"])], [])
         self.assertIn("mat", merged)

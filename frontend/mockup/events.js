@@ -99,6 +99,10 @@ api.subscribe((ev) => {
       festiveFailed();
       break;
 
+    case 'game_integrity':
+      integrityNote(ev);
+      break;
+
     case 'animated':
       // Многокадровый VTF: анимацию крутит сам вьювер
       withViewer((w) => w.loadAnimatedTexture(
@@ -292,10 +296,12 @@ api.subscribe((ev) => {
       refreshView();
       break;
 
-    // Режим «только геометрия»: пришла игровая текстура, а модель на экране
-    // остаётся пользовательской - красим её глобально
+    // Режим «только геометрия»: модель на экране своя, а карточки игровые -
+    // они только что стали известны. Показ берём целиком: прямая заливка
+    // игровой текстурой перекрывала правки работы, а карточки оставались
+    // пустыми, если прежний запрос показа успел раньше них
     case 'cards_ready':
-      if (ev.texture) withViewer((w) => w.updateTextureFromDataUrl(api.fileUrl(ev.texture)));
+      refreshView();
       // Здесь эта загрузка кончается: model_ready у неё нет, и «Загрузка
       // текстуры…» иначе висела над кадром до конца сеанса
       say('');
@@ -320,3 +326,24 @@ api.subscribe((ev) => {
       break;
   }
 });
+
+//: Сколько подмен уже показано: событие приходит на каждый файл, а сказать
+//: надо один раз и только о новом
+let integrityShown = { modified: 0, restored: 0 };
+let integrityTimer = 0;
+
+/** Файлы игры переписаны чужой программой (game_integrity в Python).
+ *  Восстановленные из проверенной копии - к сведению, без оригинала - совет */
+function integrityNote(ev) {
+  clearTimeout(integrityTimer);
+  integrityTimer = setTimeout(() => {
+    const modified = (ev.modified || []).length;
+    const restored = (ev.restored || []).length;
+    if (modified > integrityShown.modified) {
+      notifyApp(`Файлы игры изменены сторонней программой: ${modified} - укажите прелоадер в «Настройках» или проверьте файлы игры в Steam`, 'info');
+    } else if (restored > integrityShown.restored && !integrityShown.restored) {
+      notifyApp(`Файлы игры изменены прелоадером - взяты оригиналы из его копии: ${restored}`, 'info');
+    }
+    integrityShown = { modified, restored };
+  }, 400);
+}

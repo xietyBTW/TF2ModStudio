@@ -11,6 +11,7 @@ from src.shared.file_utils import (
     copy_file_safe,
     get_temp_file_path,
     cleanup_stale_temp_artifacts,
+    make_preview_dir,
 )
 
 
@@ -92,6 +93,16 @@ class FileUtilsTests(unittest.TestCase):
             self.assertTrue(path.exists())
         finally:
             safe_remove(path)
+
+    def test_make_preview_dir_keeps_only_recent(self):
+        prefix = f"tf2sg_test_{os.getpid()}_"
+        made = [make_preview_dir(prefix, keep=2) for _ in range(4)]
+        try:
+            self.assertEqual([os.path.isdir(p) for p in made],
+                             [False, False, True, True])
+        finally:
+            for p in made:
+                safe_remove(p, is_dir=True)
 
 
 if __name__ == "__main__":

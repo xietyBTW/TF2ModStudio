@@ -22,7 +22,8 @@ class BuildHatMdlCandidatesTests(unittest.TestCase):
     def test_class_suffix_expansion(self):
         out = build_hat_mdl_candidates("models/player/items/engineer/hat_heavy.mdl")
         self.assertTrue(any(p.endswith("hat_scout.mdl") for p in out))
-        self.assertTrue(any(p.endswith("hat_demoman.mdl") for p in out))
+        # Подрывник в путях игры - `_demo` (tf2_classes)
+        self.assertTrue(any(p.endswith("hat_demo.mdl") for p in out))
 
     def test_lowercased_and_backslashes_normalized(self):
         out = build_hat_mdl_candidates("Models\\Player\\Items\\X\\Hat.mdl")

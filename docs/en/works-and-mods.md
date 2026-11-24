@@ -21,7 +21,7 @@ With **Keep a draft of edits** turned off, the app writes nothing on its own. On
 
 ## Saved works
 
-**Save work** under the album turns the item's edits into a work. Works are what you come back to: they're listed in the catalog, in the **Custom Mod** category, with their names and when they were saved ("today", "yesterday", "3 days ago").
+**Save work** under the album turns the item's edits into a work. Works are what you come back to: they're listed in the catalog, in the **Custom Mod** category, with their names and when they were saved ("today", "yesterday", "3 days ago"). A work's cover is a shot of the model with your edits. It's taken when you save the work and refreshed every time you open it.
 
 Clicking a work opens the item together with all its edits. A cosmetic opens on the style where you left it, with the edits of its other styles in place. A work made on top of a VPK mod reopens the mod first and then puts your edits back.
 
@@ -49,11 +49,11 @@ The particle editor keeps a separate history of its own, with the same keys and 
 
 The **Custom Mod** category also holds VPK mods you've opened: your older builds or someone else's mods.
 
-**Open a mod…** picks a `.vpk` or a `.zip` from disk, **Open a mod folder…** picks a folder laid out as in `tf/custom`. An archive or a folder is packed into a VPK: ready VPKs inside an archive are taken as they are, a multi-part one (`_dir.vpk` with `_000.vpk`) is rebuilt as one file, and every folder with `materials`, `models` or `sound` becomes a mod of its own. If there are several mods inside, all of them go to the library and the app asks which one to open now. The app copies it into its library and opens it: the mod's model and textures replace what was on screen, and the title shows the mod's name. From there you can work with it like with any item: repaint its textures, cut it into parts, apply a War Paint. **Build VPK** makes a new mod based on the opened one, with your changes on top.
+**Add a mod…** picks a `.vpk` or a `.zip` from disk. You can also drag files onto the library: a single file opens right away, several just go into the library. The **or a folder as in tf/custom…** link on the same card picks a mod folder. An archive or a folder is packed into a VPK: ready VPKs inside an archive are taken as they are, a multi-part one (`_dir.vpk` with `_000.vpk`) is rebuilt as one file, and every folder with `materials`, `models` or `sound` becomes a mod of its own. If there are several mods inside, all of them go to the library and the app asks which one to open now. The app copies it into its library and opens it: the mod's model and textures replace what was on screen, and the title shows the mod's name. From there you can work with it like with any item: repaint its textures, cut it into parts, apply a War Paint. **Build VPK** makes a new mod based on the opened one, with your changes on top.
 
 If the mod has several models, the app asks which one to show. The mod is built in full whatever you pick. A mod without a model of its own opens too: for a repaint of a body, hands, a projectile or a medkit the app shows the game model it found by the texture paths, a skybox mod shows as a cubemap of its own textures (a replacement in the album shows on the sky right away), and for a spray the view stays empty and you edit the textures in the album. Your last choice of model is marked again the next time you open the mod.
 
-The library keeps a copy, so the mod stays available even if you delete or move the original file. Cards show the mod's size and, where the app can find one, its texture as a cover. The **×** on a card removes the copy from the library. The file you originally opened stays where it was.
+The library keeps a copy, so the mod stays available even if you delete or move the original file. Under the mod's name is the item it replaces, and the file size shows in the tooltip. The cover is that item's backpack icon, and once you've opened the mod, a shot of its model. The **×** on a card removes the copy from the library. The file you originally opened stays where it was.
 
 A few things work differently for opened mods. The VMT editor can't edit a mod's materials. The first-person view and War Paints rely on knowing which weapon the mod replaces: the app recognizes it after showing the mod, and until then they aren't available. When the mod brings a model of its own, War Paints work in universal mode only.
 

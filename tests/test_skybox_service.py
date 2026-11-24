@@ -295,6 +295,8 @@ class BuildSkyboxVpkTests(unittest.TestCase):
             self.assertIn('"sky"', content)
             self.assertIn('"$basetexture" "skybox/test_skyup"', content)
             self.assertIn('"$nofog" "1"', content)
+            # В HDR «sky» - это Sky_HDR_DX9, а он читает только HDR-текстуру
+            self.assertIn('"$hdrbasetexture" "skybox/test_skyup"', content)
             # HDR-клон ссылается на те же общие VTF
             self.assertEqual(content, cap["vmt_texts"]["sky_a_01_hdrup.vmt"])
 

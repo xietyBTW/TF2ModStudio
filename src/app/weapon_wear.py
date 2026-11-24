@@ -18,7 +18,7 @@ def scene_args(host, tf2_root: str) -> Dict[str, Any]:
     либо {'error': …}"""
     from src.data import viewmodel_anims
     from src.domain.preview.model_key import model_key_for
-    from src.services.extract_model_service import ExtractModelService
+    from src.services.model_locator import mdl_candidates
 
     mode = getattr(host, '_mode', '')
     key = model_key_for(mode)
@@ -34,7 +34,7 @@ def scene_args(host, tf2_root: str) -> Dict[str, Any]:
     if not classes:
         return {'error': 'Не удалось понять, чей это предмет'}
 
-    candidates = ExtractModelService._build_paths_to_try(mode, key, tf2_root)
+    candidates = mdl_candidates(mode, key, tf2_root)
     info = viewmodel_anims.anim_info(key, tf2_root)
     preview = host.preview
     return {

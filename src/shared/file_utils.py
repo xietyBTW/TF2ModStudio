@@ -4,9 +4,16 @@
 
 import os
 import shutil
+import threading
+from collections import deque
 from pathlib import Path
 from typing import Optional
 from .exceptions import RequiredFileMissingError
+
+
+def existing_file(path: Optional[str]) -> Optional[str]:
+    """Путь, если файл на месте, иначе None"""
+    return path if path and os.path.isfile(path) else None
 
 
 def ensure_directory_exists(dir_path: str | Path) -> Path:
@@ -136,6 +143,33 @@ def cleanup_stale_temp_artifacts(max_age_hours: float = 24.0,
         except OSError:
             continue
     return removed
+
+
+#: Сколько последних папок превью одного вида держать: старше - их файлы уже
+#: не нужны ни сеансу (состояние переписывается на новую папку), ни кадру
+PREVIEW_DIRS_KEPT = 5
+_preview_dirs: dict = {}
+_preview_lock = threading.Lock()
+
+
+def make_preview_dir(prefix: str, keep: int = PREVIEW_DIRS_KEPT) -> str:
+    """
+    Папка в %TEMP% под одно превью; самые старые этого же вида удаляются
+
+    Без этого за сеанс каждая смена модели оставляла папку на 2-6 МБ до
+    следующего запуска. Удаляются только папки ЭТОГО процесса: по маске
+    dev-сервер стирал бы файлы открытого рядом приложения
+    """
+    import tempfile
+
+    path = tempfile.mkdtemp(prefix=prefix)
+    with _preview_lock:
+        made = _preview_dirs.setdefault(prefix, deque())
+        made.append(path)
+        stale = [made.popleft() for _ in range(max(0, len(made) - keep))]
+    for old in stale:
+        shutil.rmtree(old, ignore_errors=True)
+    return path
 
 
 def get_temp_file_path(prefix: str = "temp", suffix: str = ".tmp") -> Path:

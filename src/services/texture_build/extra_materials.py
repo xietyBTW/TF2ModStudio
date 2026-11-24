@@ -267,10 +267,7 @@ def follow_shared_textures(ctx, slots) -> None:
     """
     from src.data.material_filter import is_editable_material
 
-    def norm(path):
-        path = (path or '').replace('\\', '/').strip().strip('/').lower()
-        path = path[len('materials/'):] if path.startswith('materials/') else path
-        return path[:-4] if path.endswith('.vtf') else path
+    from src.shared.game_paths import texture_key as norm
 
     own = {}
     for vtf in sorted(slots.vtf_output_path.glob('*.vtf')):
@@ -313,7 +310,7 @@ def write_blacklisted_materials(
         if _bl_vmt.exists():
             continue
         try:
-            _src_vmt = game_source.find_original_vmt(_bl_mat, ctx, slots)
+            _src_vmt = game_source.find_vmt_or_red(_bl_mat, ctx, slots)
             if _src_vmt:
                 # Родной VMT ссылается на текстуру ИГРОВЫМ путём, и он в
                 # игре есть - своя копия VTF была бы мёртвым весом в моде

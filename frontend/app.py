@@ -162,7 +162,8 @@ def _open_pywebview(url: str, look: dict) -> bool:
     window = webview.create_window(TITLE, url, width=1440, height=900,
                                    min_size=(900, 600),
                                    background_color=BACKGROUND[look['theme']])
-    api.set_folder_picker(lambda start: _pick_folder(window, start))
+    api.set_folder_picker(lambda start: _system_dialog(window, True, start))
+    api.set_file_picker(lambda start, types: _system_dialog(window, False, start, types))
     if titlebar is not None:
         # Кнопки окна страница зовёт через api.window_control
         titlebar.attach(window, look['theme'], BACKGROUND)
@@ -201,9 +202,9 @@ def _webview_profile() -> Path:
     return Path(base) / APP_DIR_NAME / 'webview-dev'
 
 
-def _pick_folder(window, start: str) -> str:
+def _system_dialog(window, folder: bool, start: str, file_types=()) -> str:
     """
-    Системный выбор папки поверх окна. Отмена - пустая строка
+    Системный выбор папки или файла поверх окна. Отмена - пустая строка
 
     Вызов приходит из потока сервера, а диалог WinForms обязан открываться в
     потоке окна: pywebview сам туда не переходит, и `create_file_dialog` из
@@ -219,8 +220,9 @@ def _pick_folder(window, start: str) -> str:
     if form is None:
         return ''
     box = {}
-    form.Invoke(Action(lambda: box.update(
-        path=window.create_file_dialog(FileDialog.FOLDER, directory=start))))
+    kind = FileDialog.FOLDER if folder else FileDialog.OPEN
+    form.Invoke(Action(lambda: box.update(path=window.create_file_dialog(
+        kind, directory=start, file_types=tuple(file_types)))))
     chosen = box.get('path')
     return str(chosen[0]) if chosen else ''
 

@@ -336,6 +336,21 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(sb.clean_spec({"layers": [{"type": "flash", "stops": [[0, "bad"]]}]})
                          ["layers"][0]["stops"], sb.DEFAULT_STOPS)
 
+    def test_rotated_pattern_starts_at_the_bottom_of_the_mask(self):
+        """Кунай: блеск шёл сверху вниз - начало узора было в верхней строке
+        маски, а верх маски - верх оружия. Начало должно быть внизу, конец
+        наверху, а поперечная ось (левый край узора) - не зеркалиться"""
+        import numpy as np
+        pic = np.zeros((4, 8, 4), np.uint8)       # высота 4 (поперёк), длина 8
+        pic[:, 0, 0] = 255                         # начало узора - красное
+        pic[:, -1, 2] = 255                        # конец - синий
+        pic[0, :, 1] = 255                         # верхний край узора - зелёный
+        out = sp.along_height(pic)
+        self.assertEqual(out.shape[:2], (8, 4))   # длина по высоте маски
+        self.assertEqual(int(out[-1, :, 0].min()), 255)   # начало - нижняя строка
+        self.assertEqual(int(out[0, :, 2].min()), 255)    # конец - верхняя
+        self.assertEqual(int(out[:, 0, 1].min()), 255)    # верх узора - левый столбец
+
     def test_vertical_weapon_gets_rotated_side_stencil(self):
         # Кунай: длина по Z. Своя маска - трафарет сбоку (направление 0, X и Z),
         # повёрнутый, раскладка закреплена своими прокси после игрового
@@ -367,6 +382,34 @@ class LibraryTests(unittest.TestCase):
         _frames, w, h = VTFLib.read_vtf_all_frames(str(vtf))
         mh, mw = sb.mask_shape(19.4 / 3.5, "medium")
         self.assertEqual((w, h), (mh, mw))                        # повёрнута: длина по высоте
+
+    def test_bought_sheen_colour_is_left_to_the_game(self):
+        """«Как у купленного блеска»: оттенок ставит прокси игры, наш его не
+        перебивает, а маска узора без цвета - её красит цвет игрока"""
+        import numpy as np
+        pid = sl.save("", "Цветной", sb.PRESETS["double"]["spec"], 2.0)
+        out = fx.apply(fx.SHEEN, {"pattern": pid, "tint": "game", "color": "#ff0000"},
+                       STOCK, "", None)["text"]
+        self.assertNotIn('"resultVar" "$sheenmaptint"', out)
+        self.assertRegex(out, rf'tf2sg/sheen/{pid}_a\d+g_\d+')
+        self.assertEqual(fx.values(fx.SHEEN, out)["tint"], "game")
+        root = Path(self.tmp.name) / "vpkroot"
+        mat = root / "materials" / "models"
+        mat.mkdir(parents=True)
+        (mat / "a.vmt").write_text(out, encoding="utf-8")
+        sp.materialize(root, "")
+        vtf = next((root / "materials" / "tf2sg" / "sheen").glob(f"{pid}*g_*.vtf"))
+        from src.services.vtflib_wrapper import VTFLib
+        frames, w, h = VTFLib.read_vtf_all_frames(str(vtf))
+        lit = np.frombuffer(max(frames, key=lambda f: sum(f[::4])), np.uint8).reshape(h, w, 4)
+        self.assertGreater(int(lit[..., 0].max()), 0)
+        # Серый: каналы равны с точностью DXT1 (цвет 5:6:5)
+        rgb = lit[..., :3].astype(int)
+        self.assertLessEqual(int((rgb.max(-1) - rgb.min(-1)).max()), 8)
+        # Назад к своему цвету - наш оттенок снова перебивает игровой
+        back = fx.apply(fx.SHEEN, {"pattern": pid, "color": "#ff0000"}, out, "", None)["text"]
+        self.assertIn('"resultVar" "$sheenmaptint"', back)
+        self.assertNotIn("sheengame", back)
 
     def test_deleted_pattern_still_builds(self):
         pid = sl.save("", "Старый", sb.PRESETS["pulse"]["spec"], 2.0)

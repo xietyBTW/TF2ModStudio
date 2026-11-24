@@ -21,15 +21,12 @@ from src.services.model_build_service import ModelBuildService
 from src.services.model_service import ModelService
 from src.services import smd_service
 from src.services.smd_service import SMDService
-from src.services.tf2_paths import build_hat_mdl_candidates
 from src.services.tf2_vpk_extract_service import TF2VPKExtractService
 from src.services.texture_build import panel_extras
 from src.data.weapons import WEAPON_MDL_PATHS
-from src.data.player_characters import (
-    PLAYER_BODY_MODE_KEYS,
-    SPY_MASK_MODE_KEY,
-    SPY_MDL_PATH,
-)
+from src.data.item_kinds import kind_of
+from src.data.translations import tr
+from src.shared.game_paths import game_path
 from src.shared.file_utils import ensure_directory_exists, copy_file_safe
 from src.shared.logging_config import get_logger
 
@@ -71,60 +68,23 @@ class VpkModelPipeline:
             (нет mdl_path для персонажа или оружие не найдено в конфиге);
             вызывающий код должен очистить ctx и вернуть ошибку
         """
+        from src.domain.preview.model_key import model_key_for
+        from src.services.model_locator import mdl_candidates
+
+        kind = kind_of(mode)
         # Шапка: путь из items_game.txt, возможно с %s-плейсхолдером
-        if mode == "hat" and hat_mdl_path:
-            # Единая логика кандидатов (%s, workshop-варианты, суффиксы класса)
-            return build_hat_mdl_candidates(hat_mdl_path), None
-
-        # Тело персонажа / маски шпиона: прямой путь к MDL
-        if mode in PLAYER_BODY_MODE_KEYS or mode == SPY_MASK_MODE_KEY:
-            if mode == SPY_MASK_MODE_KEY:
-                _char_mdl = SPY_MDL_PATH
-            else:
-                from src.data.player_characters import PLAYER_CHARACTERS as _PC
-                _char_mdl = _PC.get(mode, {}).get('mdl_path', '')
-            if not _char_mdl:
+        if kind.is_hat and hat_mdl_path:
+            return mdl_candidates(mode, hat_mdl_path), None
+        # Тело персонажа / маски шпиона: путь MDL знает режим
+        if kind.model_by_path and not kind.is_hat:
+            mdl = model_key_for(mode)
+            if not mdl:
                 return [], f"No mdl_path defined for character mode: {mode}"
-            return [_char_mdl], None
-
-        # Обычное оружие: пробуем все вероятные места хранения
+            return [mdl], None
+        # Оружие и руки: ключ должен быть в таблице, дальше - раскладки папок
         if weapon_key not in WEAPON_MDL_PATHS:
             return [], t['error_weapon_not_found'].format(weapon_key=weapon_key)
-
-        base_path = WEAPON_MDL_PATHS[weapon_key]
-        _folder_suffix = f"/{weapon_key}/{weapon_key}.mdl"
-        _flat_suffix = f"/{weapon_key}.mdl"
-        paths_to_try = []
-
-        # Точный путь из items_game.txt (авторитетный) - первым кандидатом.
-        # Убирает зависимость от угадывания папок/префиксов и ручных оверрайдов
-        if tf2_root:
-            try:
-                from src.data.weapon_model_index import resolve_weapon_mdl
-                _exact = resolve_weapon_mdl(weapon_key, tf2_root)
-                if _exact:
-                    paths_to_try.append(_exact)
-            except Exception as _e:
-                logger.debug(f"weapon index: {_e}")
-
-        # workshop_partner -> workshop -> стандарт -> c_items: путь с папкой и без
-        for _candidate in (
-            base_path.replace("models/weapons/", "models/workshop_partner/weapons/"),
-            base_path.replace("models/weapons/", "models/workshop/weapons/"),
-            base_path,
-            base_path.replace("models/weapons/c_models/", "models/weapons/c_items/"),
-        ):
-            paths_to_try.append(_candidate)
-            if _folder_suffix in _candidate:
-                paths_to_try.append(_candidate.replace(_folder_suffix, _flat_suffix))
-
-        # Последний шанс - папки классов (там обычно старьё)
-        if '_' in mode:
-            class_name_lower = mode.split('_', 1)[0]
-            paths_to_try.append(f"models/player/items/{class_name_lower}/{weapon_key}/{weapon_key}.mdl")
-            paths_to_try.append(f"models/player/items/{class_name_lower}/{weapon_key}.mdl")
-
-        return paths_to_try, None
+        return mdl_candidates(mode, weapon_key, tf2_root), None
     
     @staticmethod
     def _find_existing_mdl(
@@ -142,24 +102,13 @@ class VpkModelPipeline:
         Returns:
             (found_path, error). Ровно одно из значений не None
         """
-        last_error = None
-        for mdl_rel_path in paths_to_try:
-            try:
-                logger.debug(f"Проверяем наличие MDL по пути: {mdl_rel_path}")
-                if TF2VPKExtractService.check_mdl_exists(tf2_misc_vpk, mdl_rel_path):
-                    logger.info(f"MDL файл найден по пути: {mdl_rel_path}")
-                    return mdl_rel_path, None
-                logger.debug(f"MDL файл не найден по пути: {mdl_rel_path}")
-            except Exception as e:
-                logger.warning(f"Ошибка при проверке пути {mdl_rel_path}: {e}", exc_info=True)
-                last_error = e
+        from src.services.model_locator import first_existing, not_found_error
 
-        paths_str = "\n".join([f"  - {path}" for path in paths_to_try])
-        error_msg = t['error_mdl_not_found'].format(paths=paths_str, vpk_file=tf2_misc_vpk)
-        if last_error:
-            error_msg += f"\n{str(last_error)}"
+        found, last_error = first_existing(tf2_misc_vpk, paths_to_try)
+        if found:
+            return found, None
         logger.error(f"Модель не найдена для {weapon_key}. Проверенные пути: {len(paths_to_try)}")
-        return None, error_msg
+        return None, not_found_error(t, paths_to_try, tf2_misc_vpk, last_error)
 
     @staticmethod
     def _resolve_replace_model_smd(
@@ -232,10 +181,9 @@ class VpkModelPipeline:
             (qc_path, error). error != None -> фатальная ошибка, вызывающий
             код чистит ctx и возвращает ошибку
         """
-        en = language == "en"
         stage_text = {
-            mds.Stage.EXTRACTING: "Extracting model..." if en else "Извлечение модели...",
-            mds.Stage.DECOMPILING: "Decompiling model..." if en else "Декомпиляция модели...",
+            mds.Stage.EXTRACTING: tr(language, 'build_extracting'),
+            mds.Stage.DECOMPILING: tr(language, 'build_decompiling'),
         }
         qc_path = mds.decompile_into(
             weapon_key, tf2_misc_vpk, [found_mdl_path], str(ctx.decompile_dir),
@@ -285,7 +233,7 @@ class VpkModelPipeline:
 
                 if original_smd_path:
                     logger.info(f"Заменяем модель: {replace_model_smd_path} -> {original_smd_path}")
-                    emit_sub(-1, "Replacing model..." if language == "en" else "Замена модели...")
+                    emit_sub(-1, tr(language, 'build_sub_replacing_model'))
                     # Заменяем секции: nodes и skeleton из оригинального (иначе модель не скомпилируется),
                     # названия материалов из оригинального (иначе текстуры не загрузятся),
                     # данные треугольников из пользовательского (это то, что юзер хочет заменить)
@@ -293,7 +241,7 @@ class VpkModelPipeline:
                         replace_model_smd_path,
                         original_smd_path,
                         original_smd_path,  # Перезаписываем оригинальный файл под тем же именем
-                        progress_cb=lambda pct: emit_sub(pct, "Replacing model..." if language == "en" else "Замена модели..."),
+                        progress_cb=lambda pct: emit_sub(pct, tr(language, 'build_sub_replacing_model')),
                         keep_user_materials=keep_user_materials, qc_path=qc_path,
                     )
                     if keep_user_materials:
@@ -341,12 +289,12 @@ class VpkModelPipeline:
                                     
                         if user_extra_smd and os.path.exists(user_extra_smd):
                             logger.info(f"Заменяем доп. часть модели: {user_extra_smd} -> {extra_smd_path}")
-                            emit_sub(-1, f"Replacing {extra_smd_base}..." if language == "en" else f"Замена {extra_smd_base}...")
+                            emit_sub(-1, tr(language, 'build_sub_replacing_part', name=extra_smd_base))
                             SMDService.replace_model_sections(
                                 user_extra_smd,
                                 extra_smd_path,
                                 extra_smd_path,  # Перезаписываем оригинал
-                                progress_cb=lambda pct: emit_sub(pct, f"Replacing {extra_smd_base}..." if language == "en" else f"Замена {extra_smd_base}..."),
+                                progress_cb=lambda pct: emit_sub(pct, tr(language, 'build_sub_replacing_part', name=extra_smd_base)),
                             )
                             logger.info(f"Доп. часть модели успешно заменена: {extra_smd_name}")
                         else:
@@ -409,17 +357,8 @@ class VpkModelPipeline:
         if not use_explicit and (not hat_mdl_path or "%s" not in hat_mdl_path):
             return
 
-        import re as _re
+        from src.data.tf2_classes import class_of_model as _cls_of
         from src.services.tf2_paths import build_hat_mdl_candidates
-
-        _cls_pat = _re.compile(
-            r'_(heavy|scout|soldier|pyro|demoman|engineer|medic|sniper|spy)\.mdl$',
-            _re.IGNORECASE,
-        )
-
-        def _cls_of(p: str) -> Optional[str]:
-            m = _cls_pat.search((p or '').replace('\\', '/').lower())
-            return m.group(1) if m else None
 
         to_build: list = []
         seen = set()
@@ -428,7 +367,7 @@ class VpkModelPipeline:
             # Пути из model_player_per_class авторитетны - берём как есть, без
             # суффиксной экспансии (она могла бы подставить модель другого класса)
             for cand in target_mdl_paths:
-                norm = (cand or '').replace('\\', '/').lower()
+                norm = game_path(cand)
                 if not norm or norm in seen:
                     continue
                 try:
@@ -466,8 +405,7 @@ class VpkModelPipeline:
             wk = Path(mdl_rel).stem
             try:
                 _lbl = cls or wk
-                emit_sub(-1, f"Class model: {_lbl}..." if language == "en"
-                         else f"Модель класса: {_lbl}...")
+                emit_sub(-1, tr(language, 'build_sub_class_model', name=_lbl))
                 cls_root = ctx.temp_dir / f"hatcls_{wk}"
                 decomp_d = cls_root / "decompile"
                 comp_d = cls_root / "compile"
@@ -594,7 +532,7 @@ class VpkModelPipeline:
                 ctx.warn("Свои материалы частей неоткрытого стиля в мод не попали: "
                          "их собирает только открытый стиль")
             for mdl_rel in (entry.get('mdl_paths') or []):
-                mdl_norm = (mdl_rel or '').replace('\\', '/').lower()
+                mdl_norm = game_path(mdl_rel)
                 if not mdl_norm:
                     continue
                 wk = Path(mdl_norm).stem
@@ -602,8 +540,7 @@ class VpkModelPipeline:
                     if not TF2VPKExtractService.check_mdl_exists(tf2_misc_vpk, mdl_norm):
                         logger.warning(f"[HAT STYLE] MDL стиля не найден в игре, пропуск: {mdl_norm}")
                         continue
-                    emit_sub(-1, f"Style model: {wk}..." if language == "en"
-                             else f"Модель стиля: {wk}...")
+                    emit_sub(-1, tr(language, 'build_sub_style_model', name=wk))
                     st_root = ctx.temp_dir / f"hatstyle_{wk}"
                     decomp_d = st_root / "decompile"
                     comp_d = st_root / "compile"
@@ -756,7 +693,7 @@ class VpkModelPipeline:
                      for k, v in (textures.get(Team.BLU) or {}).items()}
         like_red = {str(m).lower() for m in entry.get('blu_like_red') or ()}
         # Карточка одноматериальной модели живёт под служебным ключом
-        from src.domain.preview.texture_state import SINGLE_TEX_KEY
+        from src.domain.preview.texture_state import SINGLE_TEX_KEY, blue_image
         if SINGLE_TEX_KEY in like_red and main_tex:
             like_red.add(main_tex.lower())
 
@@ -768,7 +705,12 @@ class VpkModelPipeline:
 
         seen = written_textures if written_textures is not None else {}
 
-        def _render(name: str, img: Optional[str]) -> bool:
+        # Свои настройки карточек стиля (шестерёнка) - из его снимка, синий
+        # материал собирается настройками своей красной карточки
+        from src.data.texture_overrides import own_settings, vtf_settings
+        overrides = entry.get('texture_overrides') or {}
+
+        def _render(name: str, img: Optional[str], card: Optional[str] = None) -> bool:
             if not (img and os.path.isfile(img)):
                 return False
             # Стили одной шапки нередко делят материал (63 шапки в стоке:
@@ -785,7 +727,8 @@ class VpkModelPipeline:
             seen[key] = img
             return bool(panel_extras.render_extra_texture(
                 name, img, vtf_dir, base_vmt_path, patched_cd,
-                size, format_type, flags, vtf_options))
+                *vtf_settings(size, format_type, flags, vtf_options,
+                              own_settings(overrides, card or name, main_tex or ''))))
 
         written = 0
         for mat in mats:
@@ -801,8 +744,8 @@ class VpkModelPipeline:
             blu_mat = team_map.get(mat)
             if blu_mat and not qc_skin_parser.is_shared_column(mat, blu_mat):
                 # «Как красная» - синяя той же картинкой, что красная
-                blu_img = blu_edits.get(low) or (img if low in like_red else None)
-                if _render(blu_mat, blu_img):
+                blu_img = blue_image(blu_edits.get(low), img, low in like_red)
+                if _render(blu_mat, blu_img, mat):
                     written += 1
         return written
 
@@ -820,7 +763,7 @@ class VpkModelPipeline:
         переименовывая под $modelname из QC (а не под имя пользовательского
         файла) - иначе все файлы мода получат чужое имя. studiomdl не нужен
         """
-        emit_sub(-1, "Copying ready model..." if language == "en" else "Копирование готовой модели...")
+        emit_sub(-1, tr(language, 'build_sub_copying_ready'))
         try:
             ready_dir   = os.path.dirname(model_ready_path)
             ready_stem  = os.path.splitext(os.path.basename(model_ready_path))[0]
@@ -899,7 +842,7 @@ class VpkModelPipeline:
 
         def _do_compile() -> None:
             try:
-                emit_sub(-1, "Compiling model..." if language == "en" else "Компиляция модели...")
+                emit_sub(-1, tr(language, 'build_compiling'))
                 ModelBuildService.compile(qc_path, ctx.compile_dir, studiomdl_exe, tf_dir)
                 if debug_mode:
                     DebugService.save_compiled_stage(ctx, ctx.compile_dir)
@@ -909,7 +852,7 @@ class VpkModelPipeline:
         if model_ready_path and os.path.exists(model_ready_path):
             if model_ready_path.lower().endswith('.smd'):
                 # SMD: заменяем reference SMD оригинала и компилируем через studiomdl
-                emit_sub(-1, "Replacing model SMD..." if language == "en" else "Замена SMD модели...")
+                emit_sub(-1, tr(language, 'build_sub_replacing_smd'))
                 try:
                     original_smd_path = VpkModelPipeline._find_decompiled_reference_smd(
                         qc_path, weapon_key, ctx.decompile_dir

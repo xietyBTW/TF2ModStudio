@@ -11,7 +11,7 @@
 """
 
 import os
-import tempfile
+from src.shared.file_utils import make_preview_dir
 from typing import Optional
 
 from src.services.base_worker import Signal
@@ -82,6 +82,8 @@ class Preview3DWorker(BaseWorker):
     # Australium/Gold/Festive вариант оружия: (png_path, material_name)
     # Эмитируется когда в QC skinfamilies есть вариантная строка без 'blue'
     australium_ready = Signal(str, str)
+    #: Синее золото (png, материал) - до australium_ready, у части оружия
+    australium_blu_ready = Signal(str, str)
     # {синий материал: его RED-пара} - в игре синий выглядит ТОЧНО как
     # красный. Переключатель ради них не показывается, а сборка отдаёт им
     # правку красного
@@ -146,8 +148,7 @@ class Preview3DWorker(BaseWorker):
         #: Своя геометрия деталей {имя SMD детали без .smd: SMD человека}:
         #: снаряд в оружии своей модели (см. with_part_models)
         self.part_models: dict = dict(part_models or {})
-        #: Вид предмета: вместо разбросанных проверок «mode == 'hat'» и
-        #: «mode in HAND_MODE_KEYS» (см. src/data/item_kinds.py)
+        #: Вид предмета (src/data/item_kinds.py)
         self.kind              = kind_of(mode)
         self.misc_vpk_path     = misc_vpk_path
         self.textures_vpk_path = textures_vpk_path
@@ -178,7 +179,7 @@ class Preview3DWorker(BaseWorker):
         # архива, и каждый метод открывал бы те же VPK заново
         self._reader = GameVpkReader([self.textures_vpk_path, self.misc_vpk_path])
         try:
-            self._preview_dir = tempfile.mkdtemp(prefix="tf2sg_3d_")
+            self._preview_dir = make_preview_dir("tf2sg_3d_")
 
             # 1. SMD
             self.progress.emit(self._p['searching'])
@@ -598,6 +599,9 @@ class Preview3DWorker(BaseWorker):
             # «if not blu_paths» скрыл бы вариант
             aus_path, aus_mat = self._extract_variant_via_qc(self._decomp_dir)
             if aus_path:
+                blu_path, blu_mat = self._extract_variant_blu(self._decomp_dir, aus_mat)
+                if blu_path:
+                    self.australium_blu_ready.emit(blu_path, blu_mat)
                 self.australium_ready.emit(aus_path, aus_mat or "")
         # Fallback: прямой поиск {wk}_blue.vtf
         if not blu_multi_done and not blu_paths:
@@ -627,7 +631,7 @@ class Preview3DWorker(BaseWorker):
         """SMD пушки-носителя, если модель на ней висит. См. carrier_model"""
         # Только у оружия: у шапок и персонажей weapon_key - путь к MDL, и
         # носителя у них не бывает
-        if self.kind.is_hat or self.kind.is_character or self.kind.is_spy_mask:
+        if self.kind.model_by_path:
             return []
         from src.data.weapon_model_index import tf2_root_from_misc_vpk
         from src.services import carrier_model
@@ -993,20 +997,26 @@ class Preview3DWorker(BaseWorker):
         """
         model = self._model(decomp_dir)
         variant_tex = texture_locator.variant_name(model)
-        if not variant_tex:
+        return self._variant_png(model, variant_tex, "texture_variant")
+
+    def _extract_variant_blu(self, decomp_dir: str, variant_tex: Optional[str]) -> tuple:
+        """Синее золото (путь PNG, материал) или (None, None)"""
+        model = self._model(decomp_dir)
+        name = texture_locator.variant_blu_name(model, variant_tex)
+        return self._variant_png(model, name, "texture_variant_blu")
+
+    def _variant_png(self, model, name: Optional[str], label: str) -> tuple:
+        """Текстура варианта -> (путь PNG, имя) или (None, None)"""
+        if not name:
             return None, None
         try:
-            found = self.materials.find_vtf(variant_tex, model.cdmaterials)
-            vtf_data = found.data if found else None
-            if not vtf_data:
-                return None, None
-            out = self._vtf_data_to_png(vtf_data, "texture_variant")
-            if not out:
-                return None, None
-            logger.info(f"[3D] Вариант оружия извлечён: {out}")
-            return out, variant_tex
-        except Exception as exc:
-            logger.warning(f"[3D] _extract_variant_via_qc: {exc}")
+            found = self.materials.find_vtf(name, model.cdmaterials)
+            out = self._vtf_data_to_png(found.data, label) if found and found.data else None
+            if out:
+                logger.info(f"[3D] Вариант оружия извлечён: {out}")
+            return (out, name) if out else (None, None)
+        except Exception as exc:                       # noqa: BLE001
+            logger.warning(f"[3D] вариант {name}: {exc}")
             return None, None
 
     # Состояние прогона: резолвер, разбор QC, запись PNG
@@ -1236,7 +1246,7 @@ class Preview3DWorker(BaseWorker):
             (frame_paths: list[str], framerate: float)
             frame_paths пустой если текстура не найдена
         """
-        if self.mode == "hat":
+        if self.kind.is_hat:
             return self._extract_hat_texture_frames()
 
         # Режим масок шпиона: извлекаем mask_spy.vtf по умолчанию

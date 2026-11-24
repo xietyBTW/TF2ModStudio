@@ -30,6 +30,7 @@ def build_spy_masks_vpk(
     keep_temp_on_error,
     debug_mode,
     t,
+    vtf_for=None,
 ):
     """
     Строит VPK-мод с кастомными масками маскировки шпиона
@@ -54,6 +55,9 @@ def build_spy_masks_vpk(
 
             # Спрашиваем пользователя через стандартный callback
             mask_img = extra_texture_callback(vtf_name, "spy") if extra_texture_callback else None
+            # Свои настройки карточки маски (шестерёнка) поверх общих
+            m_size, m_fmt, m_flags, m_opts = (vtf_for(vtf_name) if vtf_for
+                                              else (size, format_type, flags, vtf_options))
 
             if mask_img == EXTRA_TEX_USE_GAME_ORIGINAL:
                 # Мод пишет маски по игровому пути: без файла игра и так
@@ -69,9 +73,9 @@ def build_spy_masks_vpk(
                 # ВАЖНО: имя PNG должно совпадать с именем VTF (без _tmp),
                 # иначе create_vtf создаст файл с неправильным именем
                 tmp_png = masks_dir / f"{vtf_name}.png"
-                TextureService.process_image(mask_img, tmp_png, size)
-                vtf_flags, merged = TextureService.resolve_vtf_flags_and_options(flags, vtf_options, drop_normal=True)
-                TextureService.create_vtf(str(tmp_png), str(masks_dir), format_type, vtf_flags, merged)
+                TextureService.process_image(mask_img, tmp_png, m_size)
+                vtf_flags, merged = TextureService.resolve_vtf_flags_and_options(m_flags, m_opts, drop_normal=True)
+                TextureService.create_vtf(str(tmp_png), str(masks_dir), m_fmt, vtf_flags, merged)
                 if tmp_png.exists():
                     tmp_png.unlink()
                 logger.info(f"Создан VTF маски: {vtf_name}.vtf")

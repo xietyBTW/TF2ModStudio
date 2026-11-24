@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from src.services import vmt_parse
+from src.shared.game_paths import texture_key
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -47,17 +48,8 @@ class GameVtf:
     path: str
 
 
-def texture_path(basetexture: str) -> str:
-    """Значение $baseTexture так, как его читает движок: от materials/,
-    прямые слэши, нижний регистр, без расширения"""
-    path = (basetexture or "").replace("\\", "/").lower().strip().strip("/")
-    if path.startswith("materials/"):
-        path = path[len("materials/"):]
-    # В VMT встречается ИСХОДНОЕ расширение: у праздничного Правосудия и
-    # Уберпилы Valve оставила `$baseTexture "..._xmas.psd"`. Движок читает
-    # такой путь без расширения, и мы тоже - иначе текстуры у них нет
-    stem, dot, ext = path.rpartition(".")
-    return stem if dot and "/" not in ext else path
+#: Значение $baseTexture так, как его читает движок (src/shared/game_paths)
+texture_path = texture_key
 
 
 # Подмены workshop-путей: одна и та же текстура может лежать под

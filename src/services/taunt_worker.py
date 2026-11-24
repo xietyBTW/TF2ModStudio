@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
+from src.shared.file_utils import make_preview_dir
 from dataclasses import replace
 from typing import Optional
 
-from src.data import taunt_scenes
+from src.data import stock_loadout, taunt_scenes
 from src.data.viewmodel_anims import CLASS_MODEL_STEM
 from src.services import anim_store
 from src.services import model_decompile_service as mds
@@ -38,6 +38,7 @@ from src.services import weapon_anim_catalog as anim_catalog
 from src.services.base_worker import BaseWorker, Signal
 from src.services.game_vpk_reader import GameVpkReader
 from src.services.material_resolver import MaterialResolver
+from src.services.taunt_scene_merge import merge_world_prop
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -56,6 +57,30 @@ def qc_text(directory: str) -> str:
                     encoding='utf-8', errors='replace').read()
     except OSError:
         return ''
+
+
+#: Блок бодигруппы QC и строки `studio "file.smd"` внутри него
+_BODYGROUP = re.compile(r'\$bodygroup\s+"[^"]*"\s*\{(.*?)\}', re.S)
+_STUDIO = re.compile(r'studio\s+"([^"]+\.smd)"', re.I)
+
+
+def prop_parts(directory: str, main_smd: str) -> list:
+    """Остальные куски реквизита из его бодигрупп
+
+    Насмешка включает их событиями: у бассейна пиро каждая группа - «пусто»
+    или канистра, уточка, зажигалка, и без них пиро наливает из пустоты. Из
+    группы берётся первый настоящий вариант, основной меш не повторяется
+    """
+    out = []
+    main = os.path.basename(main_smd or '').lower()
+    for body in _BODYGROUP.findall(qc_text(directory)):
+        found = _STUDIO.findall(body)
+        if not found or os.path.basename(found[0]).lower() == main:
+            continue
+        path = os.path.join(directory, found[0])
+        if os.path.isfile(path):
+            out.append(path)
+    return out
 
 
 def root_rotation(directory: str) -> float:
@@ -113,19 +138,19 @@ def has_motion(smd_path: str) -> bool:
     return bool(rows) and moving / rows >= _POSED
 
 
-def hidden_ranges(events, fps: float):
-    """Секунды, когда реквизита в кадре нет, по событиям AE_WPN_HIDE/UNHIDE
+def hidden_ranges(events, fps: float, weapon: bool = False):
+    """Секунды, когда того, что в руке, в кадре нет, по AE_WPN_HIDE/UNHIDE
 
     События описывают то, что персонаж держит в руке: медик прячет снимок за
     пазухой, достаёт его на 23-м кадре и убирает на 166-м. Без них реквизит
     висел бы в руке всю насмешку
 
-    Скрывать по одному лишь HIDE нельзя: у обычных насмешек он прячет ОРУЖИЕ,
-    которого в сцене и так нет, а реквизит виден с первого кадра - такая
-    последовательность спрятала бы его целиком. Поэтому правило действует
-    только там, где есть и обратное событие
+    ``weapon`` - в руке настоящее оружие (у реквизита своя сцена): события
+    про него, и одиночный HIDE прячет его до конца - инженер на родео без
+    дробовика. Для реквизита, который сам стал оружием, одиночный HIDE не
+    берём: такая последовательность спрятала бы его целиком
     """
-    if not any(hidden is False for _, hidden in events):
+    if not weapon and not any(hidden is False for _, hidden in events):
         return []
     rate = float(fps) or 30.0
     ranges, start = [], None
@@ -219,7 +244,7 @@ class TauntPreviewWorker(BaseWorker):
     def run(self) -> None:
         reader = GameVpkReader([self.textures_vpk_path, self.misc_vpk_path])
         try:
-            self._preview_dir = tempfile.mkdtemp(prefix='tf2sg_taunt_')
+            self._preview_dir = make_preview_dir('tf2sg_taunt_')
 
             uses = taunt_scenes.uses(self.prop_mdl, self.tf2_root)
             classes = [c for c in CLASS_MODEL_STEM if c in uses]
@@ -262,23 +287,16 @@ class TauntPreviewWorker(BaseWorker):
                 self.failed.emit(self._p['no_taunt'])
                 return
 
+            weapon_ref = weapon_dir = ''
+            own_scene = (taunt_scenes.prop_scene(prop_mdl, self.tf2_root, tf2_class)
+                         if player_ref else '')
+            if own_scene:
+                weapon_ref, weapon_dir = self._held_weapon(tf2_class)
+
             self.progress.emit(self._p['scene'])
-            try:
-                scene = self._build(player_ref, prop_ref, prop_dir, sequence,
-                                    tf2_class, self._anims_rotation)
-            except viewmodel_pose.NotHeldInHands:
-                # Реквизит не держат в руках: стенд, стул и машинка стоят в
-                # мире, и с костями персонажа у них общего ничего. Зато у
-                # таких почти всегда есть своя анимация - её и показываем
-                own = self._own_sequence(prop_dir)
-                if own is None:
-                    self.failed.emit(self._p['no_taunt'])
-                    return
-                logger.info(f"[taunt] {self.prop_key}: в руках не держат - "
-                            f"своя анимация {own.name}")
-                sequence, player_ref = own, None
-                scene = self._build(None, prop_ref, prop_dir, sequence,
-                                    tf2_class)
+            scene = self._compose(player_ref, prop_ref, prop_dir, sequence,
+                                  tf2_class, scene_stem, weapon_ref, weapon_dir,
+                                  own_scene)
             if not scene:
                 self.failed.emit(self._p['scene_error'])
                 return
@@ -287,7 +305,8 @@ class TauntPreviewWorker(BaseWorker):
 
             self.progress.emit(self._p['texture'])
             self._emit_scene(reader, scene, prop_dir,
-                             self._player_dir(tf2_class) if player_ref else '')
+                             self._player_dir(tf2_class) if player_ref else '',
+                             weapon_dir)
             logger.info(f"[taunt] {self.prop_key}: класс {tf2_class or '-'}, "
                         f"последовательность {sequence.name}")
 
@@ -302,12 +321,73 @@ class TauntPreviewWorker(BaseWorker):
 
     # Шаги
 
+    def _compose(self, player_ref, prop_ref: str, prop_dir: str, sequence,
+                 tf2_class: str, scene_stem: str, weapon_ref: str = '',
+                 weapon_dir: str = '', own_scene: str = ''):
+        """Персонаж, реквизит и, если игра его не убирает, оружие в руках
+
+        События `AE_WPN_HIDE` прячут АКТИВНОЕ ОРУЖИЕ. Когда реквизит заменяет
+        оружие, они достаются реквизиту, когда оружие в руках - ему самому
+        """
+        rotation = self._anims_rotation
+
+        def beside(base):
+            """Реквизит отдельной моделью в точке персонажа, своей анимацией"""
+            own = self._own_sequence(
+                prop_dir, prefer=(own_scene, sequence.name, scene_stem, tf2_class))
+            if own is None:
+                return base
+            logger.info(f"[taunt] {self.prop_key}: реквизит рядом, "
+                        f"своя анимация {own.name}")
+            return merge_world_prop(
+                base, self._build(None, prop_ref, prop_dir, own, tf2_class))
+
+        if own_scene:
+            # tf_taunt_prop к костям не привязан: держат его в руках только
+            # кадры его собственной сцены, а в руках персонажа - оружие
+            base = (self._build(player_ref, weapon_ref, weapon_dir, sequence,
+                                tf2_class, rotation, hide='weapon') if weapon_ref
+                    else self._build(player_ref, '', prop_dir, sequence,
+                                     tf2_class, rotation))
+            return beside(base)
+        try:
+            # Своей сцены нет: реквизит стал оружием и сидит на костях руки
+            return self._build(player_ref, prop_ref, prop_dir, sequence,
+                               tf2_class, rotation)
+        except viewmodel_pose.NotHeldInHands:
+            return beside(self._build(player_ref, '', prop_dir, sequence,
+                                      tf2_class, rotation))
+
+    def _held_weapon(self, tf2_class: str) -> tuple:
+        """(reference SMD, папка) оружия, с которым класс выходит в бой
+
+        Тот же ключ кэша, что у сцены «На персонаже», - второй Crowbar не нужен
+        """
+        weapons = stock_loadout.loadout(tf2_class, self.tf2_root)
+        weapon = weapons[0] if weapons else None
+        if not (weapon and weapon.model):
+            return '', ''
+        result = mds.ensure_decompiled(
+            f'__stock_{tf2_class}_{weapon.slot}', self.misc_vpk_path,
+            [weapon.model], cancelled=self.isInterruptionRequested)
+        if result is None:
+            return '', ''
+        ref = body_smd(result.directory) or smd_service.find_reference_smd(
+            result.directory, os.path.basename(weapon.model).removesuffix('.mdl'))
+        return (ref, result.directory) if ref else ('', '')
+
     def _build(self, player_ref, prop_ref: str, prop_dir: str, sequence,
-               tf2_class: str, anim_rotation: Optional[float] = None):
+               tf2_class: str, anim_rotation: Optional[float] = None,
+               hide=True):
         """Сцена: персонаж с реквизитом либо один реквизит
 
         Оси задаёт та модель, что ведёт сцену: у персонажа `$upaxis Y`, у
         мирового реквизита (танк, стенд) обычный Source Z-вверх
+
+        ``prop_dir`` - папка того, что в руке (реквизита или оружия): по ней
+        берутся его бодигруппы и оси. ``hide``: True - прятать по событиям то,
+        что в руке, 'weapon' - в руке настоящее оружие (см. `hidden_ranges`),
+        False - не прятать
         """
         from src.services.viewmodel_worker import _default_body_parts
 
@@ -315,10 +395,21 @@ class TauntPreviewWorker(BaseWorker):
         # У пиро тело почти целиком лежит в бодигруппах: в `$model` остаётся
         # семикилобайтная заглушка, и без них в кадре была бы пустота
         extra = _default_body_parts(driver_dir, player_ref or prop_ref)
+        held_parts = prop_parts(prop_dir, prop_ref) if prop_ref else []
+        if not player_ref:
+            extra = list(dict.fromkeys([*extra, *held_parts]))
         return viewmodel_animation.build_scene(
             arms_ref_smd=player_ref or prop_ref,
             arms_extra_smds=extra,
             weapon_ref_smd=prop_ref if player_ref else '',
+            weapon_extra_smds=held_parts if player_ref else (),
+            # Кости реквизита без пары в скелете стоят в позе покоя у ног, но
+            # в осях персонажа, а не своих
+            weapon_axes_x=(root_rotation(prop_dir) - root_rotation(driver_dir)
+                           if player_ref and prop_ref else 0.0),
+            # Реквизит насмешки мягко поделён между костями (голова в банке,
+            # мешок, верёвка) - скиннинг его собственной позой покоя
+            weapon_exact=bool(player_ref),
             anim_smd=sequence.smd_path,
             clip_name=sequence.name,
             fps=sequence.fps,
@@ -327,7 +418,8 @@ class TauntPreviewWorker(BaseWorker):
             # Реквизит игра надевает на персонажа целиком, по именам костей
             merge_by_name=bool(player_ref),
             weapon_hidden=hidden_ranges(getattr(sequence, 'hide_events', ()),
-                                        sequence.fps) if player_ref else (),
+                                        sequence.fps, weapon=hide == 'weapon')
+            if player_ref and hide else (),
             root_rotation_x=root_rotation(driver_dir),
             # Кадры и меш бывают в разных осях: модель класса экспортирована
             # `$upaxis Y`, модель её анимаций - обычной Z-вверх. Разница их
@@ -430,10 +522,13 @@ class TauntPreviewWorker(BaseWorker):
         if not name:
             return None
         # Родня найденного имени: слой и продолжения (`…interior`, `…in`)
+        # Слой бывает без `taunt_` (`layer_fumblers_fanfare` при базе
+        # `taunt_fumblers_fanfare`) и с хвостом (`…_intro_layer`), а в базе
+        # движения нет вовсе
+        layers = (f'layer_{name}', f'layer_{name.removeprefix("taunt_")}', name)
         family = [known[name]] if name in known else []
         family += [pair for key, pair in known.items()
-                   if key != name and (key == f'layer_{name}'
-                                       or key.startswith(name))]
+                   if key != name and key.startswith(layers)]
         posed = [(seq, where) for seq, where in family
                  if seq.exists and has_motion(seq.smd_path)]
         if not posed:
@@ -453,8 +548,10 @@ class TauntPreviewWorker(BaseWorker):
                 sequence = replace(sequence, hide_events=base.hide_events)
         return sequence
 
-    def _own_sequence(self, prop_dir: str):
-        """Своя анимация реквизита: самая длинная, кроме опорного кадра"""
+    def _own_sequence(self, prop_dir: str, prefer=()):
+        """Своя анимация реквизита: та, что в паре с анимацией персонажа
+        (`bucking_bronco_intro` при `layer_bucking_bronco_intro`, `scout_break`
+        у картонного йети), иначе самая длинная, кроме опорного кадра"""
         catalog = anim_catalog.load(prop_dir)
         if catalog is None:
             return None
@@ -462,6 +559,28 @@ class TauntPreviewWorker(BaseWorker):
                   if s.exists and s.name.lower() not in ('ref', 'reference')]
         if not movers:
             return None
+        by_name = {s.name.lower(): s for s in movers}
+        wanted = []
+        for name in prefer[:-1]:
+            bare = (name or '').lower().removeprefix('layer_')
+            wanted += [(name or '').lower(), bare, f'layer_{bare}']
+        # Своя последовательность на класс: `scout_break` у картонного йети,
+        # `taunt_killer_joke_demo` у барабана
+        tf2_class = (prefer[-1] or '').lower() if prefer else ''
+        stems = {s for s in (tf2_class, CLASS_MODEL_STEM.get(tf2_class, '')) if s}
+        wanted += [n for n in by_name
+                   if any(n.startswith(f'{s}_') or n.endswith(f'_{s}') for s in stems)]
+        found = [by_name[n] for n in dict.fromkeys(wanted) if n and n in by_name]
+        # Движение часто лежит в слое, а база пустая - как у персонажа. Пустая
+        # база схлопывает реквизит в точку (бассейн пиро: `pyro_pool` пустой,
+        # движется `layer_pool_pool`), поэтому без движения по имени берём
+        # самое длинное движущееся
+        moving = next((s for s in found if has_motion(s.smd_path)), None)
+        if moving is None:
+            alive = [s for s in movers if has_motion(s.smd_path)]
+            moving = max(alive, key=lambda s: os.path.getsize(s.smd_path)) if alive else None
+        if moving or found:
+            return moving or found[0]
         # Длина в кадрах прямо не записана - берём вес SMD: у опорной позы он
         # на порядок меньше, чем у настоящей анимации
         return max(movers, key=lambda s: os.path.getsize(s.smd_path))
@@ -471,20 +590,28 @@ class TauntPreviewWorker(BaseWorker):
         return sorted(SmdToObjService.scan_material_names([smd]))
 
     def _emit_scene(self, reader, scene: dict, prop_dir: str,
-                    player_dir: str) -> None:
-        """Текстуры обеих частей сцены и сама сцена"""
-        from src.services.viewmodel_worker import _cdmaterials, _scene_materials
+                    player_dir: str, weapon_dir: str = '') -> None:
+        """Текстуры всех частей сцены и сама сцена"""
+        from src.services.viewmodel_worker import _cdmaterials
 
-        # В сцене с персонажем реквизит идёт «оружием», а персонаж «руками».
-        # Без персонажа реквизит остаётся единственным мешем - то есть тем же
-        # «руками», и материалы приходят вторым списком
-        weapon_names, arms_names = _scene_materials(scene)
-        prop_names, player_names = ((weapon_names, arms_names) if player_dir
-                                    else (arms_names, []))
+        # Реквизит в сцене - «prop» или, когда он заменяет оружие, «weapon»;
+        # персонаж - «arms». Без персонажа реквизит единственный меш и сам
+        # идёт «руками». У каждой части свои пути материалов
+        kinds: dict = {}
+        for part in scene.get('parts', ()):
+            kinds.setdefault(part.get('kind'), []).extend(part.get('materials') or ())
+        weapon_names = kinds.get('weapon', []) if weapon_dir else []
+        if player_dir:
+            prop_names = kinds.get('prop', []) + ([] if weapon_dir else kinds.get('weapon', []))
+            player_names = kinds.get('arms', [])
+        else:
+            prop_names, player_names = kinds.get('arms', []), []
         textures, hints = scene_textures.resolve(
             MaterialResolver(reader, self._preview_dir, eyes=True),
             [(names, _cdmaterials(d)) for names, d in ((prop_names, prop_dir),
-                                                       (player_names, player_dir)) if d])
+                                                       (weapon_names, weapon_dir),
+                                                       (player_names, player_dir))
+             if d and names])
 
         # Свойства материалов - ДО сцены: вьювер применит их по мере прихода
         # картинок, а не пересоберёт материалы дважды
@@ -494,6 +621,7 @@ class TauntPreviewWorker(BaseWorker):
             list(scene.get('weaponMaterials') or prop_names))
         if textures:
             self.multi_material.emit(textures)
-        missing = [n for n in (*prop_names, *player_names) if n not in textures]
+        missing = [n for n in (*prop_names, *weapon_names, *player_names)
+                   if n not in textures]
         if missing:
             logger.warning(f"[taunt] без текстуры остались материалы: {missing}")

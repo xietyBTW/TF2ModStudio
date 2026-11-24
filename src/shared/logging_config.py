@@ -4,8 +4,36 @@
 
 import logging
 import sys
+import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """Ротация, которая переживает занятый файл
+
+    Windows не даёт переименовать лог, открытый другим процессом (второй
+    запуск, антивирус, просмотрщик): обычный обработчик печатал трассировку
+    на каждую запись. Здесь пишем дальше в тот же файл и пробуем позже
+    """
+
+    RETRY_SECONDS = 60
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._retry_at = 0.0
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:
+        return time.monotonic() >= self._retry_at and super().shouldRollover(record)
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            self._retry_at = time.monotonic() + self.RETRY_SECONDS
+            if self.stream is None:
+                self.stream = self._open()
 
 
 def setup_logging(
@@ -53,9 +81,8 @@ def setup_logging(
     
     # Файловый handler (если указан) - с ротацией, чтобы лог не рос бесконечно
     if log_file:
-        from logging.handlers import RotatingFileHandler
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
+        file_handler = SafeRotatingFileHandler(
             log_file, encoding='utf-8',
             maxBytes=2_000_000, backupCount=2,
         )

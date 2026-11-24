@@ -28,28 +28,23 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from src.shared.logging_config import get_logger
+from src.shared.skin_rows import is_team_row_pair  # noqa: F401  правило команды строк
+from src.shared.team_names import (BLUE_SUFFIXES, VARIANT_SUFFIXES, is_blue_of, is_red,
+                                    team_form as _team_form)
 
 logger = get_logger(__name__)
 
-# Единственная копия вариантных суффиксов
-# suffix -> вид варианта. '_strange'/'_unusual' встречаются редко (обычно
-# padding-строки не переименованы), но исключаются из базовых на всякий случай
-VARIANT_SUFFIXES: Dict[str, str] = {
-    '_australium': 'australium',
-    '_gold':       'australium',
-    '_festive':    'festive',
-    '_xmas':       'festive',
-    '_botkiller':  'botkiller',
-    '_strange':    'strange',
-    '_unusual':    'unusual',
-}
+# Вариантные суффиксы и командные имена - в src/shared/team_names
 
 # Виды вариантов, которые показываются в превью как «вариант оружия»
 # (strange/unusual - это padding, не отдельный внешний вид)
 PREVIEW_VARIANT_KINDS = ('australium', 'festive', 'botkiller')
 
 # Дружелюбные подписи стилей по суффиксу текстуры col0
-_FRIENDLY_STYLE_SUFFIXES = {'_bloody': 'Bloody', '_clean': 'Clean', '_dirty': 'Dirty'}
+#: `_blood` - катана «Полудзатоичи»: игра включает эту строку после
+#: обезглавливания (CTFKatana::GetSkinOverride)
+_FRIENDLY_STYLE_SUFFIXES = {'_bloody': 'Bloody', '_blood': 'Bloody',
+                            '_clean': 'Clean', '_dirty': 'Dirty'}
 
 
 def variant_kind(texture_name: str) -> Optional[str]:
@@ -62,7 +57,7 @@ def variant_kind(texture_name: str) -> Optional[str]:
     фантомный «Skin N»)
     """
     name = (texture_name or '').lower()
-    for team_suffix in ('_blue', '_blu'):
+    for team_suffix in BLUE_SUFFIXES:
         if name.endswith(team_suffix):
             name = name[: -len(team_suffix)]
             break
@@ -82,28 +77,6 @@ def is_australium(texture_name: str) -> bool:
     база лежит в той же модели, у праздничных - лишь у 9 из 35
     """
     return variant_kind(texture_name) == 'australium'
-
-
-def _team_form(texture_name: str) -> tuple:
-    """
-    (основа, синий?) - имя материала без командного суффикса
-
-    Командный суффикс стоит либо в конце ('c_scattergun_blue'), либо ПЕРЕД
-    вариантным ('c_ambassador_opt_blue_xmas'). База может уже нести '_red'
-    (festive_lights_red / festive_lights_blue) - тогда основа общая
-    """
-    name = (texture_name or '').lower()
-    tail = ''
-    for suffix in VARIANT_SUFFIXES:
-        if name.endswith(suffix):
-            name, tail = name[: -len(suffix)], suffix
-            break
-    for team_suffix in ('_blue', '_blu'):
-        if name.endswith(team_suffix):
-            return name[: -len(team_suffix)] + tail, True
-    if name.endswith('_red'):
-        return name[:-4] + tail, False
-    return name + tail, False
 
 
 def _is_own_material(name: str, row: List[str]) -> bool:
@@ -192,37 +165,6 @@ def choose_main_column(row: List[str], weights: Optional[Dict[str, int]]) -> int
         return best
     return 0
 
-
-def is_team_row_pair(red_row: List[str], blu_row: List[str]) -> bool:
-    """
-    Вторая строка $texturegroup - именно BLU-команда, а не стиль/вариант?
-
-    Команда в Source меняет материалы ПОКОЛОНОЧНО и не обязательно все:
-    столбец либо остаётся тем же (нейтральная деталь), либо заменяется на
-    свою синюю пару. Достаточно одного изменённого столбца - но любая
-    ПОСТОРОННЯЯ разница означает, что это стиль (bloody/clean), а не команда
-
-        { c_proto_medigun_glass  c_proto_medigun       c_proto_medigun_blue }
-        { c_proto_medigun_glass  c_proto_medigun_blue  c_proto_medigun_blue }
-
-    Проверка только по col0 признала бы Quick-Fix некомандным: стекло у него
-    общее, а меняется второй столбец
-    """
-    width = min(len(red_row or []), len(blu_row or []))
-    if not width:
-        return False
-    changed = False
-    for i in range(width):
-        red, blu = (red_row[i] or '').lower(), (blu_row[i] or '').lower()
-        if red == blu:
-            continue
-        red_stem, red_is_blue = _team_form(red)
-        blu_stem, blu_is_blue = _team_form(blu)
-        if blu_is_blue and not red_is_blue and red_stem == blu_stem:
-            changed = True
-            continue
-        return False
-    return changed
 
 
 # Низкоуровневый парсинг QC
@@ -608,6 +550,8 @@ def pick_preview_variant(layout: SkinLayout) -> Optional[List[str]]:
     return None
 
 
+
+
 # Единый «авторитет» селекторов: что показывать для любой модели
 
 @dataclass
@@ -807,8 +751,10 @@ def force_team_rows(rows: List[List[str]],
     Остальное не трогаем - поэтому австралий (8/9), ботокиллеры и padding
     живут дальше, а не выкидываются заменой группы на две строки
 
-    team_materials - материалы меша, которые человек красит. Австралий
-    (``_gold``) и уже синие имена сюда не входят: золото у обеих команд одно.
+    team_materials - материалы меша, которые человек красит. Уже синие имена
+    сюда не входят. Австралий синеет вместе с ними: синий австралий в игре -
+    свой скин (стиль items_game, skin_blu 3), и без своего материала он
+    оставался бы общим. VMT синего золота - копия красного (panel_extras)
     Праздничное имя (c_holymackerel_xmas) - родной материал, он входит.
     Материалы меша, которых нет в группе, становятся столбцами - в игре они
     одинаковы во всех строках, так что прочим скинам это ничего не меняет
@@ -831,7 +777,11 @@ def force_team_rows(rows: List[List[str]],
         out.append(list(out[-1]))
     wanted = {m.lower() for m in team}
     for i in range(1, len(out), 2):
-        out[i] = [f'{m}_blue' if m.lower() in wanted else m for m in out[i - 1]]
+        # Золото синеет только в паре строк самого австралия (8/9 у
+        # снайперки): столбец золота в обычных строках - не его скин
+        gold_row = bool(out[i - 1]) and is_australium(out[i - 1][0])
+        out[i] = [f'{m}_blue' if m.lower() in wanted or (gold_row and is_australium(m))
+                  else m for m in out[i - 1]]
     return out
 
 
@@ -937,21 +887,20 @@ def team_reference(rows: List[List[str]]):
     if not rows:
         return None
     ncols = max((len(r) for r in rows), default=0)
-    # Приоритет: точная пара X_red / X_blue с одинаковым стеблем
-    for c in range(ncols):
-        vals = {r[c].lower() for r in rows if c < len(r)}
-        reds = [v for v in vals if v.endswith('_red')]
-        blues = [v for v in vals if v.endswith('_blue')]
-        for red in reds:
-            stem = red[:-4]
-            if f"{stem}_blue" in blues:
-                return c, f"{stem}_blue"
-    # Фолбэк: любой столбец, где встречаются и *_red, и *_blue
-    for c in range(ncols):
-        vals = {r[c].lower() for r in rows if c < len(r)}
-        blues = [v for v in vals if v.endswith('_blue')]
-        reds = [v for v in vals if v.endswith('_red')]
-        if blues and reds:
+    columns = [sorted({r[c].lower() for r in rows if c < len(r)}) for c in range(ncols)]
+    # Приоритет: точная пара X_red / X_blue с одинаковым стеблем (team_names).
+    # Порядок по имени: из множества первым шло что попало, от запуска к запуску
+    for c, vals in enumerate(columns):
+        # Обычная пара раньше вариантной (x_red_gold): по золоту строки
+        # команд не делятся
+        for red in sorted((v for v in vals if is_red(v)), key=lambda v: bool(variant_kind(v))):
+            blue = next((v for v in vals if is_blue_of(red, v)), None)
+            if blue:
+                return c, blue
+    # Фолбэк: любой столбец, где встречаются и красные, и синие имена
+    for c, vals in enumerate(columns):
+        blues = [v for v in vals if _team_form(v)[1]]
+        if blues and any(is_red(v) for v in vals):
             return c, blues[0]
     return None
 

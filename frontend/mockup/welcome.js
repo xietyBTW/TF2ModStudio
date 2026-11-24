@@ -23,7 +23,7 @@ import { relabel } from './catalog.js';
 import { startFirstRun, startTour, forgoTour } from './tour.js';
 import { say, sayError } from './stage.js';
 
-const STEPS = ['look', 'game', 'export', 'pure', 'done'];
+const STEPS = ['look', 'game', 'export', 'pure', 'preloader', 'done'];
 const RESUME = 'welcome';
 const root = document.documentElement;
 const still = () => root.dataset.motion === 'off'
@@ -56,6 +56,7 @@ export async function prepareWelcome() {
     draft = resume?.draft || {
       language: v.language, theme: v.theme, tf2: v.tf2_game_folder,
       tf2Ok: cfg.tf2_ok, exportDir: v.export_folder, bypass: v.sv_pure_bypass,
+      preloader: v.preloader_path || '',
     };
     // Язык уже записан в настройки (ради него страницу и перезапускали) -
     // правда о нём там, а не в черновике, снятом до перезапуска
@@ -232,7 +233,7 @@ async function leave(answer) {
 /** Всё выбранное - в настройки одним вызовом. Путь к игре - только годный */
 async function save() {
   const values = { theme: draft.theme, export_folder: draft.exportDir,
-                   sv_pure_bypass: draft.bypass };
+                   sv_pure_bypass: draft.bypass, preloader_path: draft.preloader || '' };
   if (draft.tf2Ok) values.tf2_game_folder = draft.tf2;
   const res = await api.setSettings(values);
   api.setUiState('welcome_done', 1);
@@ -254,7 +255,17 @@ const TITLES = {
   game: 'Где установлена TF2',
   export: 'Куда класть готовые моды',
   pure: 'Как моды пройдут проверку игры',
+  preloader: 'Пользуетесь прелоадером?',
   done: 'Можно начинать',
+};
+//: Шаг прелоадера: плитки и строки состояния
+const PRELOADER_TEXT = {
+  no: 'Нет',
+  noSub: 'Моды ставлю в tf/custom или не ставлю',
+  yes: 'Да, casual-preloader',
+  yesSub: 'Укажите, чем его запускаете',
+  found: 'Нашёл оригиналы файлов игры: {}',
+  none: 'Здесь нет его копий файлов игры - укажите файл, которым запускаете прелоадер',
 };
 //: Подписи плиток папки модов
 const EXPORT_TEXT = {
@@ -321,6 +332,12 @@ function bypassTiles() {
     i === 0 ? DEFAULT_TAG : '')).join('');
 }
 
+function preloaderTiles() {
+  const yes = Boolean(draft.preloader);
+  return tile('no', PRELOADER_TEXT.no, PRELOADER_TEXT.noSub, '', !yes, DEFAULT_TAG)
+    + tile('yes', PRELOADER_TEXT.yes, PRELOADER_TEXT.yesSub, '', yes);
+}
+
 function summaryRows() {
   return summary().map(([k, v]) => `<dt class="wl-in">${k}</dt><dd class="wl-in">${v}</dd>`).join('');
 }
@@ -367,6 +384,20 @@ const PAGES = {
     <p class="wl-text wl-in">Материалы мода лежат в папке, которую игра пропускает и в казуале. Перестал работать один способ - выберите другой.</p>
     <div class="wl-tiles wl-in" data-pick="bypass">${bypassTiles()}</div>`,
 
+  preloader: () => `
+    <p class="wl-eyebrow wl-in">Моды в казуале</p>
+    ${title(TITLES.preloader)}
+    <p class="wl-text wl-in">Прелоадер меняет частицы и небо прямо в файлах игры, а оригиналы хранит у себя. Укажите его - и приложение покажет игру, а не ваши моды.</p>
+    <div class="wl-tiles wl-in" data-pick="preloaderUse">${preloaderTiles()}</div>
+    <div class="wl-game wl-in" data-preloader>
+      <div class="wl-status"></div>
+      <div class="wl-pathrow">
+        <input class="input" spellcheck="false" placeholder="RUNME.bat или папка прелоадера">
+        <button class="textbtn" type="button" data-act="file">Выбрать файл</button>
+        <button class="textbtn" type="button" data-act="folder">Выбрать папку</button>
+      </div>
+    </div>`,
+
   done: () => `
     <div class="wl-final">
       <div class="wl-big wl-in">${CHECK}<span class="wl-burst">${burst()}</span></div>
@@ -388,6 +419,7 @@ function summary() {
     [t('Игра'), draft.tf2Ok ? mono(draft.tf2) : t('не указана')],
     [t('Моды'), draft.exportDir === 'export' ? t('Папка приложения') : mono(draft.exportDir)],
     [t('Обход'), escapeHtml(draft.bypass)],
+    [t('Прелоадер'), draft.preloader ? mono(draft.preloader) : t('нет')],
   ];
 }
 
@@ -468,7 +500,52 @@ const BIND = {
   },
 
   pure(page) { picks(page, 'bypass'); },
+
+  preloader(page) {
+    const box = page.querySelector('[data-preloader]');
+    const shown = () => { box.hidden = !page.querySelector('[data-value="yes"].is-on'); };
+    picks(page, 'preloaderUse', (value) => {
+      if (value === 'no') draft.preloader = '';
+      requestAnimationFrame(shown);
+      return true;
+    });
+    shown();
+    // Путь можно и вставить руками: системного выбора нет вне окна
+    // приложения (dev-сервер), а кому-то проще скопировать путь из проводника
+    page.querySelectorAll('[data-act]').forEach((b) => { b.hidden = !cfg.folder_picker; });
+    const input = page.querySelector('.input');
+    input.value = draft.preloader;
+    let typed = 0;
+    input.addEventListener('input', () => {
+      clearTimeout(typed);
+      const path = input.value.trim().replace(/^"|"$/g, '');
+      typed = setTimeout(() => (path ? checkPreloader(page, path)
+        : status(page, 'bad', t(PRELOADER_TEXT.yesSub))), 500);
+    });
+    if (draft.preloader) checkPreloader(page, draft.preloader);
+    const choose = async (pick) => {
+      const res = await pick();
+      if (!res.path) return;
+      input.value = res.path;
+      await checkPreloader(page, res.path);
+    };
+    page.querySelector('[data-act="file"]').addEventListener(
+      'click', () => choose(() => api.pickFile('preloader')));
+    page.querySelector('[data-act="folder"]').addEventListener(
+      'click', () => choose(() => api.pickFolder(draft.preloader || '')));
+  },
 };
+
+/** Что нашлось у прелоадера по выбранному пути. Запоминается только годный:
+ *  папка без копий игре не поможет, а в настройках висела бы как рабочая */
+async function checkPreloader(page, path) {
+  status(page, 'scan', t('Ищу копии файлов игры…'));
+  const res = await api.checkPreloader(path);
+  if (!page.isConnected) return;
+  draft.preloader = res.ok ? path : '';
+  if (res.ok) status(page, 'ok', t(PRELOADER_TEXT.found).replace('{}', res.files), path);
+  else status(page, 'bad', t(PRELOADER_TEXT.none), path);
+}
 
 /** Плитки ряда `data-pick=key`: выбор пишет черновик; `act` может отказать (false) */
 function picks(page, key, act) {

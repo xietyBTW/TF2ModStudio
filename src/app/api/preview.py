@@ -210,10 +210,10 @@ def load_first_person(action: str = 'IDLE', lang: str = '',
 
 
 @endpoint
-def load_skybox(sky_name: str) -> Dict[str, object]:
-    """Готовит грани стокового неба"""
+def load_skybox(sky_name: str, restore: bool = False) -> Dict[str, object]:
+    """Готовит грани стокового неба; `restore` - с сохранённой работой"""
     from src.app.session import session
-    return session().load_skybox(sky_name)
+    return session().load_skybox(sky_name, bool(restore))
 
 
 @endpoint

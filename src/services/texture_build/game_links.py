@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple
 
+from src.shared.game_paths import texture_key
 from src.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -73,11 +74,7 @@ def _game_copies(root: Path, game_textures: Dict[str, str]) -> Dict[str, Tuple[s
     return out
 
 
-def _norm(value: str) -> str:
-    path = value.strip().replace("\\", "/").strip("/").lower()
-    if path.startswith("materials/"):
-        path = path[len("materials/"):]
-    return path[:-len(".vtf")] if path.endswith(".vtf") else path
+_norm = texture_key
 
 
 def _read(vmt: Path) -> str:

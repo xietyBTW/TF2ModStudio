@@ -82,6 +82,7 @@ class VpkModController:
         w.unused.connect(self._on_unused)
         w.replaced.connect(self._on_replaced)
         w.links_ready.connect(self._on_links)
+        w.game_meshes_ready.connect(self._on_game_meshes)
         w.failed.connect(self.failed.emit)
         self._worker = w
         w.start()
@@ -153,6 +154,26 @@ class VpkModController:
         s.current_object = ('custom_vpk', obj_path, texture_path)
         self.ready.emit(obj_path, texture_path)
 
+    def _on_game_meshes(self, found: dict) -> None:
+        """Меши мода с игровой текстурой: подложкой сцены, с кадрами, если
+        игра их крутит. Страница перечитывает показ тем же сигналом, что и
+        после связи мешей с карточками"""
+        s = self._session
+        s.mod_game_textures = {mesh: e['png'] for mesh, e in found.items()}
+        s.mod_frames.update({e['png']: {'frames': list(e['frames']), 'fps': e['fps']}
+                             for e in found.values() if e.get('frames')})
+        self.links.emit()
+
+    def animations(self, scene: dict) -> dict:
+        """
+        {меш: {still, frames, fps}} - меши, на которых лежит нетронутая
+        анимированная карточка мода. Это поведение игры, а не гифка
+        человека, поэтому крутится и без настройки «Крутить гифки на модели»
+        """
+        moving = self._session.mod_frames
+        return {mesh: {'still': png, **moving[png]}
+                for mesh, png in (scene or {}).items() if png in moving}
+
     def _on_animated(self, frames: list, framerate: float) -> None:
         if not frames:
             return
@@ -185,6 +206,8 @@ class VpkModController:
         s.mod_maps = {c['name']: c['maps'] for c in cards if c.get('name') and c.get('maps')}
         s.mod_vmts = {c['name']: c['vmt_path'] for c in cards
                       if c.get('name') and c.get('vmt_path')}
+        s.mod_frames = {c['preview_png']: {'frames': list(c['frames']), 'fps': c['fps']}
+                        for c in cards if c.get('frames') and c.get('preview_png')}
         self.cards.emit(cards)
 
     def _on_materials(self, materials: list) -> None:

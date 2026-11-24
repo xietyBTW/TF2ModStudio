@@ -35,6 +35,12 @@ class PaintkitEditor:
         self._paintable_by_model: Dict[str, Any] = {}
         self._paintkit_preview_lock = threading.Lock()
 
+    def _kit_team(self) -> str:
+        """Команда показанной карточки словом War Paint ('red'/'blue'): у
+        раскраски свои командные текстуры (texture_red/texture_blue)"""
+        from src.shared.constants import Team
+        return 'blue' if self._host.preview.textures.active_team == Team.BLU else 'red'
+
     def _own_paintkits(self, tf2_root: str, lang: str = 'ru') -> List[dict]:
         """
         War Paint игры для показанного оружия
@@ -334,11 +340,9 @@ class PaintkitEditor:
                           generic, forced, out: str):
         """Воркер War Paint под текущее оружие и команду"""
         from src.services.paintkit_worker import PaintkitWorker
-        from src.shared.constants import Team
 
         paths = self._host.tf2_paths()
-        t = self._host.preview.textures
-        team = 'blue' if t.active_team == Team.BLU else 'red'
+        team = self._kit_team()
         return PaintkitWorker(paths['root'], paths['textures_vpk'], paths['misc_vpk'],
                               kit, item, wear, team, seed, out, size=size,
                               generic=generic, forced=forced)
@@ -440,14 +444,13 @@ class PaintkitEditor:
         Результат приходит событием ``paintkit_ready``
         """
         from src.services.paintkit_worker import PaintkitBatch
-        from src.shared.constants import Team
 
         job = self._paintkit_job
         if job is not None and job.isRunning():
             return {'error': 'War Paint уже накладывается'}
         t = self._host.preview.textures
         weapon_key = self._host._shown_weapon()
-        team = 'blue' if t.active_team == Team.BLU else 'red'
+        team = self._kit_team()
         seed = int(seed) & ((1 << 64) - 1)
         size = min(max(int(size), 256), 2048)
         plans = self._paintkit_plans(kit, item, layout, materials)
@@ -469,9 +472,7 @@ class PaintkitEditor:
         def done(ok: bool, message: str) -> None:
             # Пока собиралось, человек мог уйти на другое оружие: чужой War
             # Paint на новую пушку не кладём
-            same = (self._host._shown_weapon() == weapon_key
-                    and ('blue' if self._host.preview.textures.active_team == Team.BLU
-                         else 'red') == team)
+            same = self._host._shown_weapon() == weapon_key and self._kit_team() == team
             applied = 0
             try:
                 if ok and same:

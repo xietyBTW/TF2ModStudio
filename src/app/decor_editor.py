@@ -89,6 +89,11 @@ class DecorEditor:
 
         key = self._host._shown_weapon()
         models = festive_decor.kinds(key, tf2_root) if key else {}
+        if self.mod_wears_garland():
+            # Гирлянда уже в модели мода: родные - пустыми, иначе у владельца
+            # праздничного оружия их стало бы две. Правки родных тут ни к чему
+            return [{'kind': '', 'mdl': '', 'textures': {},
+                     'empty': list(models.values())}] if models else []
         uploads = self._host.preview.textures.decor_uploads()
         baked = self.baked()
         out = []
@@ -100,6 +105,12 @@ class DecorEditor:
                 card_kind, material = festive_decor.parse_card(card)
                 if card_kind == kind and material:
                     textures[material] = dict(teams)
+            # Свои настройки VTF карточек гирлянды (шестерёнка) - по материалу
+            settings = {}
+            for card, own in self._host.preview.texture_overrides.items():
+                card_kind, material = festive_decor.parse_card(card)
+                if card_kind == kind and material and own:
+                    settings[material.lower()] = dict(own)
             fit = self._host.preview.decor_fit.get(kind)
             bends = self._host.preview.decor_bends.get(kind) or []
             smd = self.geometry(kind)
@@ -107,6 +118,7 @@ class DecorEditor:
                 out.append({'kind': kind, 'mdl': mdl, 'smd': smd,
                             'fit': dict(fit) if fit else None,
                             'bends': [dict(b) for b in bends], 'textures': textures,
+                            'settings': settings,
                             # Оружие - ради позы превью: изгибы сделаны в ней
                             'weapon': key,
                             # Вшитая: в меш оружия (decor_bake), а все родные
@@ -125,6 +137,16 @@ class DecorEditor:
         """{вид: своя геометрия} - чтобы после отмены понять, что сменилось"""
         p = self._host.preview
         return {kind: self.geometry(kind) for kind in {*p.decor_wrapped, *p.decor_models}}
+
+    def mod_wears_garland(self) -> bool:
+        """Мод из VPK, в модель которого гирлянду уже вшил его автор"""
+        from src.services import festive_decor
+
+        p = self._host.preview
+        # Показана сама гирлянда (мод перекрашивает *_festivizer.mdl) - у неё
+        # те же огоньки, но вшивать её некуда, и пустышкой стала бы она сама
+        return (p.custom_vpk_mode and p.custom_vpk_kind == 'weapon'
+                and festive_decor.wears_garland(p.custom_model_materials))
 
     def baked(self) -> str:
         """Вид гирлянды, вшитой в модель оружия, пусто - не вшита. У мода из
@@ -174,6 +196,9 @@ class DecorEditor:
         """
         from src.services import festive_decor
 
+        # Своя гирлянда уже в модели мода: родная повисла бы второй
+        if self.mod_wears_garland():
+            return []
         key = self._host._shown_weapon()
         if self._decor_options[0] != key:
             paths = self._host.tf2_paths() if key else {'error': ''}

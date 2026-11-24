@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from src.services import game_texture_index, vpk_mod_models
 from src.services.mod_textures import is_base_vtf, texture_key
 from src.shared.logging_config import get_logger
+from src.shared.team_names import is_blue
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,44 @@ def card_png(vtf_data: bytes, key: str, preview_dir: str) -> Optional[str]:
     safe = re.sub(r'[^A-Za-z0-9_.-]', '_', key)
     return vps.vtf_bytes_to_png(vtf_data, os.path.join(preview_dir, f"_card_{safe}.png"),
                                 preview_dir)
+
+
+def frames(vtf_data: bytes, key: str, vmt_text: str,
+           preview_dir: str) -> Optional[Tuple[List[str], float]]:
+    """
+    Кадры анимированной текстуры карточки: ([PNG], fps) или None
+
+    Анимирована она, только если кадров больше одного И материал крутит их
+    прокси AnimatedTexture: без прокси игра рисует первый кадр, и превью
+    мигало бы там, где в игре всё стоит
+    """
+    from src.services import vtf_preview_service as vps
+
+    if vtf_frame_count(vtf_data) < 2:
+        return None
+    fps = vps.parse_animated_framerate(vmt_text)
+    if not fps:
+        return None
+    from src.services import vmt_tint
+
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', key)
+    paths = vps.vtf_bytes_to_frame_pngs(vtf_data, preview_dir, f"_card_{safe}_frame")
+    if len(paths) < 2:
+        return None
+    # Краска - как у неподвижной картинки, иначе на ходу кадры теряли бы
+    # цвет и показывали маску краски дырами
+    spec = vmt_tint.preview_tint(vmt_text)
+    for path in paths:
+        vmt_tint.apply_to_png(path, spec)
+    return paths, float(fps)
+
+
+def vtf_frame_count(vtf_data: bytes) -> int:
+    """Число кадров VTF из заголовка (uint16 по смещению 24): до разбора
+    всех кадров, который стоит секунды"""
+    if len(vtf_data) < 26 or vtf_data[:4] != b"VTF\0":
+        return 1
+    return int.from_bytes(vtf_data[24:26], "little")
 
 
 def build(pak, vtf_files: List[str], vmt_files: List[str], vmt_texts: Dict[str, str],
@@ -78,7 +117,7 @@ def build(pak, vtf_files: List[str], vmt_files: List[str], vmt_texts: Dict[str, 
         cards.append({
             'name': name,
             'display_name': name,
-            'is_blue': stem.lower().endswith('_blue'),
+            'is_blue': is_blue(stem),
             'vtf_path': vtf_rel,
             'preview_png': preview_png,
             'vmt_path': vmt_rel,
@@ -131,14 +170,41 @@ def tint(cards: list, vmt_texts: Dict[str, str], misc_vpk: str) -> None:
     превью перекрашивает шапку любой банкой (vmt_tint.painted)"""
     from src.services import vmt_tint
 
-    table = None
+    table: list = []
     for card in cards:
-        text = vmt_texts.get(card.get('vmt_path') or '', '')
-        if not text and misc_vpk:
-            table = table or game_texture_index.load(misc_vpk)
-            text = game_vmt_text(misc_vpk, game_texture_index.vmt_for(card['vtf_path'], table))
+        text = _card_vmt(card, vmt_texts, misc_vpk, table)
         if card.get('preview_png'):
             vmt_tint.apply_to_png(card['preview_png'], vmt_tint.preview_tint(text))
+
+
+def animate(cards: list, pak, vmt_texts: Dict[str, str], misc_vpk: str,
+            preview_dir: str) -> None:
+    """Кадры анимированных карточек (`frames`, `fps` в самой карточке).
+    Материал - тот же, что у краски: у мода из одних текстур VMT игровой,
+    и прокси AnimatedTexture живёт в нём"""
+    table: list = []
+    for card in cards:
+        try:
+            data = pak[card['vtf_path']].read()
+        except Exception:                                    # noqa: BLE001
+            continue
+        if vtf_frame_count(data) < 2:
+            continue
+        moving = frames(data, card['name'], _card_vmt(card, vmt_texts, misc_vpk, table),
+                        preview_dir)
+        if moving:
+            card['frames'], card['fps'] = moving
+
+
+def _card_vmt(card: dict, vmt_texts: Dict[str, str], misc_vpk: str, table: list) -> str:
+    """Текст VMT карточки: мода, иначе игровой по пути её текстуры. `table` -
+    указатель текстур игры, читается один раз на список"""
+    text = vmt_texts.get(card.get('vmt_path') or '', '')
+    if not text and misc_vpk:
+        if not table:
+            table.append(game_texture_index.load(misc_vpk))
+        text = game_vmt_text(misc_vpk, game_texture_index.vmt_for(card['vtf_path'], table[0]))
+    return text
 
 
 def _vmt_by_path(rel: str, vmt_texts: Dict[str, str], misc_vpk: str) -> str:
@@ -178,6 +244,42 @@ def links(decomp_dir: str, model_materials: List[str], cards: list,
             if r in found and b in found and found[r] != found[b]
             and b.lower() not in shown}
     return meshes, blue
+
+
+def game_meshes(decomp_dir: str, model_materials: List[str], linked: Dict[str, str],
+                vmt_texts: Dict[str, str], misc_vpk: str,
+                vtf_data: Callable[[str], Optional[bytes]],
+                preview_dir: str) -> Dict[str, dict]:
+    """
+    {меш: {png, frames?, fps?}} - меши без карточки мода
+
+    Мод ссылается на игровые текстуры, если не менял их (так собирает и это
+    приложение): огоньки вшитой гирлянды берут игровой VTF. Карточки бывают
+    только у файлов мода, и такие меши оставались под главной текстурой -
+    огоньки в цвет приклада и без мигания. Текстура находится как в игре:
+    материал -> VMT (мода, иначе игры) -> `$basetexture` -> VTF
+    (`vtf_data(путь)`: из мода, иначе из игры). В карточки не идёт: менять
+    игровую текстуру значило бы менять её у всех предметов
+    """
+    from src.services import qc_skin_parser, vmt_parse, vmt_tint
+
+    model = qc_skin_parser.load_model(decomp_dir) if decomp_dir else None
+    cds = list(model.cdmaterials) if model else []
+    out: Dict[str, dict] = {}
+    for mat in model_materials:
+        if mat in linked:
+            continue
+        text = vpk_mod_models.material_vmt(
+            mat, cds, lambda rel: _vmt_by_path(rel, vmt_texts, misc_vpk))
+        base = vmt_parse.parse(text).path('$basetexture') if text else ''
+        data = vtf_data(base) if base else None
+        png = card_png(data, f"scene_{mat}", preview_dir) if data else None
+        if not png:
+            continue
+        vmt_tint.apply_to_png(png, vmt_tint.preview_tint(text))
+        moving = frames(data, f"scene_{mat}", text, preview_dir)
+        out[mat] = {'png': png, **({'frames': moving[0], 'fps': moving[1]} if moving else {})}
+    return out
 
 
 def own(decomp_dir: Optional[str], model_materials: List[str], cards: list,

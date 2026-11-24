@@ -30,6 +30,9 @@ class AppConfig:
     # Значения по умолчанию
     DEFAULT_CONFIG: Dict[str, Any] = {
         "tf2_game_folder": "",
+        # Файл запуска или папка casual-preloader: в нём оригиналы файлов
+        # игры, которые он переписал (game_integrity). Пусто - не пользуются
+        "preloader_path": "",
         "export_folder": "export",
         "export_image_format": "VTF",
         "language": "en",

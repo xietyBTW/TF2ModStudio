@@ -28,11 +28,14 @@ export async function runExport(choice, save) {
  *  игровой оригинал (view_state.own_cards). `onReset` - на карточке своя
  *  картинка, и её можно снять. Пустой карточке (стиль без своей текстуры)
  *  экспортировать нечего - меню нет вовсе */
-export async function cardMenu(e, name, hasOwn, hasImage = true, onReset = null) {
+export async function cardMenu(e, name, hasOwn, hasImage = true, onReset = null,
+                               onGild = null) {
   if (!hasImage) { e.preventDefault(); return; }
   const items = exportItems(hasOwn);
+  if (onGild) items.push({ label: 'Сделать золотым из обычной', value: 'gild' });
   if (onReset) items.push({ label: 'Вернуть игровую текстуру', value: 'reset' });
   const chosen = await contextMenu(e, items);
+  if (chosen === 'gild') { onGild(); return; }
   if (chosen === 'reset') { onReset(); return; }
   await runExport(chosen, (original) => api.exportCardTexture(name, original));
 }

@@ -20,16 +20,21 @@ logger = get_logger(__name__)
 # Форматы без альфы, осмысленные для граней неба (DXT1 - сжатый дефолт,
 # BGR888 - без потерь для градиентов, где DXT даёт полосы).
 # Список допустимых форматов - правило, живёт в домене
-from src.domain.format_choices import SKYBOX_ALLOWED_FORMATS  # noqa: F401 - реэкспорт
+from src.domain.format_choices import (  # noqa: F401 - реэкспорт
+    SKYBOX_ALLOWED_FORMATS, SKYBOX_FORCED_FLAGS, SKYBOX_FORCED_OPTIONS,
+)
 
 # Шаблон VMT грани: стоковый минимум (шейдер sky + $nofog/$ignorez), как в
 # оригинальных материалах TF2. И LDR-, и _hdr-вариант пишутся с одинаковым
 # содержимым: в HDR движок предпочитает материалы <sky>_hdr<грань>, и без
-# нашего override HDR-клиенты продолжали бы видеть стоковое небо
+# нашего override HDR-клиенты продолжали бы видеть стоковое небо.
+# $hdrbasetexture обязателен: в HDR «sky» - это Sky_HDR_DX9, а он
+# $basetexture не читает вовсе. Та же 8-битная текстура, как у sky_halloween
 _SKY_VMT_TEMPLATE = (
     '"sky"\n'
     '{{\n'
     '\t"$basetexture" "skybox/{stem}{face}"\n'
+    '\t"$hdrbasetexture" "skybox/{stem}{face}"\n'
     '\t"$nofog" "1"\n'
     '\t"$ignorez" "1"\n'
     '}}\n'
@@ -450,11 +455,11 @@ class SkyboxService:
             # мипы гране неба не нужны. Из пользовательских флагов осмысленен
             # один: POINTSAMPLE - без сглаживания звёзды остаются точками, а не
             # мягкими пятнами (грань растянута на 90° обзора)
-            _vtf_flags = ["CLAMPS", "CLAMPT", "NOLOD"]
+            _vtf_flags = list(SKYBOX_FORCED_FLAGS)
             if "POINTSAMPLE" in (request.flags or []):
                 _vtf_flags.append("POINTSAMPLE")
                 logger.info("Скайбокс: POINTSAMPLE - билинейная фильтрация выключена")
-            _vtf_opts = {"nomipmaps": True, "nothumbnail": True}
+            _vtf_opts = {k: v for k, v in SKYBOX_FORCED_OPTIONS.items() if v}
             for i, face in enumerate(SKY_FACES):
                 if cancelled():
                     ctx.cleanup(on_error=True,

@@ -151,12 +151,14 @@ def _write_fixed_extra_vmt(ex: dict, base_texture_path: str, ctx,
     # Игровой VMT ищем по тому же пути, что и в моде (реальный путь к материалу)
     content = None
     try:
-        import vpk as vpklib
+        # Общий кэш: каталог разбирается один раз, а чтение сверяется с CRC
+        # игры (game_integrity)
+        from src.services.vpk_cache import open_vpk_cached
         for vpk_path in (misc_vpk, textures_vpk):
             if not vpk_path or not os.path.exists(vpk_path):
                 continue
             try:
-                pak = vpklib.open(vpk_path)
+                pak = open_vpk_cached(vpk_path)
                 content = pak[vmt_rel].read().decode("utf-8", errors="replace")
                 break
             except Exception:

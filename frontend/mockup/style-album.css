@@ -170,6 +170,8 @@
   transition: opacity var(--dur);
 }
 .frame:hover .frame__tools { opacity: 1; }
+/* Грани неба собираются одними настройками - своих у карточки нет */
+:root[data-no-texset] .frame__tool:not(.frame__off) { display: none; }
 
 .frame__tool {
   display: grid;                 /* внутри бывает и знак, и значок */

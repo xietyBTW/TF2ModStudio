@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.domain.preview.vmt_edits import VmtEdits
 from src.services import qc_skin_parser
 from src.services.texture_build import game_source
 from src.services.vpk_texture_builder import VpkTextureBuilder
@@ -220,7 +221,7 @@ class EditedVmtTests(unittest.TestCase):
                 originals[name].write_text(VMT.format(name))
             answers = {"scout_head_red_invun": EXTRA_TEX_USE_MAIN,
                        "scout_head_zombie": EXTRA_TEX_USE_GAME_ORIGINAL}
-            with patch.object(EditedVMTService, "EDITED_VMT_DIR", edits), \
+            with EditedVMTService.use(VmtEdits()), \
                     patch.object(game_source, "find_original_vmt",
                                  side_effect=lambda name, ctx, s: str(originals.get(name, "")) or None):
                 for name in answers:
@@ -250,7 +251,7 @@ class EditedVmtTests(unittest.TestCase):
             slots = _Slots(d)
             target = slots.vmt("c_energydrink")
             target.write_text(VMT.format("x"))
-            with patch.object(EditedVMTService, "EDITED_VMT_DIR", edits):
+            with EditedVMTService.use(VmtEdits()):
                 EditedVMTService.save_edited_vmt("c_energydrink", painted)
                 VpkTextureBuilder._apply_edited_vmt(
                     "c_energydrink", target, None, slots, True, strip_paints=True)

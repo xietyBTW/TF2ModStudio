@@ -30,6 +30,7 @@ from src.services.model_build_service import ModelBuildService
 from src.services.tf2_paths import TF2Paths
 from src.services.tf2_vpk_extract_service import TF2VPKExtractService
 from src.shared.logging_config import get_logger
+from src.shared.game_paths import game_path
 
 logger = get_logger(__name__)
 
@@ -179,7 +180,7 @@ _MODEL_LOCKS_GUARD = threading.Lock()
 
 
 def _model_lock(vpk_path: str, mdl_rel: str) -> threading.Lock:
-    key = (os.path.normcase(vpk_path), mdl_rel.replace("\\", "/").lower())
+    key = (os.path.normcase(vpk_path), game_path(mdl_rel))
     with _MODEL_LOCKS_GUARD:
         return _MODEL_LOCKS.setdefault(key, threading.Lock())
 
@@ -190,16 +191,8 @@ def _first_existing(
     stop: Callable[[], bool],
 ) -> Optional[str]:
     """Первый кандидат, который есть в VPK. None - ни одного (или отмена)"""
-    for path in candidates:
-        if stop():
-            return None
-        try:
-            if TF2VPKExtractService.check_mdl_exists(misc_vpk_path, path):
-                logger.info(f"[decomp] MDL найден: {path}")
-                return path
-        except Exception as exc:
-            logger.debug(f"[decomp] check_mdl_exists({path}): {exc}")
-    return None
+    from src.services.model_locator import first_existing
+    return first_existing(misc_vpk_path, candidates, stop)[0]
 
 
 def _extract_and_decompile(
@@ -233,9 +226,12 @@ def _extract_and_decompile(
         logger.info(f"[decomp] Crowbar: {os.path.basename(mdl_file)} → {decomp_dir}")
         ModelBuildService.decompile(mdl_file, decomp_dir, crowbar)
 
-        cached_dir = decompile_cache.save_to_cache(
-            weapon_key, misc_vpk_path, mdl_rel, decomp_dir
-        )
+        # Разбор подменённой модели (прелоадер) без оригинала в кэш не идёт:
+        # ключ кэша - время каталога VPK, а прелоадер и проверка файлов в
+        # Steam меняют только архивы, и подмена жила бы в кэше вечно
+        from src.services import game_integrity
+        cached_dir = None if game_integrity.is_modified(mdl_rel[:-4]) else (
+            decompile_cache.save_to_cache(weapon_key, misc_vpk_path, mdl_rel, decomp_dir))
         return Decompiled(
             directory=cached_dir or decomp_dir,
             mdl_rel=mdl_rel,

@@ -80,6 +80,8 @@ def build_scene(
     clip_hold: float = 0.0,
     clip_cut: float = 0.0,
     anim_layer_smd: str = "",
+    weapon_axes_x: float = 0.0,
+    weapon_exact: bool = False,
 ) -> Optional[dict]:
     """
     Готовит данные анимированной сцены для вьювера
@@ -163,6 +165,7 @@ def build_scene(
 
     order = _bone_order(bind)
     index_of = {name: i for i, name in enumerate(order)}
+    index_of[ORIGIN_BONE] = len(order)
     # Скелет рук входит в каждую часть: оружие запекается в его bind-позу
     rig_key = _stamp([arms_ref_smd])
 
@@ -176,7 +179,8 @@ def build_scene(
                  else _merge_names(weapon_ref_smd, anim_smd)
                  or weapon_merge_bones)
         weapon_part = _held_part(weapon_ref_smd, bind, index_of, merge,
-                                 weapon_extra_smds, rig_key)
+                                 weapon_extra_smds, rig_key, weapon_axes_x,
+                                 weapon_exact)
         if weapon_part is None:
             return None
         editable = list(editable_mats or weapon_part["materials"])
@@ -205,9 +209,14 @@ def build_scene(
     clip["hold"] = float(clip_hold)
 
     parts = [p for p in (weapon_part, arms_part) if p]
+    bones = _bones(bind, order, index_of)
+    origin = index_of[ORIGIN_BONE]
+    if any(origin in (p.get("skinIndex") or ()) for p in parts):
+        bones.append({"name": ORIGIN_BONE, "parent": -1,
+                      "position": [0.0, 0.0, 0.0], "quaternion": [0.0, 0.0, 0.0, 1.0]})
     return {
         "rootRotationX": root_rotation_x,
-        "bones": _bones(bind, order, index_of),
+        "bones": bones,
         "parts": parts,
         "weaponMaterials": editable,
         "weaponHidden": [list(pair) for pair in weapon_hidden],
@@ -238,7 +247,9 @@ def _bounds(parts: Sequence[dict], rotation_x: float = ROOT_ROTATION_X,
     lows = [float('inf')] * 3
     highs = [float('-inf')] * 3
     for part in parts:
-        positions = part.get("positions") or ()
+        # Часть со своими обратными матрицами лежит в осях предмета, а не в
+        # позе покоя персонажа: её вершины сдвинули бы кадр в сторону
+        positions = () if part.get("boneInverses") else (part.get("positions") or ())
         for axis in range(3):
             values = positions[axis::3]
             if not values:
@@ -334,8 +345,7 @@ def _shared_bones(weapon_ref_smd: str, bind: viewmodel_pose.Rig) -> List[str]:
     а у реквизита насмешки хват - кость спрятанного оружия
     """
     names = smd_pose.parse_node_names(weapon_ref_smd)
-    known = set(bind.names.values())
-    return sorted({name for name in names.values() if name in known})
+    return sorted({name for name in names.values() if bind.spelling(name)})
 
 
 def _merge_names(weapon_ref_smd: str, anim_smd: str) -> Optional[List[str]]:
@@ -506,13 +516,28 @@ def _held_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
                index_of: Dict[str, int],
                merge_bones: Optional[Sequence[str]],
                extra_smds: Sequence[str] = (),
-               rig_key: Optional[tuple] = None) -> Optional[dict]:
+               rig_key: Optional[tuple] = None,
+               axes_x: float = 0.0, exact: bool = False) -> Optional[dict]:
     """Часть оружия (`_weapon_part`) с запасом по входу"""
     return _remembered(
         _part_key("weapon", rig_key, [weapon_ref_smd, *extra_smds],
-                  None if merge_bones is None else tuple(merge_bones)),
+                  (None if merge_bones is None else tuple(merge_bones), axes_x, exact)),
         lambda: _weapon_part(weapon_ref_smd, bind, index_of, merge_bones,
-                             extra_smds))
+                             extra_smds, axes_x, exact))
+
+
+#: Неподвижная кость в начале координат персонажа. На ней висят кости
+#: предмета, которым в скелете не за что зацепиться: в игре они стоят в позе
+#: покоя у ног (бассейн пиро), а привязка к первой кости возила их с тазом
+ORIGIN_BONE = "__origin__"
+
+
+def _turn_matrix(angle: float) -> list:
+    """Поворот вокруг X матрицей 3x4: оси предмета -> оси персонажа"""
+    cos, sin = math.cos(angle), math.sin(angle)
+    return [1.0, 0.0, 0.0, 0.0,
+            0.0, cos, -sin, 0.0,
+            0.0, sin, cos, 0.0]
 
 
 def _triangles(smds: Sequence[str]) -> Dict[str, list]:
@@ -562,7 +587,9 @@ def _arms_part(arms_ref_smd: str, bind: viewmodel_pose.Rig,
 def _weapon_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
                  index_of: Dict[str, int],
                  merge_bones: Optional[Sequence[str]],
-                 extra_smds: Sequence[str] = ()) -> Optional[dict]:
+                 extra_smds: Sequence[str] = (),
+                 axes_x: float = 0.0,
+                 exact: bool = False) -> Optional[dict]:
     """
     Оружие, запечённое в bind-позу руки и подвешенное к её костям
 
@@ -572,6 +599,13 @@ def _weapon_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
     Args:
         extra_smds: бодигруппы того же меша (откидные части, прицелы). Скелет
             у них общий с основным, поэтому и матрицы те же
+        axes_x: поворот из осей предмета в оси руки для костей, которым не за
+            что зацепиться: они встают на `ORIGIN_BONE` в позе покоя
+        exact: геометрия остаётся в позе покоя предмета, а вьювер получает
+            его обратные матрицы (`boneInverses`). Запекание в позу руки
+            верно только для вершин одной кости: у поделённых между костями
+            (голова в банке, мешок, верёвка) оно ошибалось на 5-13 единиц,
+            когда поза покоя руки у этих костей не та, что у предмета
     """
     drivers = viewmodel_pose.driving_bones(weapon_ref_smd, bind, merge_bones)
     if not drivers:
@@ -582,13 +616,19 @@ def _weapon_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
     mats = viewmodel_pose.bonemerge_skinning(weapon_ref_smd, bind, merge_bones)
     if not mats:
         return None
+    if axes_x:
+        turn = _turn_matrix(axes_x)
+        for bone in mats:
+            if bone not in drivers:
+                mats[bone] = turn
 
     triangles = _triangles([weapon_ref_smd, *extra_smds])
     if not triangles:
         logger.warning(f"[anim] пустой меш оружия: {_short(weapon_ref_smd)}")
         return None
-    # Геометрия переезжает в bind-позу руки - ровно как в статичной сцене
-    SmdToObjService._apply_skinning(triangles, mats, os.path.basename(weapon_ref_smd))
+    if not exact:
+        # Геометрия переезжает в bind-позу руки - ровно как в статичной сцене
+        SmdToObjService._apply_skinning(triangles, mats, os.path.basename(weapon_ref_smd))
 
     def links_of(vert: dict) -> List[Tuple[int, float]]:
         """Веса вершины, переведённые с костей оружия на кости руки
@@ -606,13 +646,39 @@ def _weapon_part(weapon_ref_smd: str, bind: viewmodel_pose.Rig,
         """
         out: Dict[int, float] = {}
         for bone, weight in vert.get("links") or ():
-            slot = index_of.get(drivers.get(bone, ""))
+            slot = index_of.get(drivers.get(bone) or ORIGIN_BONE)
             if slot is None or weight <= 0.0:
                 continue
             out[slot] = out.get(slot, 0.0) + float(weight)
         return list(out.items())
 
-    return _pack(triangles, links_of, "weapon")
+    part = _pack(triangles, links_of, "weapon")
+    if exact:
+        part["boneInverses"] = _prop_inverses(weapon_ref_smd, drivers, index_of, axes_x)
+    return part
+
+
+def _prop_inverses(weapon_ref_smd: str, drivers: Dict[int, str],
+                   index_of: Dict[str, int], axes_x: float) -> Dict[str, list]:
+    """{слот кости руки: обратная матрица позы покоя предмета} - 3x4 по строкам
+
+    Кость, которую ведёт её предок (jiggle-кости банки), сводится к матрице
+    этого предка: P(j) = P(предка) · смещение, и смещение сокращается. Поэтому
+    на слот руки приходится одна матрица - той кости предмета, что носит её имя
+    """
+    rig = viewmodel_pose.load_rig(weapon_ref_smd)
+    out: Dict[str, list] = {}
+    if rig is None:
+        return out
+    for bone, driver in drivers.items():
+        if rig.names.get(bone, "").lower() != driver.lower():
+            continue
+        slot = index_of.get(driver)
+        if slot is not None and bone in rig.world:
+            out[str(slot)] = list(smd_pose.rigid_inverse(rig.world[bone]))
+    # Кость начала координат: поза покоя предмета в осях руки
+    out[str(index_of[ORIGIN_BONE])] = _turn_matrix(axes_x)
+    return out
 
 
 def _add_carrier(part: dict, carrier_smd: str, bind: viewmodel_pose.Rig,

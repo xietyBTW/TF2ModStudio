@@ -156,6 +156,14 @@ class HideEventTests(unittest.TestCase):
         self.assertEqual(hidden_ranges(((0, True),), 30.0), [])
         self.assertEqual(hidden_ranges((), 30.0), [])
 
+    def test_lonely_hide_hides_a_real_weapon_to_the_end(self):
+        """Оружие в руках (у реквизита своя сцена): инженер на родео
+        убирает дробовик на первом кадре и больше не достаёт"""
+        from src.services.taunt_worker import hidden_ranges
+
+        self.assertEqual(hidden_ranges(((1, True),), 24.0, weapon=True),
+                         [[1 / 24.0, None]])
+
 
 class ParseTests(unittest.TestCase):
     """Разбор items_game: одна насмешка описывает сразу все свои классы"""
@@ -179,6 +187,10 @@ class ParseTests(unittest.TestCase):
                 {
                     "scout"   "models/workshop/player/items/all_class/test/test_scout.mdl"
                     "soldier" "models\\workshop\\player\\items\\all_class\\test\\test_soldier.mdl"
+                }
+                "custom_taunt_prop_scene_per_class"
+                {
+                    "scout"   "scenes/workshop/player/items/test/test_prop.vcd"
                 }
             }
         }
@@ -207,6 +219,14 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(by_class['soldier'][1], 'taunt_test')
         # И наоборот: модель солдата ведёт на ту же таблицу
         self.assertEqual(table[by_class['soldier'][0]], by_class)
+
+    def test_own_prop_scene_is_remembered_per_class(self):
+        """Своя сцена у реквизита - оружие остаётся в руках, но только у
+        того класса, для которого сцена объявлена"""
+        self._parsed()
+        base = 'models/workshop/player/items/all_class/test/'
+        self.assertIn((base + 'test_scout.mdl', 'scout'), taunt_scenes._with_prop_scene)
+        self.assertNotIn((base + 'test_soldier.mdl', 'soldier'), taunt_scenes._with_prop_scene)
 
     def test_windows_slashes_are_normalized(self):
         table = self._parsed()

@@ -107,7 +107,8 @@ export const revertParticleSystem = (system) =>
 export const revertParticleAttr = (system, group, index, attr) =>
   call('revert_particle_attr', { system, group, index, attr });
 export const particleFiles = () => cached('particle_files', {});
-export const loadParticles = (source, system = '') => call('load_particles', { source, system });
+export const loadParticles = (source, system = '', installed = false) =>
+  call('load_particles', { source, system, installed });
 export const particleEffectMaterials = (system) =>
   call('particle_effect_materials', { system });
 export const particleParams = (system) => call('particle_params', { system });
@@ -276,6 +277,7 @@ export const undoEdits      = (delta = -1) => call('undo_edits', { delta });
 // выключено), а в библиотеку работа попадает только по `keepWork`
 export const workState    = () => call('work_state');
 export const keepWork     = () => call('keep_work');
+export const saveWorkShot = (key, png) => call('save_work_shot', { key, png });
 export const restoreWork  = () => call('restore_work');
 export const forgetWork   = () => call('forget_work');
 export const deleteWork   = (key) => call('delete_work', { key });
@@ -288,6 +290,8 @@ export const forgetDrafts = (keys = null) => call('forget_drafts', { keys });
 export const modLibrary   = () => call('mod_library');
 export const addMod       = (path) => call('add_mod', { path });
 export const modIcon      = (name) => call('mod_icon', { name });
+export const modInfo      = (name) => call('mod_info', { name });
+export const saveModShot  = (name, png) => call('save_mod_shot', { name, png });
 
 // Звуки
 /** Записи под фильтрами и сами фильтры со счётчиками - одним ответом */
@@ -346,6 +350,8 @@ export const dataFolder   = () => call('data_folder', {});
 export const exportFolder = () => call('export_folder', {});
 export const revealExportFile = (path) => call('reveal_export_file', { path });
 export const pickFolder   = (start) => call('pick_folder', { start });
+export const pickFile     = (kind) => call('pick_file', { kind, lang: lang() });
+export const checkPreloader = (path) => call('check_preloader', { path });
 //: Кнопки окна: minimize / maximize / close / theme; без действия - состояние
 export const windowControl = (action = '', theme = '') =>
   call('window_control', { action, theme });
@@ -392,9 +398,11 @@ export const addPartRegion = (material, triangles) =>
   call('add_part_region', { material, triangles });
 export const removePartRegion = (material, region) =>
   call('remove_part_region', { material, region });
-export const loadSkybox   = (sky_name) => call('load_skybox', { sky_name });
+export const loadSkybox   = (sky_name, restore = false) => call('load_skybox', { sky_name, restore });
 export const setTexture   = (material, path) => call('set_texture', { material, path });
 export const setBluChoice = (material, choice) => call('set_blu_choice', { material, choice });
+export const setVariantChoice = (choice) => call('set_variant_choice', { choice });
+export const gildFromBase = () => call('gild_from_base');
 export const build        = (params) => call('build', { params });
 //: Сборка шапки на девять классов идёт минуты - передумать надо давать
 export const cancelBuild  = () => call('cancel_build');

@@ -43,8 +43,10 @@ def _named(rows: List[dict], lang: str) -> List[dict]:
     до этого, его не имеют - для них остаётся разбор имени папки: у оружия он
     даёт верный ключ, у шапки - слаг пути к модели
     """
+    from src.data.item_kinds import kind_of
+
     hats = _hat_index(lang) if any(
-        (r.get('item') or {}).get('mode') == 'hat' for r in rows) else {}
+        kind_of((r.get('item') or {}).get('mode', '')).is_hat for r in rows) else {}
 
     out: List[dict] = []
     for row in rows:
@@ -137,8 +139,12 @@ def _work_title(mode: str, item: str, lang: str) -> str:
     собирает `_hat_titles` один раз. Сюда шапка попадает, только когда предмет
     в игре не нашёлся: тогда имя файла модели честнее полного пути
     """
+    from src.data.skyboxes import SKY_ALL_MAPS_KEY
+    from src.data.translations import tr
     from src.data.weapons import TF2_WEAPONS
 
+    if item == SKY_ALL_MAPS_KEY:
+        return tr(lang, 'sky_all_maps')
     for groups in TF2_WEAPONS.values():
         for weapons in groups.values():
             for key, names in weapons.items():
@@ -161,6 +167,31 @@ def keep_work() -> Dict[str, object]:
     """Сохраняет работу над предметом в библиотеку - по нажатию, не молча"""
     from src.app.session import session
     return session().keep_work()
+
+
+@endpoint
+def save_work_shot(key: str = '', png: str = '') -> Dict[str, object]:
+    """
+    Снимок модели с правками - обложкой работы. png - base64 без префикса
+
+    key - работа, для которой снимали. Снимок ждёт, пока сцена успокоится, и
+    за это время могли открыть другой предмет: тогда в кадре уже не она
+    """
+    import base64
+    import binascii
+    from src.app.session import session
+    from src.services import work_store
+
+    if not key or key != session().work_state().get('key'):
+        return {'error': 'В кадре уже другой предмет'}
+    try:
+        data = base64.b64decode(png, validate=True)
+    except (binascii.Error, ValueError):
+        return {'error': 'Снимок повреждён'}
+    path = work_store.save_shot(key, data)
+    if path is None:
+        return {'error': 'Снимок не сохранён'}
+    return {'key': key, 'shot': str(path)}
 
 
 @endpoint

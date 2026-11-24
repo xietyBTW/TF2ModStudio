@@ -43,11 +43,12 @@ def particle_effect_kids(system: str, query: str = '', source: str = '',
 
 
 @endpoint
-def load_particles(source: str, system: str = '') -> Dict[str, object]:
+def load_particles(source: str, system: str = '', installed: bool = False) -> Dict[str, object]:
     """Разбирает PCF: системы, материалы и дерево - всё, что рисует превью;
-    `system` - на какой системе открыть (пусто - первый корень)"""
+    `system` - на какой системе открыть (пусто - первый корень);
+    `installed` - файл игры, как его переписал прелоадер, а не оригинал"""
     from src.app.session import session
-    return session().particles.load_particles(source, system)
+    return session().particles.load_particles(source, system, bool(installed))
 
 
 @endpoint

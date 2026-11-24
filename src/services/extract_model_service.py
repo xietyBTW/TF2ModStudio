@@ -6,6 +6,9 @@ from typing import Callable, Optional, Tuple, List, Dict, Any
 from src.data.translations import TRANSLATIONS
 from src.data.weapons import WEAPON_MDL_PATHS
 from src.services.build_context import BuildContext
+from src.data.item_kinds import kind_of
+from src.services.model_locator import first_existing, mdl_candidates, not_found_error
+from src.shared.game_paths import game_path
 from src.services import model_decompile_service as mds
 from src.services.tf2_paths import TF2Paths, build_hat_mdl_candidates
 from src.services.tf2_vpk_extract_service import TF2VPKExtractService
@@ -37,78 +40,6 @@ class ExtractModelService:
             if not cand.exists():
                 return cand
         raise RuntimeError("Не удалось подобрать уникальное имя файла экспорта")
-
-    @staticmethod
-    def _build_hat_paths(mdl_rel: str) -> list:
-        """Кандидаты MDL-путей шапки (единая логика - см. tf2_paths.build_hat_mdl_candidates)"""
-        return build_hat_mdl_candidates(mdl_rel)
-
-    @staticmethod
-    def _build_paths_to_try(mode: str, weapon_key: str, tf2_root: str = None) -> list[str]:
-        # Ключ может быть незнакомым (модель из пользовательского VPK) - тогда
-        # берём стандартную раскладку c_models вместо падения по KeyError
-        base_path_from_config = WEAPON_MDL_PATHS.get(
-            weapon_key, f"models/weapons/c_models/{weapon_key}/{weapon_key}.mdl"
-        )
-        paths_to_try = []
-
-        # Точный путь из items_game.txt (авторитетный) - первым кандидатом
-        if tf2_root:
-            try:
-                from src.data.weapon_model_index import resolve_weapon_mdl
-                _exact = resolve_weapon_mdl(weapon_key, tf2_root)
-                if _exact and _exact not in paths_to_try:
-                    paths_to_try.append(_exact)
-            except Exception as _e:
-                logger.debug(f"resolve_weapon_mdl({weapon_key}) не сработал: {_e}")
-
-        workshop_partner_path_with_folder = base_path_from_config.replace(
-            "models/weapons/", "models/workshop_partner/weapons/"
-        )
-        paths_to_try.append(workshop_partner_path_with_folder)
-        if f"/{weapon_key}/{weapon_key}.mdl" in workshop_partner_path_with_folder:
-            paths_to_try.append(
-                workshop_partner_path_with_folder.replace(
-                    f"/{weapon_key}/{weapon_key}.mdl", f"/{weapon_key}.mdl"
-                )
-            )
-
-        workshop_path_with_folder = base_path_from_config.replace(
-            "models/weapons/", "models/workshop/weapons/"
-        )
-        paths_to_try.append(workshop_path_with_folder)
-        if f"/{weapon_key}/{weapon_key}.mdl" in workshop_path_with_folder:
-            paths_to_try.append(
-                workshop_path_with_folder.replace(
-                    f"/{weapon_key}/{weapon_key}.mdl", f"/{weapon_key}.mdl"
-                )
-            )
-
-        paths_to_try.append(base_path_from_config)
-        if f"/{weapon_key}/{weapon_key}.mdl" in base_path_from_config:
-            paths_to_try.append(
-                base_path_from_config.replace(
-                    f"/{weapon_key}/{weapon_key}.mdl", f"/{weapon_key}.mdl"
-                )
-            )
-
-        c_items_path_with_folder = base_path_from_config.replace(
-            "models/weapons/c_models/", "models/weapons/c_items/"
-        )
-        paths_to_try.append(c_items_path_with_folder)
-        if f"/{weapon_key}/{weapon_key}.mdl" in c_items_path_with_folder:
-            paths_to_try.append(
-                c_items_path_with_folder.replace(
-                    f"/{weapon_key}/{weapon_key}.mdl", f"/{weapon_key}.mdl"
-                )
-            )
-
-        if "_" in mode:
-            class_name_lower = mode.split("_", 1)[0]
-            paths_to_try.append(f"models/player/items/{class_name_lower}/{weapon_key}/{weapon_key}.mdl")
-            paths_to_try.append(f"models/player/items/{class_name_lower}/{weapon_key}.mdl")
-
-        return paths_to_try
 
     @staticmethod
     def cleanup_temp_dir(temp_dir: str) -> None:
@@ -185,11 +116,11 @@ class ExtractModelService:
             if not tf2_root_dir:
                 return False, t.get("tf2_path_not_specified", "TF2 path not specified in settings"), False, None
 
-            is_hat_mode = (mode == "hat")
-            # Для персонажей weapon_key = полный MDL путь (напр. "models/player/spy.mdl")
-            is_player_body = weapon_key.startswith("models/player/") and weapon_key.endswith(".mdl")
+            kind = kind_of(mode)
+            # У шапки, тела и маски ключ - сразу путь MDL ("models/player/spy.mdl")
+            by_path = kind.model_by_path or weapon_key.lower().endswith(".mdl")
 
-            if not is_hat_mode and not is_player_body and weapon_key not in WEAPON_MDL_PATHS:
+            if not by_path and weapon_key not in WEAPON_MDL_PATHS:
                 return (
                     False,
                     t.get("error_weapon_not_found", "Weapon not found").format(weapon_key=weapon_key),
@@ -207,43 +138,24 @@ class ExtractModelService:
             # Мультиклассовая шапка: извлекаем и декомпилируем модель КАЖДОГО класса
             # в свою подпапку decompile_dir/<class>/ - чтобы в экспорте были все
             # классы, а не только первый найденный
-            if is_hat_mode and hat_class_models and len(hat_class_models) > 1:
+            if kind.class_models and hat_class_models and len(hat_class_models) > 1:
                 return ExtractModelService._prepare_multiclass_hat(
                     tf2_misc_vpk, hat_class_models, weapon_key, mode, t,
                     emit_progress, is_cancelled,
                 )
 
-            if is_hat_mode:
-                paths_to_try = ExtractModelService._build_hat_paths(weapon_key)
-            elif is_player_body:
-                # Прямой MDL путь - как у шапок
-                paths_to_try = [weapon_key]
-            else:
-                paths_to_try = ExtractModelService._build_paths_to_try(mode, weapon_key, tf2_root_dir)
-            found_mdl_path = None
-            last_error = None
-            for idx, mdl_rel_path in enumerate(paths_to_try):
-                if is_cancelled():
-                    return False, t.get("extract_model_cancelled", "Извлечение отменено пользователем"), True, None
-                try:
-                    if TF2VPKExtractService.check_mdl_exists(tf2_misc_vpk, mdl_rel_path):
-                        found_mdl_path = mdl_rel_path
-                        break
-                except Exception as e:
-                    last_error = e
+            paths_to_try = mdl_candidates(mode, weapon_key, tf2_root_dir)
+            def step(done: int, total: int) -> None:
                 if progress_callback:
-                    pct = 15 + int((idx + 1) / max(1, len(paths_to_try)) * 20)
-                    progress_callback(pct, t.get("extract_model_searching", "Поиск модели..."))
+                    progress_callback(15 + int(done / max(1, total) * 20),
+                                      t.get("extract_model_searching", "Поиск модели..."))
 
+            found_mdl_path, last_error = first_existing(
+                tf2_misc_vpk, paths_to_try, is_cancelled, step)
+            if is_cancelled():
+                return False, t.get("extract_model_cancelled", "Извлечение отменено пользователем"), True, None
             if not found_mdl_path:
-                paths_str = "\n".join([f"  - {path}" for path in paths_to_try])
-                error_msg = t.get(
-                    "error_mdl_not_found",
-                    "MDL not found.\nPaths:\n{paths}\nVPK: {vpk_file}",
-                ).format(paths=paths_str, vpk_file=tf2_misc_vpk)
-                if last_error:
-                    error_msg += f"\n{str(last_error)}"
-                return False, error_msg, False, None
+                return False, not_found_error(t, paths_to_try, tf2_misc_vpk, last_error), False, None
 
             emit_progress(40, "extract_model_extracting", "Извлечение модели...")
             if is_cancelled():
@@ -294,16 +206,8 @@ class ExtractModelService:
     @staticmethod
     def _resolve_existing_mdl(tf2_misc_vpk: str, mdl_rel: str) -> Optional[str]:
         """Возвращает путь MDL, который реально есть в VPK (прямой или вариант)"""
-        norm = (mdl_rel or "").replace("\\", "/").lower()
-        if not norm:
-            return None
-        for cand in [norm] + build_hat_mdl_candidates(norm):
-            try:
-                if TF2VPKExtractService.check_mdl_exists(tf2_misc_vpk, cand):
-                    return cand
-            except Exception:
-                continue
-        return None
+        norm = game_path(mdl_rel)
+        return first_existing(tf2_misc_vpk, [norm] + build_hat_mdl_candidates(norm))[0] if norm else None
 
     @staticmethod
     def _prepare_multiclass_hat(

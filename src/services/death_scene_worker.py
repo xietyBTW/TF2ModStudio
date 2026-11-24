@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-import tempfile
+from src.shared.file_utils import make_preview_dir
 from typing import Optional
 
 from src.services import model_decompile_service as mds
@@ -123,7 +123,7 @@ class DeathScenePreviewWorker(BaseWorker):
     def run(self) -> None:
         reader = GameVpkReader([self.textures_vpk_path, self.misc_vpk_path])
         try:
-            self._preview_dir = tempfile.mkdtemp(prefix='tf2sg_death_')
+            self._preview_dir = make_preview_dir('tf2sg_death_')
 
             self.progress.emit(self._p['player'])
             player_dir = self._decompile(f'__player_{SCENE_CLASS}',

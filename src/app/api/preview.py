@@ -166,10 +166,10 @@ def toggle_misc(on: Optional[bool] = None) -> Dict[str, object]:
 
 
 @endpoint
-def force_team() -> Dict[str, object]:
-    """Включает «сделать командным»: сборка синтезирует BLU-строку"""
+def force_team(on: bool = True) -> Dict[str, object]:
+    """Включает «сделать командным» (сборка синтезирует BLU-строку), on=False - убирает"""
     from src.app.session import session
-    return session().force_team()
+    return session().force_team(bool(on))
 
 
 @endpoint

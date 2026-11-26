@@ -20,6 +20,29 @@ _RULES: List[Tuple[Callable, str, str, str, str]] = [
         "No taunt in the game uses it. You can view and edit the model on the Model tab.",
     ),
 
+    # Модели предмета нет в архивах игры: TF2 обновилась и переложила файлы
+    # или архивы повреждены. Без объяснения это было «непредвиденной ошибкой»
+    (
+        lambda m: any(x in m for x in [
+            "модель не найдена в vpk", "model not found in vpk",
+        ]),
+        "Модель предмета не найдена в игре",
+        (
+            "В архивах Team Fortress 2 нет модели этого предмета. Так бывает, "
+            "если игра обновилась и переложила файлы или если файлы игры "
+            "повреждены.\n\n"
+            "Проверьте целостность файлов TF2 в Steam (Свойства > Установленные "
+            "файлы) и обновите приложение, если вышла новая версия."
+        ),
+        "The item's model wasn't found in the game",
+        (
+            "Team Fortress 2's archives have no model for this item. This happens "
+            "when a game update moved the files or the game files are damaged.\n\n"
+            "Verify the integrity of TF2's files in Steam (Properties > Installed "
+            "Files) and update the app if a new version is out."
+        ),
+    ),
+
     # Путь к TF2 не настроен
     (
         lambda m: any(x in m for x in [

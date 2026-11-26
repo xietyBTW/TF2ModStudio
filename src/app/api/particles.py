@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from src.app.api._common import _lang, endpoint
 
@@ -356,10 +356,11 @@ def export_particles_vpk(name: str = 'particles_mod.vpk',
 
 
 @endpoint
-def particle_param_reference(path: str = '',
-                             for_ai: bool = False) -> Dict[str, object]:
+def particle_param_reference(path: str = '', for_ai: bool = False,
+                             supported: Optional[dict] = None) -> Dict[str, object]:
     from src.app.session import session
-    return session().particles.particle_param_reference(path, for_ai, _lang())
+    return session().particles.particle_param_reference(path, for_ai, _lang(),
+                                                        supported)
 
 
 @endpoint

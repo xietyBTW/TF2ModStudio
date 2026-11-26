@@ -32,9 +32,9 @@ export const EN = {
   'Игровая': 'Game',
   'Как красная': 'Same as RED',
   'Как обычная': 'Same as regular',
-  'Сделать золотым из обычной': 'Gild the regular texture',
+  'Сделать золотым': 'Make it gold',
   'Неизвестный выбор текстуры австралия': 'Unknown Australium texture choice',
-  'Не из чего сделать золото: нет обычной текстуры или игрового австралия': 'Nothing to gild: no regular texture or game Australium',
+  'Обычная текстура игровая - её золото уже есть в игре': 'The regular texture is the game one - its gold is already in the game',
   'Не удалось перекрасить текстуру': 'Could not recolor the texture',
   'Вернуть игровую текстуру': 'Restore the game texture',
   'Неизвестный выбор синей текстуры': 'Unknown BLU texture choice',
@@ -80,6 +80,13 @@ export const EN = {
   'Заменить модель': 'Replace model',
   'Редактировать QC': 'Edit QC',
   'Сделать командным': 'Make team-colored',
+  'Командными стали оба стиля, обычный и австралий: у BLU каждого своя карточка':
+    'Both styles are team-colored now, normal and Australium: each one has its own BLU card',
+  'Предмет стал командным: у BLU своя карточка, по умолчанию игровая':
+    'The item is team-colored now: BLU has its own card, the game one by default',
+  'Командность убрана: предмет снова один на обе команды':
+    'Team colors removed: the item is the same for both teams again',
+  'Убрать командность': 'Remove team colors',
   'Разделить на части': 'Split into parts',
   'Убрать свою модель': 'Remove custom model',
   // Что заменить: оружие или его гирлянду
@@ -263,18 +270,7 @@ export const EN = {
   'Останавливаю сборку…': 'Stopping the build…',
   'Сборка…': 'Building…',
   'Ошибка сборки': 'Build failed',
-  'Чем красить «{}»': 'What to put on “{}”',
-  'Своей текстуры для этого материала нет.':
-    'There is no custom texture for this material.',
   'Оставить игровую': 'Keep the game one',
-  'Материал не попадёт в мод - в игре останется стоковый':
-    'The material is left out of the mod - the stock one stays in the game',
-  'Скопировать главную': 'Copy the main one',
-  'На этот материал ляжет та же текстура, что и на основной':
-    'This material gets the same texture as the main one',
-  'Выбрать файл…': 'Pick a file…',
-  'Своя картинка именно для этого материала':
-    'A custom image just for this material',
   'Своя модель для части «{}»': 'Custom model for the “{}” part',
   'разбитое состояние': 'the broken state',
   'состояние после взрыва': 'the state after the explosion',
@@ -286,7 +282,6 @@ export const EN = {
   'Выбрать файл SMD…': 'Choose an SMD file…',
   'Своя геометрия этой части; кости и материалы возьмутся из игровой':
     'Your own geometry for this part; bones and materials come from the game one',
-  'И так для остальных материалов': 'Same for the rest of the materials',
   'Ответить': 'Answer',
   'Сборка успешно завершена: {}': 'Build finished: {}',
   'Ошибка сборки: {}': 'Build failed: {}',
@@ -676,6 +671,8 @@ export const EN = {
   'Не удалось упаковать мод в VPK': 'Could not pack the mod into a VPK',
   'ZIP не открылся: {}': 'The ZIP could not be opened: {}',
   'Путь в архиве ведёт наружу: {}': 'A path in the archive leads outside: {}',
+  'Папка «{}» весит {} ГБ, а в один VPK помещается меньше 2 ГБ. Выберите папку самого мода':
+    'The folder "{}" takes {} GB, and one VPK holds less than 2 GB. Pick the folder of the mod itself',
   'Не скопировать {}': 'Could not copy {}',
   'Не скопировать {}.vpk': 'Could not copy {}.vpk',
   'Файл или папка не найдены': 'File or folder not found',
@@ -1404,8 +1401,6 @@ export const EN = {
   'items_game.txt не найден в {}': 'items_game.txt not found in {}',
   "Секция 'items' не найдена в items_game.txt":
     "the 'items' section was not found in items_game.txt",
-  'Библиотека vpk не установлена. Установите через: pip install vpk':
-    'the vpk library is not installed. Install it with: pip install vpk',
   'Модель не найдена для {}. Проверенные пути: {}':
     'no model found for {}. Paths tried: {}',
 
@@ -1865,8 +1860,6 @@ export const EN = {
   'Если библиотека vpk не установлена, установите её: pip install vpk':
     'If the vpk library is not installed, install it: pip install vpk',
   'отменено': 'cancelled',
-  'размер не совпал: {} вместо {}': 'size mismatch: {} instead of {}',
-  'контрольная сумма не совпала - файл повреждён': 'checksum mismatch - the file is corrupted',
   'установщик не найден: {}': 'installer not found: {}',
   'установка поддерживается только на Windows': 'installing is only supported on Windows',
   // Гирлянды: причина подставляется в «Гирлянда {} не собралась: {}»

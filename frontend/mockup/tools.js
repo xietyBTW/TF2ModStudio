@@ -8,7 +8,7 @@
 import * as api from './api.js';
 import { ask } from './ask.js';
 import { chooseFile } from './util.js';
-import { say, sayError } from './stage.js';
+import { particles, say, sayError } from './stage.js';
 import { notifyApp } from './app-note.js';
 import { mergeMods } from './merge-dialog.js';
 import { loadPcf, pSystem } from './particles/index.js';
@@ -51,7 +51,10 @@ document.getElementById('tools').addEventListener('click', async (e) => {
   if (item.dataset.tool === 'ref' || item.dataset.tool === 'ref-ai') {
     const forAi = item.dataset.tool === 'ref-ai';
     say('Сбор справочника…');
-    const res = await api.particleReference('', forAi);
+    // Какие модули отыгрывает превью, знает только его движок: без этого
+    // справочник не может пометить остальные как previewed=false
+    const supported = particles()?.implementedModules?.() ?? null;
+    const res = await api.particleReference('', forAi, supported);
     if (res.error) notifyApp(res.error, 'error');
     else notifyApp(`Справочник сохранён: ${res.path}`);
     return;

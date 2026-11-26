@@ -547,14 +547,19 @@ class ForceTeamTests(TextureStateBase):
         self.state.active_team = Team.BLU
         self.assertEqual(self.state.resolve_base("c_gun"), blu)
 
-    def test_red_only_blu_defaults_to_red(self):
-        # Пока своя синяя не задана, BLU наследует RED (дефолт «как RED»)
+    def test_red_only_blu_stays_game_like_a_native_team(self):
+        """Как у игровой командной: красная правка синюю не трогает, синяя
+        игровая, пока не выбрано «Как красная» или своя"""
         red = self.png("red")
         self.state.active_team = Team.RED
         self.state.set_texture("c_gun", red)
-        self.assertNotIn("c_gun", self.state.textures[Team.BLU])  # не продублировано
+        self.assertNotIn("c_gun", self.state.textures[Team.BLU])
         self.state.active_team = Team.BLU
-        self.assertEqual(self.state.resolve_base("c_gun"), red)   # но показывается RED
+        self.assertNotEqual(self.state.resolve_base("c_gun"), red)
+        self.assertEqual(self.state.blu_choices(), {"c_gun": "game"})
+        self.state.set_blu_choice("c_gun", "red")
+        self.assertEqual(self.state.resolve_base("c_gun"), red)
+        self.assertEqual(self.state.blu_choices(), {"c_gun": "red"})
 
     def test_red_card_does_not_borrow_the_blue_texture(self):
         """Загрузка на BLU не должна ВЫГЛЯДЕТЬ как замена красной
@@ -585,13 +590,19 @@ class ForceTeamTests(TextureStateBase):
         self.state.set_texture("c_gun", tex)
         self.assertEqual(self.state.textures[Team.BLU].get("c_gun"), tex)
 
-    def test_uploaded_for_mat_blue_defaults_to_red_under_force_team(self):
-        # Сборка синего скина: своей синей нет -> берём базовую RED («как RED»),
-        # иначе {mat}_blue остался бы без VTF (фиолетовый в игре)
+    def test_build_blue_under_force_team_follows_the_blue_choice(self):
+        """Сборка синего скина: своей синей нет - игровая (сборка ссылается
+        на игровую текстуру предмета, VTF не нужен); «Как красная» - главная"""
+        from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
         red = self.png("red")
         self.state.active_team = Team.RED
         self.state.set_texture("c_gun", red)
+        self.assertIsNone(self.state.uploaded_for_mat("c_gun_blue"))
+        self.assertEqual(self.state.build_answer("c_gun_blue"), EXTRA_TEX_USE_GAME_ORIGINAL)
+        self.state.active_team = Team.BLU
+        self.state.set_blu_choice("c_gun", "red")
         self.assertEqual(self.state.uploaded_for_mat("c_gun_blue"), red)
+        self.assertEqual(self.state.build_answer("c_gun_blue"), red)
 
     def test_uploaded_for_mat_blue_prefers_own_blue(self):
         red, blu = self.png("red"), self.png("blu")
@@ -601,6 +612,35 @@ class ForceTeamTests(TextureStateBase):
         self.state.set_texture("c_gun", blu)
         # Своя синяя задана -> она приоритетнее RED-дефолта
         self.assertEqual(self.state.uploaded_for_mat("c_gun_blue"), blu)
+
+    def test_texture_put_before_making_team_stays_red_only(self):
+        """Обычный порядок: сначала своя текстура, потом «Сделать командным».
+        Копия в синей от общей карточки не должна выдавать себя за синюю"""
+        from src.domain.preview import team_colors
+        red = self.png("red")
+        self.state.force_team = False
+        self.state.active_team = Team.RED
+        self.state.set_texture("c_gun", red)
+        self.assertEqual(self.state.textures[Team.BLU].get("c_gun"), red)
+        team_colors.apply(self.state)
+        self.state.active_team = Team.BLU
+        self.assertNotEqual(self.state.resolve_base("c_gun"), red)
+        self.assertEqual(self.state.blu_choices(), {"c_gun": "game"})
+
+    def test_removing_team_colors_drops_the_blue_side(self):
+        """«Убрать командность»: синяя картинка была только из-за командности,
+        оставленная, она вылезла бы на красной (общий слот)"""
+        from src.domain.preview import team_colors
+        red, blu = self.png("red"), self.png("blu")
+        self.state.active_team = Team.RED
+        self.state.set_texture("c_gun", red)
+        self.state.active_team = Team.BLU
+        self.state.set_texture("c_gun", blu)
+        team_colors.remove(self.state)
+        self.assertFalse(self.state.force_team)
+        self.assertEqual(self.state.active_team, Team.RED)
+        self.assertNotIn("c_gun", self.state.textures[Team.BLU])
+        self.assertEqual(self.state.resolve_base("c_gun"), red)
 
     def test_reset_team_data_clears_force_team(self):
         self.assertTrue(self.state.force_team)

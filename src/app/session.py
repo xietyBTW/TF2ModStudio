@@ -39,6 +39,7 @@ from src.app.preview_controller import (
 from src.domain.preview.session import PreviewSession
 from src.domain.preview.vmt_edits import VmtEdits
 from src.data.item_kinds import kind_of
+from src.services import item_pose_hint
 from src.shared.file_utils import existing_file
 from src.shared.logging_config import get_logger
 
@@ -286,12 +287,15 @@ class AppSession:
         m.skins.connect(lambda info: self._put('skins', info=info))
         # Мод опознан: страница откроет вид от первого лица - там он и
         # проверяется, в руках и в движении
-        m.weapon.connect(
-            lambda key, smd: self._put('mod_weapon', key=key, ready=bool(smd)))
+        # Поза - здесь же: мод опознаётся уже после показа модели
+        m.weapon.connect(lambda key, smd: self._put(
+            'mod_weapon', key=key, ready=bool(smd),
+            pose=item_pose_hint.for_weapon(self._shown_weapon())))
         # Мод неба: грани берутся из состояния (mod_sky) - перечитать показ
         m.sky.connect(lambda _faces: self._put('materials', materials={}))
         # Синие карточки стали синей стороной красных - перечитать альбом
         m.links.connect(lambda: self._put('materials', materials={}))
+        m.variant.connect(lambda png, mat: self._put('australium', png=png, material=mat))
         m.failed.connect(self._fail)
 
         # Скайбокс: шесть граней кубмапы.
@@ -336,7 +340,8 @@ class AppSession:
         self._put('model_ready', obj=obj_path, texture=texture,
                   stamps=_stamps({'': texture}),
                   unused=not obj_path and self.preview.custom_vpk_unused,
-                  bounds={'cx': cx, 'cy': cy, 'cz': cz, 'scale': scale})
+                  bounds={'cx': cx, 'cy': cy, 'cz': cz, 'scale': scale},
+                  pose=item_pose_hint.for_weapon(self._shown_weapon()) if obj_path else None)
 
     def _fail(self, error: str) -> None:
         """
@@ -1854,10 +1859,15 @@ class AppSession:
             self.preview.toggle_misc(on)
         return self.view_state()
 
-    def force_team(self) -> Dict[str, Any]:
-        """Включает «сделать командным» - сборка синтезирует BLU-строку"""
+    def force_team(self, on: bool = True) -> Dict[str, Any]:
+        """Включает «сделать командным» (сборка синтезирует BLU-строку) или
+        убирает его - кнопка рядом, случайное нажатие откатывается сразу"""
+        from src.domain.preview import team_colors
         with self._lock:
-            self.preview.enable_force_team()
+            if on:
+                self.preview.enable_force_team()
+            else:
+                team_colors.remove(self.preview.textures)
         self._autosave()
         return self.view_state()
 

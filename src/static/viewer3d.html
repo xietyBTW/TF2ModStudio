@@ -280,11 +280,12 @@ import * as _select from './js/viewer_select.js';
 import * as _tex from './js/viewer_textures.js';
 import { createAnims as _createAnims } from './js/viewer_anims.js';
 import { createFire as _createFire } from './js/viewer_fire.js';
-import { createFitPivot as _createFitPivot, fitPose as _fitPoseOf,
-         fitFromNode as _fitFromNode } from './js/viewer_fit_pivot.js';
+import { createFitPivot as _createFitPivot, fitPose as _fitPoseOf, fitFromNode as _fitFromNode,
+         vectorInParent as _inParent, quatInParent as _quatInParent } from './js/viewer_fit_pivot.js';
 import { buildSoldierGroup } from './js/viewer/soldier.js';
 import { SRC_FACE_MAP, buildSkyCube } from './js/viewer/skybox.js';
 import { snapshotWaiter as _snapshotWaiter } from './js/viewer_snapshot.js';
+import { layItem as _layItem } from './js/viewer_lay.js';
 
 // Что было на window до модуля: в конце отличаем свой API от чужого
 const _globalsBefore = new Set(Object.keys(window));
@@ -1343,7 +1344,7 @@ function _fitOpApply() {
     }
     // Экранный угол по часовой (y вниз) - в мировом это против оси на камеру
     const q = new THREE.Quaternion().setFromAxisAngle(axis, -angle);
-    group.quaternion.copy(q.multiply(start.quat));
+    group.quaternion.copy(_quatInParent(THREE, group.parent, q).multiply(start.quat));
   }
   if (op.tool === 'scale' || op.tool === 'rotate') {
     // Поворот и масштаб - вокруг центра модели: он остаётся на месте
@@ -1360,8 +1361,8 @@ function _fitOpApply() {
       const dir = FIT_AXIS_DIR[op.axis];
       delta = dir.clone().multiplyScalar(delta.dot(dir));
     }
-    // Мировой сдвиг -> локальный в currentModel (та нормирована равномерно)
-    const local = delta.divideScalar(currentModel.scale.x || 1);
+    // Мировой сдвиг -> локальный в модели предмета: она и повёрнута (viewer_lay.js)
+    const local = _inParent(THREE, group.parent, delta);
     group.position.copy(start.pos).add(local);
   }
   _fitOpEmit();
@@ -1497,6 +1498,7 @@ function _placeCamera(c) {
   camera.lookAt(c.target);
   controls.target.copy(c.target);
   controls.update();
+  requestRender();   // модель из загрузки встала без перелёта - кадр иначе ждал мыши
 }
 
 function _stepCameraFly() {
@@ -1620,7 +1622,7 @@ function _animateCritSprite(textures, fps) {
 
 // Public API
 
-window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale, loadSeq) {
+window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale, loadSeq, pose) {
   const gen = ++_sceneGeneration;   // все предыдущие async-колбэки теперь устарели
   _isCritHitMode    = false;
   _editableMeshNames = null;   // сбрасываем при каждой новой модели
@@ -1644,7 +1646,8 @@ window.loadModelFromContent = function(objContent, texDataUrl, cx, cy, cz, scale
 
       // Сначала показываем модель без текстуры (нейтральный цвет)
       applyTexture(object, null);
-      applyTransform(object, cx, cy, cz, scale);
+      const b = _layItem(THREE, object, _viewRig ? null : pose, { cx, cy, cz, scale }, _isGhost);
+      applyTransform(object, b.cx, b.cy, b.cz, b.scale);
       // До раздачи текстур: куски своих материалов получают их по имени
       _splitParts();
       hideStatus();

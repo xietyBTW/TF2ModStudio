@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+#: Имя файла перекраски в золото: по нему видно, что на карточке австралия
+#: лежит прошлый результат, а не картинка человека
+_GILD_PREFIX = 'tf2sg_gold_'
+
 
 class MaterialsEditor:
     """Карты материала и VMT карточки"""
@@ -314,10 +318,42 @@ class MaterialsEditor:
         p = self._host.preview
         t = p.textures
         gold = t.australium_mat_name
-        if not (gold and t.australium_active) or p.custom_vpk_mode:
+        if not (gold and t.australium_active):
             return None
-        return {'card': gold, 'now': variant_card.choice(t), 'options': variant_card.options(t),
-                'can_gild': bool(t.variant_game())}
+        # У мода сборка берёт только свои картинки карточек: «как обычная»
+        # ей передать нечем
+        options = ['game'] if p.custom_vpk_mode else variant_card.options(t)
+        return {'card': gold, 'now': variant_card.choice(t), 'options': options,
+                'can_gild': self._gild_source() is not None}
+
+    def _gild_source(self) -> Optional[tuple]:
+        """(карточка золота, что золотить, игровое золото) или None
+
+        Своя картинка на самой карточке австралия - её и золотим. Иначе
+        обычную, но только свою: обычная Valve и её золото - одна картинка
+        в двух красках, и перекраска нетронутой давала то же игровое
+        золото, только хуже. Своя модель - всегда своё: игровое золото на
+        её развёртку не ложится. Прошлый результат перекраски не в счёт:
+        после правки обычной золото пересчитывается из неё"""
+        from src.domain.preview import variant_card
+
+        t = self._host.preview.textures
+        team = t.active_team
+        gold, palette = t.australium_mat_name, t.variant_game(team)
+        if not (gold and palette):
+            return None
+        on_card = variant_card.shown(t, team)
+        if (variant_card.choice(t, team) == 'own' and on_card
+                and not os.path.basename(on_card).startswith(_GILD_PREFIX)):
+            return gold, on_card, palette
+        main = t.stable_main() or t.storage_main_key()
+        regular = t.shown_at(main, 0, team)
+        # Текстура мода - работа его автора, её золотить есть смысл
+        if not regular or (regular == t.game_base(main, team)
+                           and not self._host._custom_geometry()
+                           and not self._host.preview.custom_vpk_mode):
+            return None
+        return gold, regular, palette
 
     def set_variant_choice(self, choice: str = 'game') -> Dict[str, Any]:
         """Карточка австралия: 'game' - игровое золото, 'base' - как обычная,
@@ -332,23 +368,25 @@ class MaterialsEditor:
         return self._host.view_state()
 
     def gild_from_base(self) -> Dict[str, Any]:
-        """Обычная текстура в золото этого оружия -> своя картинка австралия
+        """Своя картинка в золото этого оружия -> своя картинка австралия
 
-        Обычная - как она видна у показанной команды (своя или игровая, с
-        мазками частей), палитра - игровое золото той же команды. VMT остаётся
-        игровым VMT золота: блеск и кубмапу даёт он"""
+        Что золотить, решает _gild_source: картинка на карточке австралия или
+        обычная, как она видна у показанной команды. Палитра - игровое золото
+        той же команды. VMT остаётся игровым VMT золота: блеск и кубмапу даёт он"""
         from src.services.gold_recolor import recolor
         from src.shared.file_utils import get_temp_file_path
 
         t = self._host.preview.textures
         with self._host._lock:
-            gold, team = t.australium_mat_name, t.active_team
-            main = t.stable_main() or t.storage_main_key()
-            base, palette = t.shown_at(main, 0, team), t.variant_game(team)
-        if not (gold and base and palette):
-            return {'error': 'Не из чего сделать золото: нет обычной текстуры или игрового австралия'}
+            source = self._gild_source()
+            # Маска блеска игры ложится только на её развёртку
+            custom = self._host._custom_geometry() or self._host.preview.custom_vpk_own_model
+        if source is None:
+            return {'error': 'Обычная текстура игровая - её золото уже есть в игре'}
+        gold, base, palette = source
         try:
-            out = recolor(base, palette, str(get_temp_file_path(prefix='tf2sg_gold_', suffix='.png')))
+            out = recolor(base, palette, str(get_temp_file_path(prefix=_GILD_PREFIX, suffix='.png')),
+                          keep_gold_alpha=not custom)
         except (OSError, ValueError) as exc:
             logger.warning(f"золото из обычной: {exc}")
             return {'error': 'Не удалось перекрасить текстуру'}

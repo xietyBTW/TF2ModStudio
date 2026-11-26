@@ -195,7 +195,7 @@ export async function showModel(ev) {
     const obj = await (await fetch(api.fileUrl(ev.obj))).text();
     const b = ev.bounds || { cx: 0, cy: 0, cz: 0, scale: 1 };
     w.loadModelFromContent(obj, ev.texture ? api.texUrl(ev.texture, ev.stamps) : '',
-                           b.cx, b.cy, b.cz, b.scale, 0);
+                           b.cx, b.cy, b.cz, b.scale, 0, ev.pose || null);
     bindParts(w);
     bindFitViewer(w);
     say('');                            // модель на экране - подпись убираем
@@ -396,10 +396,11 @@ export function applyView(st) {
   misc.hidden = !(modeControls.misc && st.has_misc);
   misc.classList.toggle('is-active', Boolean(st.misc_mode));
 
-  // «Сделать командным» предлагается, пока своего командного варианта нет:
-  // после включения его место занимают RED/BLU
+  // «Сделать командным» предлагается, пока своего командного варианта нет;
+  // включённое тем же местом убирается - случайный щелчок не держит навсегда
   const make = document.getElementById('maketeam');
-  make.hidden = !(modeControls.teams && st.can_force_team);
+  make.hidden = !(modeControls.teams && (st.can_force_team || st.force_team));
+  make.textContent = t(st.force_team ? 'Убрать командность' : 'Сделать командным');
   syncPaint(st);
 
   // «Редактировать QC» - только при загруженной своей готовой модели: у
@@ -499,10 +500,11 @@ function showBluChoices(choices, variant) {
 //: Откуда картинка карточки австралия: [значение, подпись]
 const VARIANT_CHOICES = [['game', 'Игровая'], ['red', 'Как красная'], ['base', 'Как обычная']];
 
-/** Ряд выбора на карточке. Своя картинка ('own') - выбирать нечего, ряда нет:
- *  вернуть игровую можно из меню карточки */
+/** Ряд выбора на карточке. Своя картинка ('own') или выбирать не из чего (у
+ *  мода из VPK австралий только свой) - ряда нет: вернуть игровую можно из
+ *  меню карточки */
 function choiceRow(fig, entries, now, pick) {
-  if (!now || now === 'own') return;
+  if (!now || now === 'own' || entries.length < 2) return;
   const row = document.createElement('div');
   row.className = 'frame__blu';
   for (const [value, label] of entries) {
@@ -613,7 +615,15 @@ document.getElementById('misc').addEventListener('click', async () => {
 });
 
 document.getElementById('maketeam').addEventListener('click', async () => {
-  applyView(await api.forceTeam());
+  const on = !(lastView && lastView.force_team);
+  const st = await api.forceTeam(on);
+  applyView(st);
+  // При включённом австралии казалось, что командным стал только он:
+  // синим становятся оба стиля, у каждого своя синяя карточка
+  if (!on) say(t('Командность убрана: предмет снова один на обе команды'));
+  else say(t(st.has_australium
+    ? 'Командными стали оба стиля, обычный и австралий: у BLU каждого своя карточка'
+    : 'Предмет стал командным: у BLU своя карточка, по умолчанию игровая'));
 });
 
 /** Запоминает последний кадр превью: им возвращают обычную модель после

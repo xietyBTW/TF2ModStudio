@@ -19,14 +19,38 @@ const TIP_RATIO = 1.5;
 //: Ниже этого совпадения с подсказкой (косинус) ось ей не верит и решает форма
 const PRIOR_MIN = 0.3;
 
+//: Длина к ширине, ниже которой длинной оси у коробки, считай, нет: у
+//: Прерывателя 1,12, у пульта Wrangler 1,01. Ствол тогда - ось, ближайшая к
+//: подсказке. Сковорода 1,49 и пулемёт 1,62 - уже длинные
+const COMPACT = 1.3;
+//: Главная ось формы должна быть не дальше 30 градусов от оси модели, чтобы
+//: считать модель сделанной вдоль осей. Рукоять клонит её у пистолетов до 31
+//: (Snub Nose), поэтому строже нельзя - и Fishcake, сделанный под 16, по форме
+//: от них не отличить. Мерили и рамку наименьшей площади, и объём коробки:
+//: ровные пистолеты выходили «кривее» его
+const AXIS_MIN = Math.cos(32 * Math.PI / 180);
+//: Во сколько раз разброс вдоль нормали должен быть меньше, чем вдоль средней
+//: оси, чтобы её направлению верить (у щита 3 против 16)
+const DISTINCT = 2;
+//: Ниже этой доли верх подсказки знаку оси уже не указ
+const SIGN_MIN = 0.2;
+//: Насколько камера иконки должна смотреть вдоль одной оси больше, чем вдоль
+//: другой, чтобы ей поверить (Scatterdrum 0,80 против 0,36)
+const VIEW_CLEAR = 0.15;
+
 /**
  * Оси кадра {right, up, back}: right - от острия к рукояти (на экране
  * вправо), up - вверх экрана, back - на зрителя. null - точек нет
  *
- * prior {forward, up} - куда у модели обычно смотрит перёд и верх. Форма
- * даёт только оси, а стороны по форме угадываются плохо: торец ствола бывает
- * толще кончика приклада. Подсказка решает сторону, если ось с ней хоть
- * как-то совпадает; иначе - форма
+ * prior {forward, up} - куда у модели обычно смотрит перёд и верх (камера
+ * иконки рюкзака или кость руки). С ней оси - это оси самой модели: оружие
+ * Valve смоделировано вдоль них, ствол лежит строго по одной. Подсказка
+ * только выбирает, какая ось ствол и какая верх, - её наклон (иконки сняты
+ * наискось) в кадр не переносится, и предмет лежит ровно, бок под 90 градусов.
+ *
+ * Модель наискось к своим осям (моды) или без подсказки - оси даёт форма, а
+ * стороны: подсказка, если ось с ней хоть как-то совпадает, иначе толщина
+ * концов (остриё и ствол тоньше рукояти и приклада)
  */
 export function itemPose(points, prior = null) {
   const n = Math.floor(points.length / 3);
@@ -41,7 +65,10 @@ export function itemPose(points, prior = null) {
     const d = [points[i] - mean[0], points[i + 1] - mean[1], points[i + 2] - mean[2]];
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) cov[r][c] += d[r] * d[c] / n;
   }
-  const [a1, a2] = eigenSym3(cov).map((e) => e.vector);
+  const eig = eigenSym3(cov);
+  const [a1, a2] = eig.map((e) => e.vector);
+  const aligned = prior && _axisPose(points, prior, eig);
+  if (aligned) return aligned;
   const [long, mid] = _straighten(points, mean, a1, a2);
 
   const t = _project(points, mean, long);
@@ -59,6 +86,49 @@ export function itemPose(points, prior = null) {
   const up = Math.abs(u) >= PRIOR_MIN ? (u > 0 ? mid : flip(mid))
     : (sHi > -sLo ? flip(mid) : mid);
 
+  return { right, up, back: _cross(right, up) };
+}
+
+/**
+ * Оси кадра из осей модели или null - модель лежит к ним наискось
+ *
+ * Ствол - самая длинная сторона коробки; у компактной коробки - ось,
+ * ближайшая к перёду подсказки. Из двух оставшихся смотрим вдоль той, куда
+ * смотрит камера иконки: у Scatterdrum это бок, хотя барабан делает его
+ * шире высоты. Камера между двумя осями (у лопат Valve одна камера на всех,
+ * 0,67 против 0,72) - вдоль самой тонкой: видна лопасть, а не ребро.
+ * От подсказки - и знаки: куда ствол, где верх, с какой стороны смотреть
+ */
+function _axisPose(points, prior, eig) {
+  const span = [0, 1, 2].map((k) => _span(points.filter((_, i) => i % 3 === k)));
+  const order = [0, 1, 2].sort((a, b) => span[b] - span[a]);
+  const long = span[order[0]] >= COMPACT * span[order[1]];
+  if (long && Math.abs(eig[0].vector[order[0]]) < AXIS_MIN) return null;
+  // Нормаль плоского предмета (самая короткая главная ось, если выделяется)
+  // наискось к осям модели - модель к ним не привязана. Chargin' Targe в позе
+  // из анимации повёрнут на 45°, и привязка показывала его косо сверху.
+  // Длинную и среднюю так не проверить: у Г-образного пистолета они клонятся
+  // за рукоятью, хотя сам он стоит по осям
+  const normal = eig[2];
+  if (normal.value * DISTINCT <= eig[1].value
+      && Math.max(...normal.vector.map(Math.abs)) < AXIS_MIN) return null;
+  // Компактный предмет без камеры иконки: какая ось ствол, не скажет ни
+  // форма, ни кость руки - а Gas Passer ещё и смоделирован в руке наклонённым
+  if (!long && !prior.view) return null;
+  const f = long ? order[0]
+    : [0, 1, 2].reduce((a, b) => (Math.abs(prior.forward[b]) > Math.abs(prior.forward[a]) ? b : a));
+  const [p, q] = [0, 1, 2].filter((k) => k !== f);
+  const look = prior.view ? Math.abs(prior.view[p]) - Math.abs(prior.view[q]) : 0;
+  const view = Math.abs(look) >= VIEW_CLEAR ? (look > 0 ? p : q) : (span[p] <= span[q] ? p : q);
+  const u = view === p ? q : p;
+  const unit = (k, sign) => [0, 1, 2].map((i) => (i === k ? (sign < 0 ? -1 : 1) : 0));
+  // Перёд уходит влево, значит right смотрит назад
+  const right = unit(f, -(prior.forward[f] || 1));
+  // Верх иконки почти поперёк выбранной оси - знак надёжнее по взгляду камеры:
+  // она смотрит на зрителя той стороной, что и на иконке
+  let up = unit(u, prior.up[u] || 1);
+  if (Math.abs(prior.up[u]) < SIGN_MIN && prior.view
+      && _dot(_cross(right, up), prior.view) > 0) up = up.map((x) => -x);
   return { right, up, back: _cross(right, up) };
 }
 
@@ -166,6 +236,11 @@ function _range(arr) {
   let b = -Infinity;
   for (const v of arr) { if (v < a) a = v; if (v > b) b = v; }
   return [a, b];
+}
+
+function _span(arr) {
+  const [a, b] = _range(arr);
+  return b - a;
 }
 
 function _dot(a, b) {

@@ -50,7 +50,7 @@ Arranging patterns by part by hand applies to the main material. The other mater
 
 **Apply** builds the paint at full size (1024 × 1024) and puts it on the checked materials. From this moment it's a regular texture on the card: the preview shows it, you can paint over it, and the build will scale it to the resolution in the build settings.
 
-The paint goes onto the cards of the active team. If the weapon has separate RED and BLU textures, switch to the other team and apply the paint there as well. Alternatively, leave BLU alone and answer **Copy the main one** when the build asks about it.
+The paint goes onto the cards of the active team. If the weapon has separate RED and BLU textures, switch to the other team and apply the paint there as well. Alternatively, pick **Same as RED** on the BLU card.
 
 Applying is a normal edit: <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes it back on every painted material at once.
 

@@ -103,3 +103,42 @@ def test_archive_without_a_mod_is_refused(tmp_path, library):
     archive = _zip(tmp_path / "pics.zip", {"photos/cat.jpg": "x"})
     with pytest.raises(mod_archive.ModArchiveError):
         mod_archive.import_mod(str(archive))
+
+
+def test_zip_with_too_big_mod_folder_is_refused_before_extracting(tmp_path, library, monkeypatch):
+    """Папку больше 2 ГБ в VPK не упаковать: раньше архив сначала
+    распаковывался целиком и только потом падал"""
+    import os
+    archive = _zip(tmp_path / "big.zip", {
+        "pack/mymod/materials/a.vtf": os.urandom(2048),
+        "pack/skin.vpk": os.urandom(4096),      # готовый VPK - не в счёт
+    })
+    monkeypatch.setattr(mod_archive, "MAX_PACK", 1024)
+
+    def no_extract(*_a, **_k):
+        raise AssertionError("распаковка началась")
+    monkeypatch.setattr(mod_archive.shutil, "copyfileobj", no_extract)
+    with pytest.raises(mod_archive.ModArchiveError, match="«mymod».*2 ГБ"):
+        mod_archive.import_mod(str(archive))
+
+
+def test_big_ready_vpk_in_zip_is_not_limited(tmp_path, library, monkeypatch):
+    mod = tmp_path / "src"
+    _files(mod, ["materials/models/x.vtf"])
+    vpk.new(str(mod)).save(str(tmp_path / "skin.vpk"))
+    archive = _zip(tmp_path / "pack.zip", {"skin.vpk": (tmp_path / "skin.vpk").read_bytes()})
+    monkeypatch.setattr(mod_archive, "MAX_PACK", 1)
+    assert [p.name for p in mod_archive.import_mod(str(archive))] == ["skin.vpk"]
+
+
+def test_too_big_folder_is_refused_before_copying(tmp_path, monkeypatch):
+    """tf/download на 2,3 ГБ: vpk.exe падал «Out of memory», успев скопировать
+    всё во временную папку. Теперь отказ сразу и понятный"""
+    from src.services import mod_archive
+
+    folder = tmp_path / 'download'
+    (folder / 'materials').mkdir(parents=True)
+    (folder / 'materials' / 'big.vtf').write_bytes(b'x' * 2048)
+    monkeypatch.setattr(mod_archive, 'MAX_PACK', 1024)
+    with pytest.raises(mod_archive.ModArchiveError, match='2 ГБ'):
+        mod_archive.import_mod(str(folder))

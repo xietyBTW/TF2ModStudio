@@ -117,3 +117,32 @@ def build_images(t) -> Dict[str, str]:
         if path and (must or path != game(t, team)):
             out[name] = path
     return out
+
+
+# Мод из VPK: золото - свои VTF мода (mod_variant)
+
+def side_of(t, mat: str) -> Optional[str]:
+    """Команда, чьё это золото (RED - карточка австралия, BLU - её синяя
+    сторона), иначе None. Своя картинка лежит под карточкой австралия"""
+    low = (mat or '').lower()
+    if t.is_variant_material(mat):
+        return Team.RED
+    blue = t.australium_blu_mat
+    return Team.BLU if blue and low == blue.lower() else None
+
+
+def mod_blue_upload(t) -> Dict[str, str]:
+    """{синее золото мода: своя картинка} - у мода это свой VTF"""
+    gold, blue = t.australium_mat_name, t.australium_blu_mat
+    own = existing_file(t.textures.get(Team.BLU, {}).get(gold)) if gold and blue else None
+    return {blue: own} if own and own != t.textures.get(Team.RED, {}).get(gold) else {}
+
+
+def on_mesh(t, mat: str, card: Optional[str]) -> bool:
+    """Рисует ли меш мода австралий: меши, чьи материалы заменяет его строка,
+    иначе меши главной карточки - как у игрового предмета"""
+    if not t.variant_display_texture():
+        return False
+    if t.variant_meshes:
+        return (mat or '').lower() in t.variant_meshes
+    return (card or mat or '').lower() == (t.stable_main() or '').lower()

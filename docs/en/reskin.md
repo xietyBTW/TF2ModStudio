@@ -57,7 +57,7 @@ Many items look different for RED and BLU, and some have extra versions. The app
 | Control | Where | What it does |
 |---|---|---|
 | **RED** / **BLU** | top bar | Appear when the model has separate team textures. Switch to **BLU** and drop a second image to give the blue team its own look. If the game's BLU version looks exactly like RED, hovering **BLU** says so. |
-| **Make team-colored** | under the model | Appears when the weapon has no team variant in the game. After you press it, **RED** and **BLU** show up and the build adds the blue material to the model. Give BLU its own image, or leave it empty and answer **Copy the main one** when the build asks about it. |
+| **Make team-colored** | under the model | Appears when the weapon has no team variant in the game. After you press it, **RED** and **BLU** show up and the build adds the blue material to the model. Give BLU its own image, or pick **Same as RED** on the BLU card. |
 | **Australium** | top bar | Appears when the weapon has a gold version. While it's on, the album shows the Australium card, and an image dropped there goes to the gold version only. If you leave it alone, the gold version keeps its in-game look. |
 | **Other** | under the album | Shows the model's service materials: eyes, teeth, invulnerability (über) overlays, zombie skins, sheen overlays. They are hidden by default because they rarely need changes. |
 | **Style** | under the model | Extra skins baked into the model, such as the clean and bloody versions of some melee weapons. **Default** is the base skin. A style takes the base textures until you give it its own. |
@@ -103,11 +103,10 @@ The bottom bar shows a summary of what will be built: size, VTF format, the esti
 
 ## 7. Build
 
-Click **Build VPK** in the bottom right corner. While the build runs, the button turns into **Stop**, and the bottom bar shows each step. The app may ask a few questions on the way:
+Click **Build VPK** in the bottom right corner. While the build runs, the button turns into **Stop**, and the bottom bar shows each step. A card without an image of yours is built with the game's texture, as the preview shows it. A BLU card takes what is picked on it: **Game** or **Same as RED**. The app may ask a few questions on the way:
 
 | Question | When it appears | Answers |
 |---|---|---|
-| **What to put on "material"** | A material has no image of yours. It also covers the BLU version of a material when you painted only RED. | **Keep the game one** leaves the material out of the mod, so the game's texture stays. **Copy the main one** puts your main texture on it. **Pick a file…** takes a separate image. The checkbox **Same for the rest of the materials** applies your answer to the rest of this build. Closing the window cancels the build. |
 | **The game will paint the item …** | The material takes its color from the VMT wherever the texture's alpha is white, and your image has no alpha, so in game the whole item would turn one color. | **No paint** keeps what you see in the preview and removes the paint parameters from the material. **Paint like the game** colors only the areas the game colors on the original. **Build as is** paints the whole item. |
 | **No changes** | There's no image of yours, no VMT edit, no material maps, no custom model. | **Build anyway** builds a mod with the game's own look, which is useful for testing paths. |
 | **Custom model for the "part" part** | Only with a [custom model](custom-models.md) when the weapon has extra model states. | Keep the game part or choose an SMD for it. |

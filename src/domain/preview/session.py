@@ -149,6 +149,7 @@ class PreviewSession:
     #: По виду мод-шапка живёт на странице шапок и надевается на персонажа
     custom_vpk_kind: str = ''
     custom_vpk_mdl: str = ''
+    custom_vpk_variant: Optional[dict] = None   # австралий модели мода (mod_variant)
     #: Режим загруженного custom-VPK мода: карточки строятся из VTF мода и
     #: не должны перетираться обычной фильтрацией материалов модели
     custom_vpk_mode: bool = False
@@ -364,10 +365,10 @@ class PreviewSession:
         # Австралий - своя карточка со своей текстурой, но показывается она
         # НА МЕСТЕ главной, пока вариант включён: как у RED/BLU, карточка
         # одна, а что на ней - решает переключатель. Две карточки рядом
-        # читались как два материала модели. У мода из VPK карточки - по его
-        # VTF, вариантов там нет
+        # читались как два материала модели. У мода из VPK так же: вариант
+        # находит mod_variant по модели, которую он рисует
         gold = self.textures.australium_mat_name
-        if gold and cards and self.textures.australium_active and not self.custom_vpk_mode:
+        if gold and cards and self.textures.australium_active:
             main = self.textures.stable_main() or cards[0]
             cards = [gold if c == main else c for c in cards]
         return cards + decor
@@ -772,9 +773,9 @@ class PreviewSession:
         return not (t.force_team or self.has_team_variant(False))
 
     def enable_force_team(self) -> None:
-        """Включает «сделать командным»: показываются RED/BLU, активна RED"""
-        self.textures.force_team = True
-        self.textures.active_team = Team.RED
+        """Включает «сделать командным» (src/domain/preview/team_colors.py)"""
+        from src.domain.preview import team_colors
+        team_colors.apply(self.textures)
 
     # Правки человека (то, что нельзя восстановить пересчётом)
     #
@@ -1031,6 +1032,7 @@ class PreviewSession:
         self.custom_vpk_unused = False
         self.custom_vpk_kind = ''
         self.custom_vpk_mdl = ''
+        self.custom_vpk_variant = None
         self.mod_maps = {}
         self.mod_vmts, self.mod_frames, self.mod_game_textures = {}, {}, {}
 

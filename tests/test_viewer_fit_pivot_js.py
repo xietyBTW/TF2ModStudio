@@ -81,3 +81,41 @@ def test_fit_numbers_survive_the_round_trip():
     assert back["scale"] == 1.5
     assert _close(back["rotate"], [10, 20, 30], 0.11)
     assert _close(back["offset"], [1, 2, 3], 0.11)
+
+
+LAID_SCRIPT = """
+const THREE = await import(%(three)s);
+const { vectorInParent, quatInParent } = await import(%(module)s);
+// Модель предмета положена набок (viewer_lay.js) и ужата, узел подгонки в ней
+const model = new THREE.Group();
+model.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+model.scale.setScalar(0.5);
+const node = new THREE.Group();
+model.add(node);
+model.updateMatrixWorld(true);
+
+// Сдвиг мыши на 1 вправо по экрану: узел должен уехать вправо и в мире
+node.position.add(vectorInParent(THREE, model, new THREE.Vector3(1, 0, 0)));
+model.updateMatrixWorld(true);
+const moved = node.getWorldPosition(new THREE.Vector3()).toArray();
+
+// Поворот на 90 вокруг мировой Y: мировой поворот узла - ровно он
+const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+node.quaternion.copy(quatInParent(THREE, model, q));
+model.updateMatrixWorld(true);
+const wq = node.getWorldQuaternion(new THREE.Quaternion());
+const expect = q.clone().multiply(model.quaternion);
+console.log(JSON.stringify({ moved, angle: wq.angleTo(expect) }));
+"""
+
+
+def test_fit_moves_follow_the_screen_on_a_laid_model():
+    """Своя модель и гирлянда двигаются мышью за экраном, хотя модель
+    предмета во вьювере повёрнута"""
+    script = LAID_SCRIPT % {"three": json.dumps(THREE.as_uri()), "module": json.dumps(MODULE.as_uri())}
+    proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert [round(v, 6) for v in out["moved"]] == [1, 0, 0]
+    assert out["angle"] < 1e-6

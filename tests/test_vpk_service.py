@@ -1398,20 +1398,6 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
             self.assertIn("c_scattergun_shell2.vtf", vtf_names)  # доп. из texturegroup
             self.assertIn("c_scattergun_detail.vtf", vtf_names)  # карта detail
 
-    def test_texturegroup_extra_copies_main_on_request(self):
-        # «Скопировать главную» - материал ОБЯЗАН оказаться в моде, а не
-        # потеряться как ответ None
-        from src.shared.constants import EXTRA_TEX_USE_MAIN
-        with tempfile.TemporaryDirectory() as tmp:
-            ok, msg, vtf_names = self._run_build(
-                Path(tmp),
-                panel_extra_textures={},
-                texturegroup_extras=["c_scattergun_shell2"],
-                extra_texture_callback=lambda *a: EXTRA_TEX_USE_MAIN,
-            )
-            self.assertTrue(ok, msg)
-            self.assertIn("c_scattergun_shell2.vtf", vtf_names)
-
     def test_blu_team_texture_only_for_real_team(self):
         # Командная (BLU) текстура создаётся ТОЛЬКО при настоящей команде
         # (blu_is_team). У вариант-онли оружия (австралий) - НЕ создаётся
@@ -1725,7 +1711,7 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
 
     def test_snapshot_blu_columns_and_extra_answers(self):
         # Все ответы на вопросы доп. материалов и столбцов BLU: своя картинка,
-        # «из игры» (есть и нет в игре), «скопировать главную», пропуск;
+        # «из игры» (есть и нет в игре), «скопировать главную» у синего, пропуск;
         # общий столбец, вариант без RED-пары, нормаль у синего
         from src.services.texture_build.game_source import GameVtf
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL as GAME, EXTRA_TEX_USE_MAIN as MAIN
@@ -1735,7 +1721,7 @@ class BuildVpkCharacterizationTests(unittest.TestCase):
             base = Path(tmp)
             Image.new("RGB", (4, 4), color="green").save(base / "own.png")
             own = str(base / "own.png")
-            answers = {"c_scattergun_shell": own, "c_scattergun_scope": GAME, "c_scattergun_strap": MAIN,
+            answers = {"c_scattergun_shell": own, "c_scattergun_scope": GAME, "c_scattergun_strap": own,
                        "c_scattergun_skip": None, "c_scattergun_blue": GAME, "c_scattergun_shell_blue": own,
                        "c_scattergun_scope_blue": MAIN, "c_lens": own, "c_scattergun_more": MAIN,
                        "c_scattergun_more2": GAME}

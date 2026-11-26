@@ -105,3 +105,7 @@ Python 3.12 or newer is required. The development setup, project layout, tests a
 The source code is released under the [MIT license](LICENSE). Crowbar, VTFLib, meshoptimizer and three.js come bundled under their own licenses, listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 TF2 Mod Studio is a fan-made tool. It isn't affiliated with or endorsed by Valve. Team Fortress 2 and its assets belong to Valve Corporation, and no game files are distributed with the app.
+
+## How it was made
+
+I wrote this app together with Claude, Anthropic's AI assistant. The app itself has no AI inside. It doesn't generate textures, models, sounds or effects, and your files stay on your computer: the only things it fetches online are update checks and author links from this GitHub repository. Everything in your mod is what you bring in yourself or what comes from the game files.

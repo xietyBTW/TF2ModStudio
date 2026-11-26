@@ -48,7 +48,7 @@ class EyeVmtTests(unittest.TestCase):
                     patch.object(extra_materials, "_render_own_image", side_effect=render):
                 extra_materials.build_extra_material_textures(
                     ["eyeball_l"], "scout", None, slots, None,
-                    lambda *_: str(img), None, tg_rows=[], deferred=[])
+                    lambda *_: str(img), None)
             doc = vmt_parse.parse(slots.vmt("eyeball_l").read_text(encoding="utf-8"))
 
         self.assertEqual(doc.shader.lower(), "eyerefract")

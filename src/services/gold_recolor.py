@@ -29,8 +29,15 @@ def gold_palette(gold_png: str) -> np.ndarray:
     return np.stack([c.mean(axis=0) if len(c) else px.mean(axis=0) for c in chunks])
 
 
-def recolor(base_png: str, gold_png: str, out_png: str) -> str:
-    """Своя картинка в золото этого оружия -> out_png"""
+def recolor(base_png: str, gold_png: str, out_png: str,
+            keep_gold_alpha: bool = True) -> str:
+    """Своя картинка в золото этого оружия -> out_png
+
+    keep_gold_alpha: маска блеска берётся из игрового золота как есть - она
+    нарисована по деталям, а не по яркости, и по ступеням яркости выходила
+    другой (у обреза корреляция 0,39): золото там переставало блестеть и
+    темнело. На своей модели развёртка чужая - тогда маска по яркости
+    """
     palette = gold_palette(gold_png)
     with Image.open(base_png) as img:
         base = np.asarray(img.convert('RGBA'), np.float32)
@@ -43,5 +50,10 @@ def recolor(base_png: str, gold_png: str, out_png: str) -> str:
               + np.searchsorted(ordered, luma, 'right') - 1) / 2
     step = np.rint(middle * (_STEPS - 1) / max(1, len(luma) - 1)).astype(np.int64)
     out = palette[step].reshape(*shape, 4)
+    if keep_gold_alpha:
+        with Image.open(gold_png) as img:
+            mask = img.convert('RGBA').getchannel('A').resize(
+                (shape[1], shape[0]), Image.BILINEAR)
+        out[..., 3] = np.asarray(mask, np.float32)
     Image.fromarray(np.clip(out + 0.5, 0, 255).astype(np.uint8), 'RGBA').save(out_png)
     return out_png

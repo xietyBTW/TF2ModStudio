@@ -52,11 +52,3 @@ def answer_model(path: str = '') -> Dict[str, object]:
     """Ответ на `need_model`: свой SMD для сменной части либо пусто - игровая"""
     from src.app.session import session
     return session().building.answer_model(path)
-
-
-@endpoint
-def answer_texture(choice: str = 'game', path: str = '',
-                   apply_all: bool = False) -> Dict[str, object]:
-    """Ответ на need_texture: игровой оригинал, главная текстура или своя"""
-    from src.app.session import session
-    return session().building.answer_texture(choice, path, apply_all)

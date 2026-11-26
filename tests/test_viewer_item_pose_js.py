@@ -138,3 +138,92 @@ def test_eigen_solves_a_symmetric_matrix():
 
 def test_too_few_points_is_none():
     assert _run("return itemPose([1, 2, 3]);") is None
+
+
+def test_compact_item_lies_along_model_axes():
+    """Прерыватель: длина к высоте 1,1, иконка снята наискось. Ствол - ось,
+    ближайшая к перёду иконки, наклон иконки в кадр не идёт"""
+    out = _run("""
+      const pts = [];
+      for (let x = 0; x <= 11; x += 0.25) for (let y = 0; y <= 4; y += 0.25) pts.push([x, y, 0], [x, y, 3]);
+      for (let x = 7; x <= 11; x += 0.25) for (let y = -6; y < 0; y += 0.25) pts.push([x, y, 0], [x, y, 3]);
+      const c = Math.cos(0.45), s = Math.sin(0.45);
+      // Камера Source: view = forward x up
+      const pose = itemPose(pts.flat(), { forward: [c, -s, 0], up: [s, c, 0], view: [0, 0, 1] });
+      return [pose.right, pose.up, pose.back];
+    """)
+    assert out == [[-1, 0, 0], [0, 1, 0], [0, 0, -1]]
+
+
+def test_icon_camera_picks_the_side_of_a_wide_gun():
+    """Scatterdrum: барабан торчит вбок, бок шире высоты. Иконка смотрит
+    сбоку - туда и смотрим, а не сверху"""
+    out = _run("""
+      const pts = [];
+      for (let y = 0; y <= 30; y += 0.5) for (const x of [-1, 1]) for (const z of [-2, 2]) pts.push([x, y, z]);
+      for (let a = 0; a < 6.28; a += 0.2) pts.push([6 * Math.cos(a), 12, 4 * Math.sin(a)]);
+      const pose = itemPose(pts.flat(), { forward: [-0.5, 0.86, 0], up: [-0.3, -0.2, -0.93],
+                                          view: [-0.8, -0.48, 0.36] });
+      return [pose.right, pose.up, pose.back];
+    """)
+    assert out[0] == [0, -1, 0]           # ствол (+Y) влево
+    assert out[1] == [0, 0, -1]           # верх как у руки
+    assert out[2] == [1, 0, 0]            # смотрим сбоку, с той стороны, что иконка
+
+
+def test_thin_side_faces_viewer_when_icon_is_between_axes():
+    """Лопата: камера иконки смотрит между двумя осями (одна на все лопаты
+    Valve). Видна лопасть, а не ребро"""
+    out = _run("""
+      const pts = [];
+      for (let z = 0; z <= 36; z += 0.5) for (const x of [-0.5, 0.5]) for (const y of [-0.5, 0.5]) pts.push([x, y, z]);
+      for (let z = 26; z <= 36; z += 0.5) for (let x = -6; x <= 6; x += 0.5) pts.push([x, -1.5, z], [x, 1.5, z]);
+      const pose = itemPose(pts.flat(), { forward: [-0.49, 0.22, -0.85], up: [0.56, -0.66, -0.5],
+                                          view: [-0.67, -0.72, 0.2] });
+      return pose.back;
+    """)
+    assert [abs(v) for v in out] == [0, 1, 0]   # смотрим вдоль тонкой оси Y
+
+
+def test_model_askew_to_its_axes_falls_back_to_shape():
+    """Мод, сделанный наискось к осям: привязка к осям положила бы его косо,
+    ось берёт форма"""
+    out = _run("""
+      const pts = [];
+      for (let x = 0; x <= 10; x += 0.1) for (let y = 0; y <= 1; y += 0.1) pts.push([x, y, 0], [x, y, 0.4]);
+      const pose = itemPose(place(pts, U, V, W), { forward: U, up: V });
+      return { right: dot(pose.right, U) };
+    """)
+    assert out["right"] < -0.99
+
+
+def test_long_item_ignores_icon_tilt():
+    """Ружьё на иконке наклонено, но в кадре его длина остаётся горизонтальной"""
+    out = _run("""
+      const pts = [];
+      for (let x = 0; x <= 10; x += 0.1) for (let y = 0; y <= 1; y += 0.1) pts.push([x, y, 0]);
+      for (let x = 1; x <= 3; x += 0.1) for (let y = -4; y < 0; y += 0.1) pts.push([x, y, 0]);
+      for (const p of pts.slice()) pts.push([p[0], p[1], 0.4]);
+      // Камера иконки повёрнута на 20 градусов в плоскости модели
+      const c = Math.cos(0.35), s = Math.sin(0.35);
+      const pose = itemPose(pts.flat(), { forward: [c, s, 0], up: [-s, c, 0], view: [0, 0, -1] });
+      return { right: pose.right[0], up: pose.up[1] };
+    """)
+    assert out["right"] < -0.99         # ствол строго влево, без наклона иконки
+    assert out["up"] > 0.99
+
+
+def test_flat_item_askew_to_axes_shows_its_face():
+    """Chargin' Targe: в позе из анимации щит повёрнут к осям модели на 45°.
+    Привязка к осям показала бы его косо - кадр смотрит на лицо щита"""
+    out = _run("""
+      const pts = [];
+      const n = [Math.SQRT1_2, -Math.SQRT1_2, 0];          // нормаль щита наискось
+      const a = [Math.SQRT1_2, Math.SQRT1_2, 0], b = [0, 0, 1];
+      for (let r = 0; r <= 9; r += 0.5) for (let t = 0; t < 6.28; t += 0.2)
+        for (const h of [-0.4, 0.4]) pts.push([0, 1, 2].map((k) =>
+          r * Math.cos(t) * a[k] + r * Math.sin(t) * b[k] + h * n[k]));
+      const pose = itemPose(pts.flat(), { forward: [0, 1, 0], up: [0, 0, -1], view: [-1, 0, 0] });
+      return Math.abs(dot(pose.back, n));
+    """)
+    assert out > 0.99

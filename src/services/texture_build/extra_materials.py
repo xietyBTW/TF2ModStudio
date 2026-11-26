@@ -6,12 +6,10 @@
 
 import os
 from pathlib import Path
-from typing import Optional
 
-from src.services import qc_skin_parser
 from src.services.texture_service import TextureService
 from src.services.vmt_service import VMTService
-from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
+from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
 from src.shared.file_utils import copy_file_safe
 from src.shared.logging_config import get_logger
 
@@ -22,17 +20,13 @@ logger = get_logger(__name__)
 
 def build_extra_material_textures(
     extra_materials, weapon_key, ctx, slots, tex,
-    extra_texture_callback, animated_fps,
-    tg_rows=None, deferred: Optional[list] = None, strip_paints: bool = False,
+    extra_texture_callback, animated_fps, strip_paints: bool = False,
 ) -> dict:
     """
     Создаёт VTF+VMT для доп. материалов модели (столбцы 1+ RED-строки
     $texturegroup: shell, scope и т.п.). На каждый материал спрашивает
     текстуру через callback, либо берёт оригинал из игры, либо пропускает
 
-    tg_rows - строки $texturegroup: по ним «Скопировать главную» у
-    варианта из «Прочего» находит его пару (qc_skin_parser.variant_base).
-    Пару, которой ещё нет, вариант ждёт в `deferred` (finish_variant_copies).
     strip_paints - шапка без «Красок из игры» (см. game_source.apply_edited_vmt)
 
     Returns:
@@ -55,20 +49,12 @@ def build_extra_material_textures(
         # которых в главном VMT нет
         orig_vmt = game_source.find_original_vmt(name, ctx, slots)
         editable = is_editable_material(name)
-        # Частота анимации VMT: своей картинки, иначе пары варианта, иначе главной
+        # Частота анимации VMT: своей картинки, иначе главной
         fps = animated_fps
         if img == EXTRA_TEX_USE_GAME_ORIGINAL:
             if _from_game(name, orig_vmt, editable, slots, ctx, strip_paints, vtf_paths):
                 continue
             # Совсем ничего - НЕ подменяем текстурой тела
-            img = None
-        elif img == EXTRA_TEX_USE_MAIN:
-            if tex is not None:
-                tex.wait_vtfs()
-            handled, fps = _copy_main(name, orig_vmt, editable, tg_rows, deferred,
-                                      slots, ctx, strip_paints, animated_fps)
-            if handled:
-                continue
             img = None
 
         if img and not os.path.isfile(img):
@@ -159,39 +145,6 @@ def _from_game(name, orig_vmt, editable, slots, ctx, strip_paints, vtf_paths) ->
     return False
 
 
-def _copy_main(name, orig_vmt, editable, tg_rows, deferred, slots, ctx,
-               strip_paints, animated_fps):
-    """
-    «Скопировать главную»: тот же VTF, что у основного материала
-
-    Returns:
-        (записан ли материал целиком, частота анимации его VMT)
-    """
-    main_vtf = slots.vmt_path.with_suffix('.vtf')
-    fps = animated_fps
-    if not editable:
-        # Убер/зомби из «Прочего»: «главная» для него - материал,
-        # чьё место он занимает в скине (у головы - голова, у
-        # синего - синий). Текстура тела на голове в убере была
-        # кашей, а глазам копировать нечего: они игровые. Пара
-        # осталась игровой - вариант тоже игровой
-        pair = qc_skin_parser.variant_base(tg_rows or [], name)
-        if pair and deferred is not None and not slots.vtf(pair).exists():
-            # Пару ещё не собрали (синюю пишет BLU-цикл позже)
-            deferred.append((name, pair))
-            return True, None
-        main_vtf = slots.own_vtf(pair) if pair else None
-        if main_vtf is None:
-            write_variant_original(slots.vmt(name), orig_vmt, name, slots, ctx, strip_paints)
-            return True, None
-        # Анимированная пара листается и в варианте - со своей частотой
-        fps = game_source.basetexture_fps(slots.vmt(pair))
-    if main_vtf.exists():
-        copy_file_safe(main_vtf, slots.vtf(name))
-        logger.info(f"Копия главной текстуры: {name}.vtf ← {main_vtf.name}")
-    return False, fps
-
-
 def _render_own_image(name, img, slots, tex):
     """Своя картинка доп. материала -> его VTF с настройками его карточки
     (разрешение, формат, флаги). Возвращает частоту анимации или None"""
@@ -227,30 +180,6 @@ def write_variant_original(vmt_path, orig_vmt, name, slots=None, ctx=None,
     if slots is not None:
         game_source.apply_edited_vmt(
             name, vmt_path, orig_vmt, slots, False, strip_paints)
-
-
-def finish_variant_copies(deferred, ctx, slots, strip_paints: bool = False) -> None:
-    """«Скопировать главную» у вариантов, чья пара собирается позже их
-    (синяя - в BLU-цикле): копия её VTF под родным VMT варианта. Пара
-    осталась игровой (нет своей картинки) - вариант тоже игровой"""
-    for name, pair in deferred or ():
-        orig = game_source.find_original_vmt(name, ctx, slots)
-        source = slots.own_vtf(pair)
-        if source is None:
-            write_variant_original(
-                slots.vmt(name), orig, name, slots, ctx, strip_paints)
-            continue
-        copy_file_safe(source, slots.vtf(name))
-        game_source.write_material_vmt(
-            slots.vmt(name), Path(orig) if orig else slots.vmt_path,
-            slots.patched_cdmaterials_path, name)
-        game_source.apply_edited_vmt(
-            name, slots.vmt(name), orig, slots, True, strip_paints)
-        # Анимированная пара (гифка) листается и в убере
-        fps = game_source.basetexture_fps(slots.vmt(pair))
-        if fps:
-            VMTService.enable_animated_basetexture(str(slots.vmt(name)), fps)
-        logger.info(f"Копия текстуры пары: {name}.vtf ← {source.name}")
 
 
 def follow_shared_textures(ctx, slots) -> None:

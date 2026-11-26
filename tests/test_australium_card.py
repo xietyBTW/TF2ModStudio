@@ -57,10 +57,11 @@ class VariantCardTests(unittest.TestCase):
         self.assertEqual(self.t.variant_display_texture(), self.mine)
         self.assertEqual(self.s.scene_textures()[SINGLE_TEX_KEY], self.mine)
 
-    def test_no_stand_in_for_a_vpk_mod(self):
+    def test_vpk_mod_shows_its_variant_in_place_of_the_main(self):
+        """Австралий модели мода (mod_variant) - так же на месте главной"""
         self.t.australium_active = True
         self.s.custom_vpk_mode = True
-        self.assertEqual(self.s.card_materials(), [SINGLE_TEX_KEY])
+        self.assertEqual(self.s.card_materials(), ['c_scattergun_gold'])
 
     def test_variant_texture_goes_to_the_build_as_its_own_material(self):
         self.t.set_texture('c_scattergun_gold', self.mine)

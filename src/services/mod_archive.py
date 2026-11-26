@@ -19,6 +19,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import List
 
@@ -33,6 +34,9 @@ MOD_DIRS = frozenset({'materials', 'models', 'sound', 'particles', 'scripts',
 MAX_FILES = 50_000
 MAX_TOTAL = 4 * 1024 ** 3
 MAX_RATIO = 200
+#: Больше одним VPK не упаковать: vpk.exe на папке tf/download в 2,3 ГБ упал
+#: «Out of memory», успев скопировать её всю во временную папку
+MAX_PACK = 2 * 1024 ** 3
 #: Том многотомного VPK (`имя_000.vpk`): открывается через его `_dir.vpk`
 _CHUNK = re.compile(r'_\d{3}\.vpk$', re.IGNORECASE)
 
@@ -93,6 +97,16 @@ def extract_zip(archive: Path, dest: Path) -> None:
         packed = sum(i.compress_size for i in infos) or 1
         if total > MAX_TOTAL or total / packed > MAX_RATIO:
             raise ModArchiveError('Архив распаковывается в слишком большой объём')
+        # Папку мода упаковать в один VPK не выйдет - отказ до распаковки,
+        # а не после неё. Готовые VPK внутри копируются как есть, им можно
+        loose: Counter = Counter()
+        for info in infos:
+            root = _mod_root_of(info.filename)
+            if root is not None and not info.filename.lower().endswith('.vpk'):
+                loose[root] += info.file_size
+        for root, size in loose.items():
+            if size >= MAX_PACK:
+                raise _too_big(root.rsplit('/', 1)[-1] or archive.stem, size)
         base = dest.resolve()
         for info in infos:
             target = (dest / info.filename).resolve()
@@ -101,6 +115,22 @@ def extract_zip(archive: Path, dest: Path) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, open(target, 'wb') as out:
                 shutil.copyfileobj(src, out)
+
+
+def _mod_root_of(name: str):
+    """Папка мода по пути в архиве: всё до первой materials, models...
+    None - файл не из папки мода (readme, картинки)"""
+    parts = name.replace('\\', '/').split('/')
+    for i, part in enumerate(parts[:-1]):
+        if part.lower() in MOD_DIRS:
+            return '/'.join(parts[:i])
+    return None
+
+
+def _too_big(name: str, size: int) -> ModArchiveError:
+    return ModArchiveError(
+        f'Папка «{name}» весит {size / 1024 ** 3:.1f} ГБ, а в один VPK '
+        f'помещается меньше 2 ГБ. Выберите папку самого мода')
 
 
 def _vpks_in(root: Path) -> List[Path]:
@@ -158,6 +188,10 @@ def _pack(folder: Path, name: str, work: Path, language: str) -> Path:
     from src.services.packaging_service import PackagingService
 
     safe = re.sub(r'[^\w.-]+', '_', name).strip('._') or 'mod'
+    size = sum(p.stat().st_size for p in folder.rglob('*')
+               if p.is_file() and p.suffix.lower() != '.vpk')
+    if size >= MAX_PACK:
+        raise _too_big(name, size)
     copy = work / 'pack' / safe
     if copy.exists():
         shutil.rmtree(copy)

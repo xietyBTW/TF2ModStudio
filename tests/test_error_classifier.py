@@ -48,3 +48,12 @@ class ErrorClassifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_missing_game_model_is_explained():
+    """Раньше это была «непредвиденная ошибка» без совета"""
+    from src.shared.error_classifier import classify
+    title, text = classify("Модель не найдена в VPK", "ru")
+    assert "не найдена в игре" in title and "целостность" in text
+    title, text = classify("Model not found in VPK", "en")
+    assert "wasn't found" in title and "integrity" in text

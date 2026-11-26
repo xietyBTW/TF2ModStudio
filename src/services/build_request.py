@@ -34,6 +34,8 @@ class BuildRequest:
     blu_mode: str = "none"
     blu_image_path: Optional[str] = None
     custom_vpk_source_path: Optional[str] = None
+    #: Австралий модели мода (mod_variant.detect) - чем дописать золото
+    mod_variant: Optional[dict] = None
     hat_mdl_path: Optional[str] = None
     hat_apply_game_paints: bool = True
     # Снять покраску игры ($blendtintbybasealpha и её прокси) со всех VMT

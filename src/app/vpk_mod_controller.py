@@ -33,6 +33,7 @@ class VpkModController:
     weapon = Signal(str, str)
     sky = Signal(object)               # {грань: карточка} - мод неба
     links = Signal()                   # меши и команды мода связаны с карточками
+    variant = Signal(str, str)         # австралий модели мода: (png, карточка)
     failed = Signal(str)
 
     def __init__(self, session: PreviewSession):
@@ -82,6 +83,7 @@ class VpkModController:
         w.unused.connect(self._on_unused)
         w.replaced.connect(self._on_replaced)
         w.links_ready.connect(self._on_links)
+        w.variant_ready.connect(self._on_variant)
         w.game_meshes_ready.connect(self._on_game_meshes)
         w.failed.connect(self.failed.emit)
         self._worker = w
@@ -120,6 +122,30 @@ class VpkModController:
                 if old:
                     blu[r] = old
         self.links.emit()
+
+    def _on_variant(self, info: dict) -> None:
+        """
+        У модели мода есть австралий: кнопка варианта и его карточка
+
+        Карточка золота уходит из ряда, как синяя: её показывает
+        переключатель на месте главной. Синее золото - синяя сторона той же
+        карточки, как у игрового Посла. Карточка остаётся, только если её
+        рисует и обычный вид (меш с ней в обычной строке)
+        """
+        s, t = self._session, self._session.textures
+        card, blue = info['card'], info.get('blue') or {}
+        t.australium_frame, t.australium_mat_name = info['png'], card
+        t.australium_blu_frame = blue.get('png')
+        t.australium_blu_mat = blue.get('card')
+        t.variant_meshes = set(info.get('meshes') or ())
+        s.custom_vpk_variant = dict(info)
+        drawn = set(t.mod_mesh_cards.values())
+        gone = {n for n in (card, blue.get('card')) if n and n not in drawn}
+        if gone & set(t.material_names):
+            t.material_names = [n for n in t.material_names if n not in gone]
+            if t.main_material in gone:
+                t.main_material = t.material_names[0] if t.material_names else None
+        self.variant.emit(info['png'], card)
 
     def _on_unused(self) -> None:
         self._session.custom_vpk_unused = True

@@ -15,7 +15,7 @@ import { dockFx } from './buildfx.js';
 import { ask } from './ask.js';
 import { showReport } from './diagnostics.js';
 import { showFailure } from './fail.js';
-import { askForTexture, askForModel } from './build.js';
+import { askForModel } from './build.js';
 import { showCpModel } from './particles/points.js';
 import { refreshWarpaint, recheckWarpaint } from './warpaint.js';
 import { t } from './i18n.js';
@@ -23,6 +23,7 @@ import {
   refreshView,
   showModel,
   rememberModel,
+  lastModel,
   showMaterials,
   showSkins,
   showFirstPerson,
@@ -211,6 +212,11 @@ api.subscribe((ev) => {
       const tab = document.querySelector('.half__bar--scenes [data-scene="fp"]');
       if (tab) tab.hidden = !ev.ready;
       if (ev.ready) say(`Мод заменяет ${ev.key} - можно посмотреть в руках`);
+      // Модель мода уже в кадре, а как её положить, стало ясно только сейчас
+      if (ev.pose && lastModel && !lastModel.pose && (work.dataset.scene || 'item') === 'item') {
+        rememberModel({ ...lastModel, pose: ev.pose });
+        showModel(lastModel);
+      }
       // По оружию ищутся War Paint и гирлянды: спрошенные при показе модели
       // ответы были ещё без него
       recheckWarpaint();
@@ -229,13 +235,6 @@ api.subscribe((ev) => {
       setBusy(true);
       if (ev.sub) dockFx.detail(ev.text);
       else dockFx.step(ev.percent, ev.text);
-      break;
-
-    // Сборке не хватило текстуры для материала: она СТОИТ и ждёт ответа.
-    // Пока человек думает, воркер держит паузу (300 секунд), поэтому вопрос
-    // задаём сразу и не копим
-    case 'need_texture':
-      askForTexture(ev.material);
       break;
 
     // Своя модель подменила основную, а у оружия есть сменная часть

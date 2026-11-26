@@ -128,7 +128,9 @@ export async function replaceModel() {
       ],
       ok: 'Загрузить',
     });
-    if (!answer) return;
+    // Отменили - модель не менялась (вопрос задан до конвертации), а
+    // подпись «Конвертация…» иначе висела в кадре без конца
+    if (!answer) { say(''); return; }
     keep = answer === 'keep';
   }
 

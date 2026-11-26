@@ -18,7 +18,8 @@ from src.services.base_worker import Signal
 
 from src.data.item_kinds import kind_of
 from src.services import model_decompile_service
-from src.services import qc_skin_parser, smd_locator, team_twins, texture_locator, vmt_tint
+from src.services import (item_pose_hint, qc_skin_parser, smd_locator, team_twins,
+                          texture_locator, vmt_tint)
 from src.services.base_worker import BaseWorker
 from src.services.game_vpk_reader import GameVpkReader
 from src.services.material_resolver import MaterialResolver
@@ -273,8 +274,9 @@ class Preview3DWorker(BaseWorker):
                 source_zup=_source_zup,
                 pose_smd_path=_pose_smd,
                 # Косметика в MDL лежит как автору было удобно, игра ставит её
-                # bonemerge на голову игрока - и превью так же
-                on_player=self.kind.worn_on_player,
+                # bonemerge на игрока - и превью так же
+                on_player=item_pose_hint.shown_on_player(
+                    self.kind, self._decomp_dir and self._model(self._decomp_dir)),
                 late_smd_paths=self._late_smds,
             )
             if not ok:

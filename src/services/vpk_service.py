@@ -153,6 +153,7 @@ class VPKService:
                     material_maps=r.material_maps,
                     material_settings=r.material_settings,
                     strip_game_tint=r.strip_game_tint,
+                    mod_variant=r.mod_variant,
                 )
                 emit_progress(100 if success else 0,
                               t.get('build_completed', 'Build completed') if success
@@ -907,12 +908,9 @@ class VPKService:
         # Создаем текстуры для дополнительных материалов модели (shell, scope и т.д.)
         # Это столбцы 1+ из RED строки $texturegroup
         # Словарь для хранения путей к VTF дополнительных материалов (нужно для BLU копий)
-        _variant_copies: list = []
         extra_materials_vtf_paths = VpkTextureBuilder._build_extra_material_textures(
             plan.extra_materials, weapon_key, ctx, slots, tex_ctx,
-            extra_texture_callback, animated_fps,
-            tg_rows=plan.tg_structure.get('all_rows') or [], deferred=_variant_copies,
-            strip_paints=strip_paints,
+            extra_texture_callback, animated_fps, strip_paints=strip_paints,
         )
 
         # Блэклист/служебные материалы: запись ОРИГИНАЛЬНОГО VMT
@@ -944,9 +942,6 @@ class VPKService:
         )
         tex_ctx.jobs.finish()
         tex_ctx.jobs = None   # дальше шаги читают VTF сразу после записи
-        # Синие убер/зомби с «Скопировать главную»: их пара появилась только сейчас
-        VpkTextureBuilder._finish_variant_copies(
-            _variant_copies, ctx, slots, strip_paints=strip_paints)
         # Синие VMT записаны копиями красного - командный вид игры возвращается
         # одним проходом, до зеркал: те копируют уже готовые VMT
         from src.services.texture_build.team_look import inherit_pairs

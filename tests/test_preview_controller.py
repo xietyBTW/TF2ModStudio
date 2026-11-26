@@ -313,6 +313,7 @@ class _SceneWorker(BaseWorker):
     game_meshes_ready = Signal(object)
     materials_ready = Signal(object)
     skins_ready = Signal(object)
+    variant_ready = Signal(object)
     weapon_found = Signal(str, str)
     sky_ready = Signal(object)
     unused = Signal()

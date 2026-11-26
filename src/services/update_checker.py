@@ -45,7 +45,9 @@ from src.shared.paths import install_dir, is_frozen
 
 logger = get_logger(__name__)
 
-_API_URL = (
+#: TF2SG_UPDATE_API подменяет адрес релиза, например на file:///…/release.json:
+#: так обновление проверяется на собранном установщике до выкладки на GitHub
+_API_URL = os.environ.get("TF2SG_UPDATE_API") or (
     f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 )
 _TIMEOUT = 8  # секунды
@@ -202,6 +204,7 @@ def download_update(
     expected_size: int = 0,
     progress: Optional[Callable[[int, int], None]] = None,
     cancelled: Optional[Callable[[], bool]] = None,
+    language: str = "ru",
 ) -> Path:
     """
     Качает установщик во временную папку и проверяет SHA-256
@@ -235,13 +238,13 @@ def download_update(
                 if progress is not None:
                     progress(done, total)
 
+    from src.data.translations import tr
     if expected_size and done != expected_size:
         part.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"размер не совпал: {done} вместо {expected_size}")
+        raise RuntimeError(tr(language, 'update_bad_size', done=done, expected=expected_size))
     if expected_digest and sha.hexdigest() != expected_digest:
         part.unlink(missing_ok=True)
-        raise RuntimeError("контрольная сумма не совпала - файл повреждён")
+        raise RuntimeError(tr(language, 'update_bad_checksum'))
 
     os.replace(part, dest)
     logger.info(f"Установщик скачан: {dest} ({done} байт)")

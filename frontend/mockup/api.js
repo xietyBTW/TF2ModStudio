@@ -181,8 +181,8 @@ export const fixParticleLint = (system = '') => call('fix_particle_lint', { syst
 export const saveParticles = (path) => call('save_particles', { path });
 export const exportParticlesVpk = (name) => call('export_particles_vpk', { name });
 export const particleSize = () => call('particle_size');
-export const particleReference = (path = '', for_ai = false) =>
-  call('particle_param_reference', { path, for_ai });
+export const particleReference = (path = '', for_ai = false, supported = null) =>
+  call('particle_param_reference', { path, for_ai, supported });
 export const hatFilters   = () => call('hat_filters');
 export const setHatFilter = (tag, hidden) => call('set_hat_filter', { tag, hidden });
 export const modeFor      = (category, subtype = null) => call('mode_for', { category, subtype });
@@ -211,7 +211,7 @@ export const setBodygroup = (name, variant) => call('set_bodygroup', { name, var
 export const addToStyle   = (material) => call('add_to_style', { material });
 export const dropFromStyle = (material) => call('drop_from_style', { material });
 export const toggleMisc   = (on = null) => call('toggle_misc', { on });
-export const forceTeam    = () => call('force_team');
+export const forceTeam    = (on = true) => call('force_team', { on });
 
 // Инструменты: извлечение оригиналов и объединение модов. Результат приходит
 // событием (tool_done / extract_files), ответ говорит лишь о запуске
@@ -409,8 +409,6 @@ export const cancelBuild  = () => call('cancel_build');
 export const vtfEstimate  = (size, format, flags) =>
   call('vtf_estimate', { size, format, flags });
 export const answerModel   = (path = '') => call('answer_model', { path });
-export const answerTexture = (choice, path = '', apply_all = false) =>
-  call('answer_texture', { choice, path, apply_all });
 export const exportUv     = (size = 1024) => call('export_uv', { size });
 export const paintkits    = () => call('paintkits', { lang: lang() });
 export const classIcons   = () => call('class_icons');

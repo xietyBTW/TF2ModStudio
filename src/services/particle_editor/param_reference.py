@@ -13,9 +13,9 @@ from src.services.particle_editor.pcf_format import MODULE_GROUPS
 _REFERENCE_TEXT = {
     "ru": {
         "about": "Справочник параметров частиц TF2. Соберите набор в "
-                 "поле clipboard_format.example и вставьте его в "
-                 "редактор через Ctrl+V (правый клик по дереву свойств "
-                 "→ Вставить параметры).",
+                 "форме clipboard_format.example, скопируйте его, "
+                 "выберите систему в редакторе частиц и нажмите Ctrl+V "
+                 "(или правый клик по системе → Вставить параметры).",
         "notes": [
             "Имена параметров и модулей писать точно как здесь.",
             "example - значение из реального эффекта игры, а не "
@@ -41,13 +41,14 @@ _REFERENCE_TEXT = {
                      "modules - модули по группам: список пар "
                      "[имя модуля, {параметры}]. full=true "
                      "означает полный набор - при вставке "
-                     "редактор спросит, заменять ли существующие.",
+                     "редактор спросит, как вставить: поверх, только "
+                     "недостающее или заменить систему целиком.",
     },
     "en": {
         "about": "TF2 particle parameter reference. Build a set in the "
-                 "shape of clipboard_format.example and paste it into "
-                 "the editor with Ctrl+V (right-click the property tree "
-                 "→ Paste parameters).",
+                 "shape of clipboard_format.example, copy it, select a "
+                 "system in the particle editor and press Ctrl+V (or "
+                 "right-click the system → Paste parameters).",
         "notes": [
             "Write parameter and module names exactly as they are here.",
             "example is a value from a real game effect, not the engine "
@@ -72,7 +73,9 @@ _REFERENCE_TEXT = {
                      "the system's own parameters, modules are modules "
                      "by group: a list of [module name, {parameters}] "
                      "pairs. full=true means a complete set: on paste "
-                     "the editor asks whether to replace existing ones.",
+                     "the editor asks how to paste it: over the existing "
+                     "ones, only what is missing, or replacing the whole "
+                     "system.",
     },
 }
 
@@ -86,8 +89,8 @@ _AI_INSTRUCTIONS = [
     "- Reply with a single JSON object shaped exactly like "
     "clipboard_format.example in this file, and nothing else around it: "
     "no markdown fences, no comments inside the JSON.",
-    "- The user copies it and presses Ctrl+V in the editor, so it must "
-    "be valid JSON on its own.",
+    "- The user copies it, selects a system in the particle editor and "
+    "presses Ctrl+V, so it must be valid JSON on its own.",
     "- After the JSON, in a separate message part, add a short "
     "plain-language summary of what each module does, so the user can "
     "tweak it.",
@@ -95,11 +98,13 @@ _AI_INSTRUCTIONS = [
     "HARD RULES",
     "- Use ONLY module names and parameter names that appear in "
     "'modules' and 'system_params' of this file. Never invent or guess "
-    "names: unknown ones are silently ignored on paste.",
+    "names: the editor flags unknown ones on paste, and the game ignores "
+    "them, so the effect silently loses that part.",
     "- One preset describes ONE particle system. Child systems cannot "
     "be created through the clipboard. If the effect needs layers, say "
-    "so and tell the user to add a layer in the editor and paste a "
-    "second preset into it.",
+    "so and give one preset per layer: the user right-clicks the system "
+    "→ Child systems → New layer for your own image, selects the new "
+    "layer and pastes the next preset into it.",
     "- Include only parameters you actually want to change. Anything "
     "omitted keeps the engine default, which is usually what you want.",
     "- A visible system needs at least one emitter and one renderer "
@@ -117,8 +122,9 @@ _AI_INSTRUCTIONS = [
     "the system already has stays untouched. Use this to adjust or "
     "extend an existing effect.",
     "    \"full\": true - a COMPLETE effect. On paste the editor asks "
-    "the user whether to keep the existing parameters or replace the "
-    "system entirely, so send a self-sufficient set: emitter, position "
+    "the user how to paste it (over the existing parameters, only what "
+    "is missing, or replacing the whole system), so send a "
+    "self-sufficient set: emitter, position "
     "and lifetime initializers, renderer, material, and anything else "
     "the effect needs to work on its own.",
     "",
@@ -129,9 +135,10 @@ _AI_INSTRUCTIONS = [
     "- 'material' is the particle texture. Pick one from "
     "available_materials.paths in this file - those are the materials "
     "that actually ship with the game, so the effect works without the "
-    "user supplying any texture. Copy the path exactly, including "
-    "backslashes (escape them in JSON: \"effects\\\\crit.vmt\"). Never "
-    "invent a material path: a missing material means no texture in game.",
+    "user supplying any texture. Copy the path exactly as listed, with "
+    "the same slashes and extension (a backslash must be escaped in JSON: "
+    "\"effects\\\\crit.vmt\"). Never invent a material path: a missing "
+    "material means no texture in game.",
     "- 'example' values in this file come from real game effects. They "
     "are not engine defaults; use them as a sanity check for scale.",
     "- ANIMATED textures (a material whose .vtf is a multi-frame sprite "

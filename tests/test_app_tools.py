@@ -474,34 +474,16 @@ class MissingTextureAnswerTests(unittest.TestCase):
         s.building._answer_texture_request = s.answers.append
         return s
 
-    def test_apply_all_main_is_remembered(self):
-        """«Взять главную» не сливается с «ответа не было»: иначе сборка
-        молча выкинула бы материал из мода"""
-        from src.shared.constants import EXTRA_TEX_USE_MAIN
-        s = self._session()
-        s.building.answer_texture('main', apply_all=True)
-        s.building._on_build_needs_texture('medic_gatsby_blue', 'medic_gatsby')
-        self.assertEqual(s.answers, [EXTRA_TEX_USE_MAIN] * 2)   # ответ и авто-ответ
-
-    def test_cancelled_build_is_not_asked_again(self):
-        """После отмены воркер до проверки отмены доходит только через ответ -
-        каждый следующий материал показывал бы окно заново"""
+    def test_untouched_card_stays_stock_without_asking(self):
+        """Нетронутая карточка - игровая, как в превью: окно посреди сборки
+        путало, а его отмена бросала сборку"""
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL
         s = self._session()
-        s.building._build = MagicMock(isInterruptionRequested=lambda: True)
         events = []
         s._put = lambda name, **payload: events.append(name)
-        s.building._on_build_needs_texture('medic_gatsby_blue', 'medic_gatsby')
+        s.building._on_build_needs_texture('medic_gatsby_head', 'medic_gatsby')
         self.assertEqual(events, [])
         self.assertEqual(s.answers, [EXTRA_TEX_USE_GAME_ORIGINAL])
-
-    def test_without_apply_all_the_question_reaches_the_page(self):
-        s = self._session()
-        s.building.answer_texture('game')
-        events = []
-        s._put = lambda name, **payload: events.append(name)
-        s.building._on_build_needs_texture('medic_gatsby_blue', 'medic_gatsby')
-        self.assertEqual(events, ['need_texture'])
 
     def test_uploaded_texture_answers_itself(self):
         """Уже положенная текстура не должна ничего спрашивать"""

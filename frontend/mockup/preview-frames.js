@@ -62,7 +62,7 @@ export function frameNode(name) {
   // Своя картинка снимается тем же путём, что и кладётся: куда именно
   // (команда, стиль), решает домен
   const reset = async () => applyView(await api.setTexture(name, null));
-  // Карточка австралия: обычная текстура в золото этого оружия
+  // Карточка австралия: своя картинка (на ней или обычная) в золото этого оружия
   const gild = async () => {
     const res = await api.gildFromBase();
     if (res.error) sayError(res.error); else applyView(res);

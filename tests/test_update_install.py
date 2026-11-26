@@ -61,6 +61,13 @@ class DownloadTests(unittest.TestCase):
         self.assertFalse((self.out_dir / uc.ASSET_NAME).exists())
         self.assertFalse((self.out_dir / (uc.ASSET_NAME + ".part")).exists())
 
+    def test_error_speaks_the_interface_language(self):
+        """Текст ошибки уходит прямо в подпись под кнопкой «Обновить»"""
+        with patch("urllib.request.urlopen", return_value=_FakeResponse(PAYLOAD)):
+            with self.assertRaisesRegex(RuntimeError, "checksum"):
+                uc.download_update("http://example/setup.exe",
+                                   expected_digest="0" * 64, language="en")
+
     def test_short_download_rejected(self):
         """Оборвалась закачка - размер не сойдётся, ставить нельзя"""
         with patch("urllib.request.urlopen", return_value=_FakeResponse(PAYLOAD)):
@@ -236,7 +243,7 @@ class ProgressTests(unittest.TestCase):
         released = threading.Event()
 
         def slow_download(url, expected_digest='', expected_size=0,
-                          progress=None, cancelled=None):
+                          progress=None, cancelled=None, language='ru'):
             progress(500, 1000)
             released.wait(5)
             progress(1000, 1000)

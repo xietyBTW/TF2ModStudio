@@ -52,6 +52,8 @@ class PreviewVpkModWorker(BaseWorker):
     game_meshes_ready = Signal(object)
     materials_ready = Signal(object)  # [material_name] - имена материалов модели (для наложения по мешам)
     skins_ready = Signal(object)      # skin_info - стили модели (skinfamilies) из QC
+    #: Австралий модели мода (mod_variant.detect) - кнопка варианта и его карточка
+    variant_ready = Signal(object)
     #: (ключ оружия, reference SMD мода, своя ли в моде модель) - что именно
     #: мод заменяет. По этому приложение показывает мод в руках: скелет и
     #: анимации берутся у игрового оружия, геометрия - из мода. Приходит
@@ -392,6 +394,14 @@ class PreviewVpkModWorker(BaseWorker):
                             self.skins_ready.emit(info)
             except Exception as exc:
                 logger.debug(f"VPK мод: стили не определены: {exc}")
+
+            if decomp_dir and not self.isInterruptionRequested():
+                from src.services import mod_variant
+                variant = mod_variant.detect(decomp_dir, self._cards, self._vmt_texts,
+                                             self.textures_vpk_path, self.misc_vpk_path or '',
+                                             self._preview_dir, own_model=from_mod)
+                if variant:
+                    self.variant_ready.emit(variant)
 
         except Exception as exc:
             logger.error(f"PreviewVpkModWorker: {exc}", exc_info=True)

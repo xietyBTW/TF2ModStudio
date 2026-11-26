@@ -86,6 +86,8 @@ const TILT = 0.3;
 //: стоковых обрезе, ракетомёте, ноже и снайперке: ствол и остриё в +Y, прицел
 //: снайперки в -Z
 const HAND_FRAME = { forward: [0, 1, 0], up: [0, 0, -1] };
+//: Оси уже положенной модели: ствол влево, верх вверх, бок к зрителю
+const LAID = { right: [1, 0, 0], up: [0, 1, 0], back: [0, 0, 1] };
 //: Сколько вершин хватает, чтобы понять форму и рамку
 const MAX_POINTS = 40000;
 //: Поле вокруг модели, доля размера
@@ -106,7 +108,10 @@ export function snapshotModel(THREE, renderer, scene, root,
   const points = _worldPoints(THREE, root, keep);
   if (!points.length) return null;
 
-  const camera = _fitCamera(THREE, points, lay ? itemPose(points, HAND_FRAME) : null);
+  // Вьювер уже положил оружие (viewer_lay.js) - его оси и есть оси кадра:
+  // подсказка руки к повёрнутой модели не подходит, а обложка совпадёт с экраном
+  const pose = !lay ? null : root.userData.laid ? LAID : itemPose(points, HAND_FRAME);
+  const camera = _fitCamera(THREE, points, pose);
   const restore = _isolate(THREE, renderer, scene, root, keep);
   const target = new THREE.WebGLRenderTarget(size, size, {
     type: THREE.FloatType, samples: 4,

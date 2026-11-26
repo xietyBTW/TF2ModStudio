@@ -1291,3 +1291,23 @@ def test_sprite_render_mode_counts_as_additive():
     solid = vmt_parse.parse('"Sprite" { "$basetexture" "x" "$spriterendermode" 4 }')
     plain = vmt_parse.parse('"Spritecard" { "$basetexture" "x" "$additive" 1 }')
     assert _is_additive(add) and _is_additive(plain) and not _is_additive(solid)
+
+
+def test_editor_reference_gets_preview_list_and_all_game_materials(tmp_path, monkeypatch):
+    """Задание для ИИ ссылается на previewed и на список текстур игры: без
+    списка модулей превью и при материалах одного открытого файла оно врало"""
+    from src.app import particles_editor
+    from src.app.session import AppSession
+
+    s = AppSession()
+    monkeypatch.setattr(s, "tf2_paths", lambda: {"root": "D:/fake"})
+    monkeypatch.setattr(particles_editor, "_in_export", lambda p: tmp_path / p)
+    monkeypatch.setattr(ParticleEditorService, "game_effect_materials",
+                        classmethod(lambda cls, root: ["effects/a.vmt"]))
+    seen = {}
+    monkeypatch.setattr(ParticleEditorService, "param_reference",
+                        classmethod(lambda cls, root, **kw: seen.update(kw) or {}))
+    res = s.particles.particle_param_reference("", True, "en", {"renderers": ["x"]})
+    assert "path" in res
+    assert seen["supported"] == {"renderers": ["x"]}
+    assert seen["materials"] == ["effects/a.vmt"]

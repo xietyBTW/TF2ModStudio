@@ -32,7 +32,7 @@ export async function cardMenu(e, name, hasOwn, hasImage = true, onReset = null,
                                onGild = null) {
   if (!hasImage) { e.preventDefault(); return; }
   const items = exportItems(hasOwn);
-  if (onGild) items.push({ label: 'Сделать золотым из обычной', value: 'gild' });
+  if (onGild) items.push({ label: 'Сделать золотым', value: 'gild' });
   if (onReset) items.push({ label: 'Вернуть игровую текстуру', value: 'reset' });
   const chosen = await contextMenu(e, items);
   if (chosen === 'gild') { onGild(); return; }

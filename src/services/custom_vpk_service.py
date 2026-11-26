@@ -6,12 +6,10 @@
 
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple
 
-from src.shared.constants import ToolPaths, ToolTimeouts
 from src.data.translations import tr
 from src.shared.logging_config import get_logger
 from src.shared.team_names import is_blue, is_blue_of
@@ -28,125 +26,44 @@ class CustomVPKService:
     @staticmethod
     def extract_vpk_to_dir(vpk_path: str, output_dir: str) -> bool:
         """
-        Распаковывает VPK файл в указанную директорию
+        Распаковывает VPK библиотекой vpk
 
-        Порядок попыток:
-          1. vpk.exe x <file>     - официальный инструмент Valve (самый надёжный)
-          2. Python-библиотека vpk - резервный метод
+        vpk.exe здесь не годится: на модах из библиотеки он распаковывал ноль
+        файлов. Мод чужой, поэтому имя с «..» или диском отказывает весь архив
+        до первой записи
         """
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        outside = CustomVPKService._entry_outside(vpk_path, str(output_path))
-        if outside is not None:
-            logger.error(f"VPK не распакован: путь внутри ведёт наружу ({outside!r})")
-            return False
-
-        # Попытка 1: vpk.exe x
-        if CustomVPKService._extract_via_vpk_exe(vpk_path, str(output_path)):
-            return True
-
-        logger.warning("vpk.exe недоступен или не смог распаковать - пробуем Python-библиотеку vpk")
-
-        # Попытка 2: Python-библиотека vpk
-        return CustomVPKService._extract_via_python_vpk(vpk_path, str(output_path))
-
-    @staticmethod
-    def _entry_outside(vpk_path: str, output_dir: str) -> Optional[str]:
-        """
-        Имя файла в архиве, которое легло бы вне папки распаковки
-
-        Мод чужой, а vpk.exe пишет файлы по именам из архива как есть: «..»
-        или диск в имени положили бы файл куда угодно. Архив, который
-        библиотека не читает, уходит в vpk.exe без этой проверки
-        """
-        try:
-            import vpk as vpklib
-            names = list(vpklib.open(vpk_path))
-        except Exception as exc:  # noqa: BLE001 - не читается, проверять нечего
-            logger.debug(f"Имена в {vpk_path} не прочитаны: {exc}")
-            return None
-        for name in names:
-            try:
-                sanitize_path(name.replace('\\', '/'), output_dir)
-            except ValueError:
-                return name
-        return None
-
-    @staticmethod
-    def _extract_via_vpk_exe(vpk_path: str, output_dir: str) -> bool:
-        """Распаковка через tools/VPK/vpk.exe с ключом 'x'"""
-        vpk_tool = str(ToolPaths.get_vpk_tool())
-        if not Path(vpk_tool).exists():
-            logger.debug(f"vpk.exe не найден по пути {vpk_tool}")
-            return False
-
-        try:
-            result = subprocess.run(
-                [vpk_tool, "x", os.path.abspath(vpk_path)],
-                cwd=output_dir,
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=ToolTimeouts.VPK,
-            )
-            stdout = (result.stdout or "").strip()
-            stderr = (result.stderr or "").strip()
-            if stdout:
-                logger.debug(f"vpk.exe x stdout: {stdout[:500]}")
-            if stderr:
-                logger.debug(f"vpk.exe x stderr: {stderr[:500]}")
-
-            if result.returncode != 0:
-                logger.warning(f"vpk.exe x завершился с кодом {result.returncode}")
-                return False
-
-            # Проверяем, что реально что-то распаковалось
-            extracted = list(Path(output_dir).rglob('*'))
-            file_count = sum(1 for p in extracted if p.is_file())
-            logger.info(f"vpk.exe x: распаковано {file_count} файлов в {output_dir}")
-            return file_count > 0
-
-        except Exception as e:
-            logger.warning(f"vpk.exe x упал с исключением: {e}")
-            return False
-
-    @staticmethod
-    def _extract_via_python_vpk(vpk_path: str, output_dir: str) -> bool:
-        """Распаковка через Python-библиотеку vpk (резервный метод)"""
-        try:
-            import vpk as vpklib
-        except ImportError:
-            logger.error("Библиотека vpk не установлена. Установите через: pip install vpk")
-            return False
+        import vpk as vpklib
 
         try:
             pak = vpklib.open(vpk_path)
-        except Exception as e:
+            names = list(pak)
+        except Exception as e:  # noqa: BLE001 - битый или не VPK
             logger.error(f"Не удалось открыть VPK {vpk_path}: {e}", exc_info=True)
             return False
 
         output_path = Path(output_dir)
-        extracted = 0
-        errors = 0
-        try:
-            for file_path in pak:
-                try:
-                    entry = pak[file_path]
-                    data = entry.read()
-                    # Нормализуем разделители (VPK всегда хранит с '/')
-                    dest = Path(sanitize_path(file_path.replace('\\', '/'), str(output_path)))
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(data)
-                    extracted += 1
-                except Exception as e:
-                    logger.warning(f"Пропуск файла {file_path}: {e}")
-                    errors += 1
-            logger.info(f"Python-vpk: распаковано {extracted} файлов (пропущено {errors}) в {output_dir}")
-            return extracted > 0
-        except Exception as e:
-            logger.error(f"Ошибка при распаковке VPK (Python-vpk): {e}", exc_info=True)
-            return False
+        output_path.mkdir(parents=True, exist_ok=True)
+        targets = []
+        for name in names:
+            try:
+                targets.append((name, Path(sanitize_path(name.replace('\\', '/'),
+                                                         str(output_path)))))
+            except ValueError:
+                logger.error(f"VPK не распакован: путь внутри ведёт наружу ({name!r})")
+                return False
+
+        extracted = errors = 0
+        for name, dest in targets:
+            try:
+                data = pak[name].read()
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                extracted += 1
+            except Exception as e:  # noqa: BLE001 - один битый файл не валит мод
+                logger.warning(f"Пропуск файла {name}: {e}")
+                errors += 1
+        logger.info(f"VPK: распаковано {extracted} файлов (пропущено {errors}) в {output_dir}")
+        return extracted > 0
 
     @classmethod
     def discover_textures(cls, extract_dir: str) -> List[Dict]:
@@ -269,6 +186,7 @@ class CustomVPKService:
         material_maps: Optional[Dict] = None,
         material_settings: Optional[Dict] = None,
         strip_game_tint: bool = False,
+        mod_variant: Optional[Dict] = None,
     ) -> Tuple[bool, str]:
         """
         Полный пайплайн редактирования кастомного мода:
@@ -282,7 +200,9 @@ class CustomVPKService:
         6. Перепаковать в VPK и скопировать в export_folder
 
         material_maps / material_settings - по именам карточек (= имена
-        текстур мода), как у модельной сборки
+        текстур мода), как у модельной сборки. mod_variant - австралий модели
+        мода (mod_variant.detect): своё золото, которого в моде нет, сборка
+        дописывает
         """
         from src.services.texture_service import TextureService
         from src.shared.file_utils import copy_file_safe
@@ -314,7 +234,7 @@ class CustomVPKService:
 
             # Мод из одних ссылок на игровые текстуры (так собирает и это
             # приложение) пересобирается ради гирлянд: им свои VTF не нужны
-            if not all_textures and not decor_builds:
+            if not all_textures and not decor_builds and not mod_variant:
                 return False, tr(language, 'mod_vpk_no_textures')
 
             # Правки VMT из редактора - до рельефа и карт: те дописываются
@@ -408,6 +328,18 @@ class CustomVPKService:
                 if user_img and os.path.isfile(user_img):
                     todo.append((user_img, tex, _stock(tex)))
                 # Если пользователь не выбрал - оригинальный VTF остаётся без изменений
+
+            # Австралий, которого у мода нет: VMT золота и VTF - только со
+            # своей картинкой, без неё игра берёт своё золото
+            from src.services import mod_variant as variant
+            for side in (mod_variant, (mod_variant or {}).get('blue')):
+                gold = variant.missing_texture(vpkroot_dir, side, all_textures) if side else None
+                gold_img = (extra_texture_callback(gold['name'], "custom")
+                            if gold and extra_texture_callback else None)
+                if gold and gold_img and os.path.isfile(gold_img):
+                    variant.write_vmt(gold)
+                    all_textures.append(gold)
+                    todo.append((gold_img, gold, None))
 
             # Текстуры независимы, а сжатие отпускает GIL: жмём одновременно
             if todo:

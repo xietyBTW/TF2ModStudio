@@ -20,11 +20,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-#: «Ответа ещё нет» для запомненного выбора текстуры. Отдельный сторож, потому
-#: что сам ответ бывает None - это «взять главную текстуру»
-_NO_CHOICE = object()
-
-
 def _part_kind(smd_name: str) -> str:
     """Что за сменная часть - по имени SMD. Пусто, если по имени не понять"""
     name = (smd_name or '').lower()
@@ -50,11 +45,9 @@ class BuildEditor:
         #: Воркер сборки. Один на сеанс: две сборки разом писали бы в одну
         #: временную папку
         self._build = None
-        #: Запомненный ответ «применить ко всем» для недостающих текстур.
-        #: Живёт одну сборку: следующая спрашивает заново. Сравнивать с None
-        #: нельзя - None и есть один из ответов («взять главную»), поэтому
-        #: «ответа ещё нет» помечено своим сторожем
-        self._texture_choice = _NO_CHOICE
+        #: Снимок текстур предмета на старт сборки (_start_build): по нему
+        #: отвечаем сборке. Нет снимка - живое состояние сеанса
+        self._answers = None
 
     def build(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -244,6 +237,8 @@ class BuildEditor:
             # Показанный мод из VPK: сборка берёт его содержимое за основу
             custom_vpk_source_path=(self._host._vpk_mod_path
                                     if self._host.preview.custom_vpk_mode else None),
+            mod_variant=(self._host.preview.custom_vpk_variant
+                         if self._host.preview.custom_vpk_mode else None),
             # Шапка: путь к её MDL обязателен - по режиму «hat» модель не
             # найти, и сборка падала на поиске «оружия hat»
             hat_mdl_path=hat_primary,
@@ -336,7 +331,13 @@ class BuildEditor:
         # `error` не слушаем: за ним всегда идёт `finished` (BaseWorker.run),
         # и одна ошибка приходила странице дважды
         self._build = w
-        self._texture_choice = _NO_CHOICE   # «ко всем» - на одну сборку
+        # Ответы сборке - по предмету, который собирается. Тело класса идёт
+        # полминуты, и открытый за это время другой предмет отдавал ей свои
+        # картинки: синие голова и медали солдата получали текстуру маски
+        import contextlib
+        import copy
+        with getattr(self._host, '_lock', None) or contextlib.nullcontext():
+            self._answers = copy.deepcopy(self._host.preview.textures)
         w.start()
         return {'started': True, 'filename': request.filename}
 
@@ -544,42 +545,23 @@ class BuildEditor:
                   if cls.lower() in wanted}
         return picked or dict(self._host._hat_models)
 
-    # Недостающая текстура: вопрос страницы, ответ человека
+    # Недостающая текстура: ответ по карточкам, без вопроса человеку
 
     def _on_build_needs_texture(self, material: str, weapon_key: str,
                                 remaining: int = 0) -> None:
         """
         Сборке не хватает текстуры для материала
 
-        Порядок тот же, что в окне: уже загруженная текстура отвечает сама,
-        запомненный выбор «ко всем» отвечает следом, и только потом спрашиваем
-        человека. Пока он думает, воркер стоит на UiRequest
+        Отвечает карточка: своя картинка или выбор синей («Как красная»).
+        Нетронутая карточка - игровая, как её и показывает превью. Раньше тут
+        всплывало окно посреди сборки, и его отмена бросала сборку
         """
         from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN
-        # Своя картинка и выбор синей под кнопкой BLU решены заранее - тем же
-        # слотом, что видно на карточке (PreviewTextureState.build_answer)
-        answer = self._host.preview.textures.build_answer(material)
-        if answer:
-            special = answer in (EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN)
-            self._answer_texture_request(
-                answer if special else self._host.parts.baked_path(answer))
-            return
-        # Мод из VPK: текстура материала уже лежит в моде и видна на
-        # карточке - своей нет, значит остаётся его. Спрашивать не о чем
-        if self._host.preview.custom_vpk_mode:
-            self._answer_texture_request(EXTRA_TEX_USE_GAME_ORIGINAL)
-            return
-        # Сборку отменяют: воркер дойдёт до проверки отмены только после
-        # ответа, а каждый новый вопрос до неё показывал бы окно заново
-        build = self._build
-        if build is not None and build.isInterruptionRequested():
-            self._answer_texture_request(EXTRA_TEX_USE_GAME_ORIGINAL)
-            return
-        if self._texture_choice is not _NO_CHOICE:
-            self._answer_texture_request(self._texture_choice)
-            return
-        self._host._put('need_texture', material=material, weapon_key=weapon_key,
-                  remaining=int(remaining))
+        state = self._answers if self._answers is not None else self._host.preview.textures
+        answer = state.build_answer(material)
+        if answer and answer not in (EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN):
+            answer = self._host.parts.baked_path(answer)
+        self._answer_texture_request(answer or EXTRA_TEX_USE_GAME_ORIGINAL)
 
     # Сменная часть модели: вопрос страницы, ответ человека
 
@@ -613,29 +595,3 @@ class BuildEditor:
         build = self._build
         if build is not None and hasattr(build, 'set_extra_texture_result'):
             build.set_extra_texture_result(value)
-
-    def answer_texture(self, choice: str = 'game', path: str = '',
-                       apply_all: bool = False) -> Dict[str, Any]:
-        """
-        Ответ страницы на ``need_texture``
-
-        Три варианта - те же, что в диалоге приложения:
-          • ``game`` - оставить игровой оригинал (в мод не попадёт);
-          • ``main`` - скопировать главную текстуру на этот материал;
-          • ``file`` - своя картинка по пути ``path``
-        """
-        from src.shared.constants import (
-            EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN,
-        )
-
-        if choice == 'file' and path:
-            value = path
-        elif choice == 'main':
-            value = EXTRA_TEX_USE_MAIN
-        else:
-            value = EXTRA_TEX_USE_GAME_ORIGINAL
-
-        if apply_all:
-            self._texture_choice = value
-        self._answer_texture_request(value)
-        return {'answered': choice}

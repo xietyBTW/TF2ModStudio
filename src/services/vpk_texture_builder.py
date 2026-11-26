@@ -39,7 +39,6 @@ class VpkTextureBuilder:
     _write_blacklisted_materials = staticmethod(extra_materials.write_blacklisted_materials)
     _write_shoulder_iso_materials = staticmethod(extra_materials.write_shoulder_iso_materials)
     _build_blu_row_textures = staticmethod(blu_rows.build_blu_row_textures)
-    _finish_variant_copies = staticmethod(extra_materials.finish_variant_copies)
     _build_secondary_textures = staticmethod(panel_extras.build_secondary_textures)
     _follow_shared_textures = staticmethod(extra_materials.follow_shared_textures)
 

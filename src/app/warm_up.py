@@ -29,7 +29,7 @@ def start(host: "AppSession") -> None:
 def _warm(host: "AppSession") -> None:
     try:
         from src.config.app_config import AppConfig
-        from src.data import stock_loadout, viewmodel_anims
+        from src.data import paintkit_defs, stock_loadout, viewmodel_anims
         from src.data.hats_parser import parse_hats
         from src.data.item_skin_styles import item_skin_styles
         from src.services import decompile_cache, game_texture_index
@@ -56,6 +56,11 @@ def _warm(host: "AppSession") -> None:
         # гирлянды, и первый выбор предмета не должен ждать разбора восьми
         # мегабайт
         lambda: viewmodel_anims.anim_index(root),
+        # Список War Paint страница просит вместе с первой моделью: разбор
+        # proto_defs 1,3 с чистого Python, и под GIL с ним альбом 2D ждал
+        # view_state до 2 с, когда 3D уже показывал текстуру
+        lambda: (paintkit_defs.generic_kits(root, lang),
+                 paintkit_defs.decorated_kits(root, lang)),
         # Каталоги разделов: без них первый вход в звуки ждал 0,7 с, в шапки
         # и частицы - по 0,15
         lambda: host.sounds.sounds(lang=lang),

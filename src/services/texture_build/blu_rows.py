@@ -188,6 +188,14 @@ def _team_column(blu_tex_name, red_tex_name, col_idx, ask, ctx, slots, tex,
                 if img == EXTRA_TEX_USE_GAME_ORIGINAL else None)
     if game_tex and game_tex.rsplit('/', 1)[-1].lower() != blu_tex_name.lower():
         game_tex = None
+    # Синей в игре нет вовсе («сделать командным»): игровой вид синих - это
+    # оригинал красного материала, ссылкой на него. Копия красного VTF из
+    # мода давала синим картинку человека, хотя выбрано «Игровая»
+    if (img == EXTRA_TEX_USE_GAME_ORIGINAL and not game_tex
+            and not game_source.find_original_vtf(
+                blu_tex_name, slots.original_cdmaterials_paths,
+                slots.tf2_textures_vpk, slots.tf2_misc_vpk)):
+        game_tex = game_source.game_texture(red_tex_name, ctx, slots)
     if game_tex:
         logger.info(f"BLU {blu_tex_name}: текстура из игры по ссылке {game_tex}")
         img = None

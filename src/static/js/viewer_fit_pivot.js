@@ -41,6 +41,25 @@ export function fitFromNode(THREE, node) {
            offset: [r1(p.x), r1(-p.z), r1(p.y)] };
 }
 
+/**
+ * Сдвиг в мировых осях -> сдвиг в осях родителя узла
+ *
+ * Узел подгонки (своя модель, гирлянда) вложен в модель предмета, а её
+ * вьювер кладёт набок (js/viewer_lay.js): мировой сдвиг мыши без поворота
+ * родителя уводил бы узел не туда
+ */
+export function vectorInParent(THREE, parent, v) {
+  const q = parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+  const s = parent.getWorldScale(new THREE.Vector3()).x || 1;
+  return v.clone().applyQuaternion(q).divideScalar(s);
+}
+
+/** Поворот вокруг мировой оси -> тот же поворот в осях родителя узла */
+export function quatInParent(THREE, parent, q) {
+  const p = parent.getWorldQuaternion(new THREE.Quaternion());
+  return p.clone().invert().multiply(q).multiply(p);
+}
+
 export function createFitPivot(THREE) {
   const object = new THREE.Object3D();
   object.name = 'fit-pivot';

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Dict
 
-from src.app.api._common import endpoint, logger
+from src.app.api._common import _lang, endpoint, logger
 
 
 # Обновление приложения
@@ -98,6 +98,7 @@ def _run_update(info: Dict[str, object]) -> None:
             expected_digest=str(info.get('asset_digest') or ''),
             expected_size=int(info.get('asset_size') or 0),
             progress=tick,
+            language=_lang(),
         )
         with _update_lock:
             _update_run['state'] = 'launching'
@@ -120,15 +121,25 @@ def _quit_soon(delay: float = 2.0) -> None:
 
     Пауза - чтобы страница успела опросить `update_progress`, увидеть 'done' и
     показать «закрываюсь». Опрос идёт раз в полсекунды, поэтому две.
-    Выходим через os._exit: обычный выход ждёт потоки воркеров, а установщик
-    ждать не будет, и любой задержавшийся поток означал бы занятый .exe
+    Обычный выход ждёт потоки воркеров, а установщик ждать не будет. os._exit
+    тоже не годится: он зовёт ExitProcess, а тот ждёт выгрузки DLL .NET и
+    WebView2 и в песочнице висел на них минутами, держа мьютекс, - установщик
+    показывал «приложение запущено». TerminateProcess снимает процесс сразу
     """
     import logging
     import os
+    import sys
     import threading
 
     def bye() -> None:
         logging.shutdown()
+        if sys.platform == 'win32':
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL('kernel32')
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+            kernel32.TerminateProcess(kernel32.GetCurrentProcess(), 0)
         os._exit(0)
 
     threading.Timer(delay, bye).start()

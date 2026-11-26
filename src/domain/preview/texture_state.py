@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from src.shared.file_utils import existing_file
+from src.domain.preview import variant_card
 from src.shared.constants import EXTRA_TEX_USE_GAME_ORIGINAL, EXTRA_TEX_USE_MAIN, Team
 from src.shared.skin_rows import SkinTable
 from src.shared.team_names import BLUE_SUFFIXES, team_form
@@ -159,6 +160,8 @@ class PreviewTextureState:
     #: `c_ambassador_blue_gold`. Пусто - золото у команд одно (клеймор)
     australium_blu_frame: Optional[str] = None
     australium_blu_mat: Optional[str] = None
+    #: Меши мода, чьи материалы строка австралия заменяет (mod_variant)
+    variant_meshes: Set[str] = field(default_factory=set)
     #: Откуда картинка карточки австралия, пока своей нет: {команда: 'game' |
     #: 'base' (как обычная) | 'red' (у синего золота - как красное)}. Нет
     #: записи - по умолчанию (variant_choice)
@@ -306,6 +309,23 @@ class PreviewTextureState:
             return self.is_team_material(mat)
         return self.pair_styles() and self.table.team_differs(red, self.col_of(mat))
 
+    def _blue_card(self, mat: str, red: int) -> bool:
+        """
+        Есть ли у карточки своя синяя сторона с выбором «Игровая / Как
+        красная / своя»
+
+        Игровая командная - своя пара. Под «сделать командным» - каждая
+        обычная карточка базы: синюю строку синтезирует сборка. Правило одно,
+        иначе сделанная командной синяя молча повторяла красную, а выбора на
+        карточке не было. Австралий и гирлянда командой не делятся
+        """
+        if is_decor(mat):
+            return False
+        if self._paired(mat, red):
+            return True
+        return (self.force_team and not red and not self.is_team_material(mat)
+                and not self.is_variant_material(mat))
+
     @staticmethod
     def _like_key(mat: str, red: int) -> str:
         """Ключ «Как красная» в `blu_like_red`: у базы - сама карточка"""
@@ -341,14 +361,9 @@ class PreviewTextureState:
         if team != Team.BLU or is_decor(mat):
             return None
         red = self.red_row(row)
-        if not self.force_team and self._paired(mat, red):
+        if self._blue_card(mat, red):
             like = self._like_key(mat, red) in self.blu_like_red
             return blue_image(None, like and self.shown_at(mat, red, Team.RED), like)
-        # Под «сделать командным» синяя без своей наследует красную. Обратно
-        # нет: красная, подхватившая синюю, читалась как «загрузка на BLU
-        # заменила и красную»
-        if self.force_team and not row and not self.is_team_material(mat):
-            return _existing(self.textures.get(Team.RED, {}).get(mat))
         return None
 
     def shown_at(self, mat: str, row: int, team: str) -> Optional[str]:
@@ -404,14 +419,14 @@ class PreviewTextureState:
 
     def blu_choices(self) -> Dict[str, str]:
         """{карточка: 'game' | 'red' | 'own'} у карточек со своей синей в
-        открытом слоте, пока показана синяя команда. Под «сделать командным»
-        синие свои по определению, выбора там нет"""
-        if self.active_team != Team.BLU or self.force_team:
+        открытом слоте, пока показана синяя команда - и у игровой командной,
+        и у сделанной командной (_blue_card)"""
+        if self.active_team != Team.BLU:
             return {}
         red, blue = self.row_for(Team.RED), self.row_for(Team.BLU)
         out: Dict[str, str] = {}
         for mat in self.material_names:
-            if is_decor(mat) or not self._paired(mat, red):
+            if not self._blue_card(mat, red):
                 continue
             own = self.own_at(mat, blue, Team.BLU)
             out[mat] = ('own' if own and own != self.own_at(mat, red, Team.RED)
@@ -426,7 +441,7 @@ class PreviewTextureState:
         """«Игровая» или «Как красная» у синей карточки открытого слота. Своя
         синяя при этом снимается: выбор и есть отказ от неё"""
         red, blue = self.row_for(Team.RED), self.row_for(Team.BLU)
-        if not self._paired(mat, red):
+        if not self._blue_card(mat, red):
             return
         if blue:
             self.skin_overrides.get(blue, {}).pop(mat, None)
@@ -469,7 +484,9 @@ class PreviewTextureState:
         if table.col_of(material) >= 0:
             return self._card_at(table.col_of(material)), 0, Team.RED
         base, blue = team_form(material)
-        if blue and self.blu_frames:
+        # Синее имя, которое синтезирует «сделать командным», - синяя сторона
+        # карточки: без слота сборка не знала выбора и спрашивала человека
+        if blue and (self.blu_frames or self.force_team):
             card = next((m for m in self.material_names if m.lower() == base), None)
             if card or self.material_names == [SINGLE_TEX_KEY]:
                 return self._card_of(card or base), 0, Team.BLU
@@ -486,7 +503,7 @@ class PreviewTextureState:
         if not slot:
             return None
         card, row, team = slot
-        if team == Team.BLU and not self.force_team:
+        if team == Team.BLU:
             if row and self.inherited(card, row, team):
                 return self.inherited(card, row, team)
             like = self._like_key(card, self.red_row(row)) in self.blu_like_red
@@ -631,6 +648,8 @@ class PreviewTextureState:
         совпадение имён без учёта регистра
         """
         card = self.mod_mesh_cards.get((mat or '').lower())
+        if variant_card.on_mesh(self, mat, card):
+            return self.variant_display_texture()
         if card:
             # В стиле - своя текстура стиля (оригиналы стиля ключуются
             # материалом, правки - карточкой), иначе база: у стиля меняются
@@ -659,6 +678,7 @@ class PreviewTextureState:
             path = _existing(blu.get(red_card))
             if path and path != red.get(red_card):
                 out[blu_card] = path
+        out.update(variant_card.mod_blue_upload(self))
         return out
 
     # Что уходит в сборку
@@ -690,6 +710,9 @@ class PreviewTextureState:
         и BLU не смешиваются. Синее имя без пары (`{mat}_blue` у «сделать
         командным») берёт синюю под базой, затем главную BLU
         """
+        side = variant_card.side_of(self, mat)    # золото - под карточкой австралия
+        if side:
+            return self.own_at(self.australium_mat_name, 0, side)
         slot = self.build_slot(mat)
         if slot and (slot[1] or self.blu_name_map or mat.lower() in self.blu_twins):
             return self.own_at(*slot)
@@ -701,9 +724,10 @@ class PreviewTextureState:
             return own
         own = _existing(_lookup_ci(self.textures.get(Team.BLU, {}), base))
         plain = mat.lower().endswith(BLUE_SUFFIXES)
-        # force_team без своей синей -> «как RED»: set_texture её не дублирует,
-        # и без этого синий скин остался бы без VTF, фиолетовым в игре
-        if not own and self.force_team:
+        # force_team без своей синей: красная - только если выбрано «Как
+        # красная», иначе синяя игровая (build_answer) - как у игровой команды
+        if (not own and self.force_team
+                and self._like_key(self._card_of(base), 0) in self.blu_like_red):
             own = _existing(_lookup_ci(self.textures.get(Team.RED, {}), base))
         # Главная синяя - только самому синему скину, не праздничному `_blue_xmas`
         return own or (self.blu_main() if plain else None)
@@ -840,6 +864,7 @@ class PreviewTextureState:
         self.australium_mat_name = None
         self.australium_blu_frame = None
         self.australium_blu_mat = None
+        self.variant_meshes = set()
 
     # Режим «Скайбокс»
 

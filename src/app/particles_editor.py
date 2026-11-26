@@ -98,6 +98,27 @@ def obj_shift(obj_text: str, delta) -> str:
     return '\n'.join(out) + '\n'
 
 
+def _touched(entry: Optional[dict], fix: Optional[tuple]) -> bool:
+    """
+    Задела ли правка человека то, о чём находка
+
+    entry - запись diff_systems по системе находки, нет её - находка общая
+    (конфликт файлов) или система своя. fix - адрес атрибута находки
+    (группа или None, номер модуля, имя, тип); без адреса судим по системе
+    """
+    if entry is None or entry['status'] == 'added':
+        return True
+    if entry['status'] == 'same':
+        return False
+    if fix is None:
+        return True
+    group, idx, name = fix[0], fix[1], fix[2]
+    if group is None:
+        return name in entry['attrs']
+    mod = entry['modules'].get(group, {}).get(idx)
+    return bool(mod) and (mod['status'] == 'added' or name in mod['attrs'])
+
+
 def tree_nodes(tree: list) -> List[dict]:
     """Иерархия систем в вид для каталога: {key, name, kids}
 
@@ -1208,8 +1229,7 @@ class ParticlesEditor:
         if (err := self._need_pcf()):
             return err
         t = TRANSLATIONS.get(lang, TRANSLATIONS['en'])
-        systems = self.pcf.systems_json()
-        found = particle_lint.check_systems(systems, system or '')
+        found = self._lint_own(system)
         paths = self._host.tf2_paths()
         if 'error' not in paths:
             found += particle_lint.check_game_conflicts(
@@ -1221,15 +1241,34 @@ class ParticlesEditor:
             'fixable': f.fixable,
         } for f in found]}
 
+    def _lint_own(self, system: str = '') -> list:
+        """
+        Находки только по тому, что человек поменял против игры
+
+        Игровой огонь горящего игрока скрыт от его же камеры нарочно, а
+        правило «эффект скрыт от камеры» звало это поломкой, и первая кнопка
+        окна «Исправить и собрать» показывала бы человеку свой огонь перед
+        глазами. Атрибут со значением как у Valve не проверяем, даже если в
+        системе правлено другое
+        """
+        from src.services import particle_lint
+
+        systems = self.pcf.systems_json()
+        found = particle_lint.check_systems(systems, system or '')
+        stock = self._stock_systems()
+        if stock is None:
+            return found
+        from src.services.particle_editor_service import diff_systems
+        diff = diff_systems(systems, stock)
+        return [f for f in found if _touched(diff.get(f.system), f.fix)]
+
     def fix_particle_lint(self, system: str = '') -> Dict[str, Any]:
         """Чинит всё, что чинится автоматически, и говорит сколько"""
         from src.services import particle_lint
 
         if (err := self._need_pcf()):
             return err
-        found = particle_lint.check_systems(self.pcf.systems_json(),
-                                            system or '')
-        fixed = particle_lint.apply_fixes(self.pcf, found)
+        fixed = particle_lint.apply_fixes(self.pcf, self._lint_own(system))
         return self._particles_state(fixed=fixed)
 
     def save_particles(self, path: str) -> Dict[str, Any]:
@@ -1276,7 +1315,8 @@ class ParticlesEditor:
         }
 
     def particle_param_reference(self, path: str = '', for_ai: bool = False,
-                                 lang: str = 'en') -> Dict[str, Any]:
+                                 lang: str = 'en',
+                                 supported: Optional[dict] = None) -> Dict[str, Any]:
         """
         Справочник параметров модулей в JSON
 
@@ -1290,11 +1330,15 @@ class ParticlesEditor:
 
         paths = self._host.tf2_paths()
         root = '' if 'error' in paths else paths['root']
-        materials = (self.pcf.material_names()
-                     if self.pcf is not None else None)
         try:
+            # Материалы всех эффектов игры, а не одного открытого файла:
+            # задание велит ИИ брать текстуру только из этого списка
+            materials = (ParticleEditorService.game_effect_materials(root)
+                         if root else None) or (
+                self.pcf.material_names() if self.pcf is not None else None)
             data = ParticleEditorService.param_reference(
-                root, with_prompt=bool(for_ai), materials=materials, lang=lang)
+                root, supported=supported, with_prompt=bool(for_ai),
+                materials=materials, lang=lang)
             dest = _in_export(path or 'particle_params.json')
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(json.dumps(data, ensure_ascii=False, indent=2),

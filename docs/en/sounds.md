@@ -37,7 +37,7 @@ The list loads in portions of about four hundred rows; **Show N more** at the bo
 
 ## Listening
 
-**Play** on a row plays its sound in the player at the bottom of the page, with a seek bar, time and **Volume**. After you replace a sound, **Play** plays your file and **Original** plays the game's one, so you can compare.
+**Play** appears in place of the row icon when you hover the row, and a double click on the row does the same. The sound plays in the player at the bottom of the page, with a seek bar, time and **Volume**. A second click on a playing row pauses it. After you replace a sound, **Play** plays your file and **Original** plays the game's one, so you can compare.
 
 Clicking the file name in a row expands it. You see each file of the entry with its own buttons, and above them how the game plays the entry: channel, sound level, volume and pitch. Your file will be played with the same settings.
 

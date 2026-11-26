@@ -40,6 +40,10 @@ const search = q('.wpanel__search');
 const listEl = q('.wpanel__list');
 const wearsEl = q('.wpanel__wears');
 const wearName = q('.wpanel__wearname');
+const teamField = q('.wpanel__teamfield');
+const teamsEl = q('.wpanel__teams');
+const teamNote = q('.wpanel__teamnote');
+const makeTeam = q('.wpanel__maketeam');
 const seedEl = q('.wpanel__seed');
 const statusEl = q('.wpanel__status');
 const applyBtn = q('.wpanel__apply');
@@ -176,6 +180,7 @@ async function open() {
   search.value = '';
   renderList();
   renderWears();
+  renderTeams();
   await loadMaterials();
   status(chosen ? '' : 'Выберите раскраску - она сразу покажется на модели.');
   search.focus();
@@ -269,7 +274,7 @@ function row(kit) {
     const tag = document.createElement('span');
     tag.className = 'wpanel__tag';
     tag.textContent = 'RED / BLU';
-    tag.title = t('Узор у команд разный - собирается под текущую команду');
+    tag.title = t('Узор у команд разный');
     b.appendChild(tag);
   }
   b.addEventListener('click', () => select(kit));
@@ -456,8 +461,58 @@ function select(kit) {
   renderMaterials();
   syncParts();
   renderWears();
+  renderTeams();
   schedulePreview();
 }
+
+/**
+ * Команда предпросмотра - у любого War Paint, если у предмета есть команды:
+ * узор бывает общим, но остальная пушка у BLU своя, и место переключателя не
+ * прыгает от раскраски к раскраске. Наносится War Paint всё равно на обе:
+ * здесь выбирают, какую показать. Переключает ту же команду, что и заголовок
+ *
+ * У оружия без команд (дробовик) War Paint со своим синим узором в игре всё
+ * равно разный у команд: игра подставляет узор в ту же текстуру на ходу. В
+ * моде текстура одна, и ляжет выбранный узор на обе - разными их делает
+ * только «Сделать командным» (в мод уходит и модель), поэтому он предложен
+ * здесь, а не включается сам
+ */
+function renderTeams() {
+  const teams = Boolean(lastView && lastView.has_teams);
+  const canMake = Boolean(chosen && chosen.team && lastView && lastView.can_force_team);
+  const show = Boolean(chosen && lastView && (teams || canMake));
+  teamField.hidden = !show;
+  if (!show) return;
+  teamNote.textContent = t(teams ? 'Наносится на обе' : 'В моде узор один на обе команды');
+  makeTeam.hidden = teams;
+  const now = String(lastView.team || 'RED').toUpperCase();
+  teamsEl.replaceChildren(...['RED', 'BLU'].map((key) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `wpanel__wear wpanel__team wpanel__team--${key.toLowerCase()}`
+      + (now === key ? ' is-active' : '');
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(now === key));
+    b.textContent = key;
+    b.title = t('Какую команду показать на модели');
+    b.addEventListener('click', async () => {
+      if (now === key) return;
+      applyView(await api.setTeam(key));
+      document.dispatchEvent(new Event('team:changed'));
+    });
+    return b;
+  }));
+}
+
+// Тот же переключатель, что под альбомом: он и скажет, что изменилось
+makeTeam.addEventListener('click', () => document.getElementById('maketeam').click());
+
+// Команду сменили здесь или в заголовке: предпросмотр собирается под неё
+document.addEventListener('team:changed', () => {
+  if (panel.hidden) return;
+  renderTeams();
+  schedulePreview(0);
+});
 
 function renderWears() {
   wearsEl.innerHTML = '';

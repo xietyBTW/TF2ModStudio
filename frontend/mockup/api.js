@@ -321,6 +321,8 @@ export const settings     = () => call('settings');
 //: Автопоиск игры: реестр Steam и его библиотеки, а не обход диска
 export const findTf2      = () => call('find_tf2');
 export const checkTf2     = (path) => call('check_tf2', { path });
+//: Прогрев найденной игры до сохранения настроек (встречающее окно)
+export const warmTf2      = (path) => call('warm_tf2', { path });
 export const clearModelCache = () => call('clear_model_cache');
 //: Меню «Вставить» в редакторе VMT: набор не меняется за сеанс
 export const vmtSnippets  = () => cached('vmt_snippets', {});

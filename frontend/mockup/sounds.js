@@ -10,7 +10,7 @@
 // sound_build_service). Здесь только показ и выбор
 
 import * as api from './api.js';
-import { toGameWav } from './audio.js';
+import { pickGameSound } from './audio.js';
 import { chooseFile } from './util.js';
 import { t } from './i18n.js';
 import { flash, staggerIn } from './motion.js';
@@ -119,6 +119,18 @@ export async function openSounds() {
     els.build.addEventListener('click', build);
     els.clear.addEventListener('click', clearAll);
     els.list.addEventListener('click', onClick);
+    // Двойной щелчок по строке - играть, как в музыкальных плеерах. Строку,
+    // которая уже звучит, он не трогает: пауза - это одиночный щелчок по кнопке
+    els.list.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button')) return;
+      const key = e.target.closest('.snd')?.dataset.key;
+      const row = rows.find((r) => r.name === key);
+      if (row && !(key === playingKey && !player.paused)) play(row);
+    });
+    // Без этого двойной щелчок ещё и выделяет слово в названии
+    els.list.addEventListener('mousedown', (e) => {
+      if (e.detail > 1 && e.target.closest('.snd')) e.preventDefault();
+    });
     bindDrop();
     bindKeys();
     bindPlayer();
@@ -293,6 +305,7 @@ function bindPlayer() {
   });
   els.seek.addEventListener('input', () => {
     if (player.duration) showTime(share() * player.duration, player.duration);
+    tick();
   });
   els.vol.addEventListener('input', showVolume);
   // Запоминаем на ОТПУСКАНИИ (`change`), а не на каждом шаге ползунка: одно
@@ -363,6 +376,11 @@ function step(delta) {
   if (i < 0) i = cursor;
   const next = i < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, i + delta));
   setCursor(next);
+  // На краю списка соседа нет: та же запись с начала, а не пауза
+  if (rows[next].name === playingKey) {
+    player.currentTime = 0;
+    return void player.play().catch(cannotPlay);
+  }
   play(rows[next]);
 }
 
@@ -469,16 +487,19 @@ function card(row) {
     ? `${row.waves[0]} и ещё ${row.waves.length - 1}`
     : (row.waves[0] || '');
   box.innerHTML = `
-    <img class="snd__icon" alt="" loading="lazy">
+    <div class="snd__cover">
+      <img class="snd__icon" alt="" loading="lazy">
+      <i class="snd__eq" aria-hidden="true"><i></i><i></i><i></i></i>
+      ${actButton('data-act', 'play')}
+    </div>
     <div class="snd__what">
-      <span><i class="snd__eq" aria-hidden="true"><i></i><i></i><i></i></i><b class="snd__title"></b><span class="snd__mvm" hidden>MvM</span><span class="snd__own" hidden>Заменён</span><span class="snd__own snd__part" hidden>Частично</span></span>
+      <span><b class="snd__title"></b><span class="snd__mvm" hidden>MvM</span><span class="snd__own" hidden>Заменён</span><span class="snd__own snd__part" hidden>Частично</span></span>
       <span class="snd__name mono"></span>
     </div>
     <span class="snd__group"></span>
     <button class="snd__file mono" type="button" data-act="open"><span class="snd__shared" hidden></span></button>
     <div class="snd__acts">
-      ${actButton('data-act', 'play')}${actButton('data-act', 'save')}${
-        actButton('data-act', 'own')}${actButton('data-act', 'orig', true)}${
+      ${actButton('data-act', 'save')}${actButton('data-act', 'own')}${actButton('data-act', 'orig', true)}${
         actButton('data-act', 'drop', true)}
     </div>`;
   const icon = box.querySelector('.snd__icon');
@@ -653,35 +674,9 @@ function setCursor(index) {
   box.scrollIntoView({ block: 'nearest' });
 }
 
-/**
- * Спрашивает свой файл и приводит его к тому, что игра здесь играет
- *
- * Читалку движок выбирает по расширению из записи, а не по содержимому файла:
- * WAV под именем `.mp3` - это тишина. В WAV браузер переводит что угодно
- * (см. audio.js), обратно в MP3 - ничего, поэтому записи с MP3 берут только
- * готовый MP3
- *
- * Возвращает null, если человек передумал или файл не разобрать.
- */
-async function pickSound(waves, given = null) {
-  const file = given || await chooseFile('audio/*');
-  if (!file) return null;
-  if (!waves.some((w) => w.toLowerCase().endsWith('.wav'))) {
-    if (/\.mp3$/i.test(file.name)) return file;
-    els.note.textContent =
-      'Игра ждёт здесь MP3, а перекодировать в MP3 браузер не умеет';
-    return null;
-  }
-  // Приводим ВСЕГДА, даже готовый WAV: 48 кГц, 24 бита и стерео игра молча не
-  // проигрывает, и на глаз такой файл от годного не отличить
-  els.note.textContent = 'Перекодирую звук…';
-  try {
-    return await toGameWav(file);
-  } catch (err) {
-    els.note.textContent = `Не разобрать этот звук: ${err.message || err}`;
-    return null;
-  }
-}
+const pickSound = async (waves, given = null) =>
+  pickGameSound(waves, given || await chooseFile('audio/*'),
+                (text) => { els.note.textContent = text; });
 
 /** Свой файл, если он выбран, иначе игровой. `game` - всегда игровой */
 function play(row, game = false) {
@@ -802,10 +797,17 @@ async function setFile(row, one, wave, path) {
 
 /** Ставит на проигрывание один файл: свой, если он выбран, иначе игровой */
 function playFile(row, wave, own) {
+  const src = own ? api.fileUrl(own) : api.soundUrl(wave);
+  // Повторное нажатие на то, что уже звучит, - пауза, а не запуск с начала
+  if (current?.src === src && !player.ended) {
+    if (player.paused) player.play().catch(cannotPlay);
+    else player.pause();
+    return;
+  }
   player.pause();
   playingKey = row.name;
-  current = { row, wave };
-  player.src = own ? api.fileUrl(own) : api.soundUrl(wave);
+  current = { row, wave, src };
+  player.src = src;
   els.player.classList.remove('is-idle');
   els.playing.textContent = row.title || row.name;
   els.wave.textContent = wave;

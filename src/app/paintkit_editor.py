@@ -35,11 +35,12 @@ class PaintkitEditor:
         self._paintable_by_model: Dict[str, Any] = {}
         self._paintkit_preview_lock = threading.Lock()
 
-    def _kit_team(self) -> str:
-        """Команда показанной карточки словом War Paint ('red'/'blue'): у
-        раскраски свои командные текстуры (texture_red/texture_blue)"""
+    def _kit_team(self, team: Optional[str] = None) -> str:
+        """Команда словом War Paint ('red'/'blue'), по умолчанию - показанная:
+        у раскраски свои командные текстуры (texture_red/texture_blue)"""
         from src.shared.constants import Team
-        return 'blue' if self._host.preview.textures.active_team == Team.BLU else 'red'
+        team = team or self._host.preview.textures.active_team
+        return 'blue' if team == Team.BLU else 'red'
 
     def _own_paintkits(self, tf2_root: str, lang: str = 'ru') -> List[dict]:
         """
@@ -223,15 +224,18 @@ class PaintkitEditor:
         его карточек один, детали - главной, если игра красит её"""
         return main if main in game else (game[0] if game else '')
 
-    def _paintkit_generic(self, card: str, layout: int, assign) -> Any:
+    def _paintkit_generic(self, card: str, layout: int, assign,
+                          team: Optional[str] = None) -> Any:
         """Универсальный режим для карточки: узор по её деталям - или ошибка
 
-        Поверх игровой текстуры своей команды, а не поверх прошлой правки:
-        иначе War Paint накладывался бы на War Paint
+        Поверх игровой текстуры своей команды (`team`, по умолчанию
+        показанной), а не поверх прошлой правки: иначе War Paint накладывался
+        бы на War Paint
         """
         from src.services import mesh_parts_service
 
         t = self._host.preview.textures
+        team = team or t.active_team
         # Не через _parts_model: тот отказывает при включённом переключателе
         # (разбитая бутылка), а узору хватает геометрии в кадре - воркер
         # разбирает ту же модель заново
@@ -246,11 +250,12 @@ class PaintkitEditor:
         return {'obj_path': self._host._obj_path, 'cuts': self._host.preview.part_cuts,
                 'regions': self._host.preview.part_regions, 'card': card,
                 'obj_material': found[0] if isinstance(found, tuple) else '',
-                'base_png': t.game_base(card, t.active_team) or t.resolve_base(card) or '',
+                'base_png': t.game_base(card, team) or t.shown_at(card, 0, team) or '',
                 'layout_seed': int(layout), 'assign': assign}
 
     def _paintkit_plans(self, kit: int, item: int, layout: int,
-                        materials: Optional[List[str]] = None):
+                        materials: Optional[List[str]] = None,
+                        team: Optional[str] = None):
         """
         Что собрать: [(карточки, универсальный режим или None, forced, метка)]
         - или ошибка
@@ -319,7 +324,7 @@ class PaintkitEditor:
                 by_source.setdefault(t.part_cards.get(card, card), []).append(card)
         for source, members in by_source.items():
             generic = self._paintkit_generic(source, layout,
-                                             split(self._layout_of(kit, source))[0])
+                                             split(self._layout_of(kit, source))[0], team)
             if 'error' in generic:
                 return generic
             plans.append((members, generic, None))
@@ -337,12 +342,12 @@ class PaintkitEditor:
         return out
 
     def _paintkit_job_for(self, kit: int, item: int, wear: int, seed: int, size: int,
-                          generic, forced, out: str):
-        """Воркер War Paint под текущее оружие и команду"""
+                          generic, forced, out: str, team: Optional[str] = None):
+        """Воркер War Paint под текущее оружие и команду (по умолчанию показанную)"""
         from src.services.paintkit_worker import PaintkitWorker
 
         paths = self._host.tf2_paths()
-        team = self._kit_team()
+        team = self._kit_team(team)
         return PaintkitWorker(paths['root'], paths['textures_vpk'], paths['misc_vpk'],
                               kit, item, wear, team, seed, out, size=size,
                               generic=generic, forced=forced)
@@ -378,12 +383,14 @@ class PaintkitEditor:
                 images.update((card, self._keep_apply(keep, card, out)) for card in cards)
         return {'images': images}
 
-    def _keep_plan(self, kit: int, item: int, layout: int) -> Optional[dict]:
+    def _keep_plan(self, kit: int, item: int, layout: int,
+                   team: Optional[str] = None) -> Optional[dict]:
         """
         Детали «Не красить» у War Paint ``kit``: {карточка: {polys, under}}
         или None. У каждого раскладываемого материала свои детали, картинка
         возвращается ему и его материалам частей: развёртка у них общая.
-        Прежняя - то, что лежит на карточке сейчас, до War Paint
+        Прежняя - то, что лежит на карточке сейчас, до War Paint, у команды
+        `team` (по умолчанию показанной)
         """
         from src.services import paintkit_keep, paintkit_layout
         from src.services.game_vpk_reader import GameVpkReader
@@ -414,7 +421,8 @@ class PaintkitEditor:
             if not polys:
                 continue
             for c in (ctx['card'], *(p for p, src in t.part_cards.items() if src == ctx['card'])):
-                under = t.resolve_card(c) or t.game_base(c)
+                under = ((t.resolve_card(c) if team in (None, t.active_team)
+                          else t.shown_at(c, 0, team)) or t.game_base(c, team))
                 if under:
                     out[c] = {'polys': polys, 'under': under}
         return out or None
@@ -438,10 +446,11 @@ class PaintkitEditor:
         каждый отмеченный материал по его деталям (``layout`` перемешивает,
         какой узор на какой детали)
 
-        Собирается под активную команду: у War Paint с командными узорами RED
-        и BLU разные, и человек накладывает второй, переключив команду. Дальше
-        это обычные свои текстуры - их можно дорисовать и собрать в мод.
-        Результат приходит событием ``paintkit_ready``
+        Ложится сразу на обе команды, как в игре: у War Paint с командными
+        узорами RED и BLU собираются каждый под свою, у остальных один узор
+        на обе. Одна команда - только под вариантным стилем и у предмета без
+        командных карточек. Дальше это обычные свои текстуры - их можно
+        дорисовать и собрать в мод. Результат приходит событием ``paintkit_ready``
         """
         from src.services.paintkit_worker import PaintkitBatch
 
@@ -450,23 +459,36 @@ class PaintkitEditor:
             return {'error': 'War Paint уже накладывается'}
         t = self._host.preview.textures
         weapon_key = self._host._shown_weapon()
+        active = t.active_team
         team = self._kit_team()
         seed = int(seed) & ((1 << 64) - 1)
         size = min(max(int(size), 256), 2048)
         plans = self._paintkit_plans(kit, item, layout, materials)
         if isinstance(plans, dict):
             return plans
+        sides = self._sides(plans)
+        builds = {active: plans}
+        if len(sides) > 1 and self._team_kit(kit):
+            other = sides[1]
+            builds[other] = self._paintkit_plans(kit, item, layout, materials, other)
+            if isinstance(builds[other], dict):
+                return builds[other]
         from src.config.app_config import AppConfig
         from src.services.paintkit_thumbs import remember
         AppConfig.set(RECENT_KEY, remember(AppConfig.get(RECENT_KEY), kit))
         # Прежние текстуры - сейчас, пока War Paint их не заменил
-        keep = self._keep_plan(kit, item, layout)
-        w = PaintkitBatch([
-            (cards, self._paintkit_job_for(
-                kit, item, wear, seed, size, generic, forced,
-                os.path.join(self._host._work_dir(), f'warpaint_{int(kit)}_{int(item)}'
-                             f'_w{int(wear)}_{team}_{seed}_{int(layout)}_{size}_{tag}.png')))
-            for cards, generic, forced, tag in plans])
+        keeps = {side: self._keep_plan(kit, item, layout, side) for side in sides}
+        vmts = self._kit_vmts(kit, item, plans)
+        jobs, job_sides = [], []
+        for side, side_plans in builds.items():
+            word = self._kit_team(side)
+            for cards, generic, forced, tag in side_plans:
+                out = os.path.join(self._host._work_dir(), f'warpaint_{int(kit)}_{int(item)}'
+                                   f'_w{int(wear)}_{word}_{seed}_{int(layout)}_{size}_{tag}.png')
+                jobs.append((cards, self._paintkit_job_for(
+                    kit, item, wear, seed, size, generic, forced, out, side)))
+                job_sides.append(side)
+        w = PaintkitBatch(jobs)
         w.progress.connect(lambda _pct, text: self._host._put('progress', text=text))
 
         def done(ok: bool, message: str) -> None:
@@ -474,19 +496,30 @@ class PaintkitEditor:
             # Paint на новую пушку не кладём
             same = self._host._shown_weapon() == weapon_key and self._kit_team() == team
             applied = 0
+            kept: List[str] = []
             try:
                 if ok and same:
+                    by_side: Dict[str, List[Tuple[str, str]]] = {}
+                    for (cards, png), side in zip(w.done, job_sides):
+                        by_side.setdefault(side, []).extend((c, png) for c in cards)
+                    # Узор без командных текстур у обеих команд один
+                    for side in sides:
+                        by_side.setdefault(side, by_side[active])
                     # Один War Paint - один шаг отмены, сколько бы карточек
-                    # он ни покрасил
+                    # и команд он ни покрасил
                     self._host._edits_held = True
+                    # Упади раскладка на середине - что-то уже легло, и откат ниже нужен
+                    applied = 1
                     try:
-                        for card, png in [(c, png) for cards, png in w.done for c in cards]:
-                            png = self._keep_apply(keep, card, png)
-                            res = self._host.set_texture(card, png) or {}
-                            if 'error' in res:
-                                ok, message = False, res['error']
-                                break
-                            applied += 1
+                        ok, message, applied = self._lay(by_side, sides, keeps)
+                        if ok:
+                            # Глянец - добавка к картинке: не лёг он, картинка
+                            # War Paint всё равно остаётся
+                            try:
+                                kept = self._apply_kit_vmts(vmts)
+                            except Exception as exc:          # noqa: BLE001
+                                logger.warning(f'[paintkit] материал War Paint: {exc}',
+                                               exc_info=True)
                     finally:
                         self._host._edits_held = False
                     if ok:
@@ -504,12 +537,122 @@ class PaintkitEditor:
                     logger.error(f'[paintkit] откат: {exc}', exc_info=True)
             self._host._put('paintkit_ready', ok=bool(ok and same),
                       message='' if ok and same else (message or 'Оружие сменилось'),
-                      missing=list(w.missing))
+                      missing=list(w.missing), kept_vmt=kept)
 
         w.finished.connect(done)
         self._paintkit_job = w
         w.start()
         return {'started': True, 'team': team}
+
+    def _sides(self, plans) -> List[str]:
+        """Команды, на которые ложится War Paint, показанная первой. Одна -
+        под вариантным стилем (у него своя строка на обе) и когда все
+        карточки общие для команд"""
+        from src.shared.constants import Team
+
+        t = self._host.preview.textures
+        active = t.active_team
+        cards = [c for cards, *_rest in plans for c in cards]
+        if t.style_row or all(t.shared_by_teams(c) for c in cards):
+            return [active]
+        return [active, Team.BLU if active == Team.RED else Team.RED]
+
+    def _team_kit(self, kit: int) -> bool:
+        """У War Paint свои узоры RED и BLU (64 из 250)"""
+        from src.data import paintkit_defs
+
+        paths = self._host.tf2_paths()
+        defs = paintkit_defs.load(paths['root']) if 'error' not in paths else None
+        found = defs.kits.get(int(kit)) if defs else None
+        return bool(found and found.has_team_textures)
+
+    def _lay(self, by_side: Dict[str, List[Tuple[str, str]]], sides: List[str],
+             keeps: Dict[str, Optional[dict]]) -> Tuple[bool, str, int]:
+        """
+        Кладёт готовые картинки на карточки команд: (успех, ошибка, сколько
+        легло). Общая для команд карточка ложится один раз, с показанной
+        командой - set_texture сам пишет её в обе
+
+        set_texture кладёт в показанную команду, поэтому на время второй
+        показанной становится она. Страница в это время ждёт paintkit_ready
+        """
+        t = self._host.preview.textures
+        active = sides[0]
+        applied = 0
+        try:
+            for side in sides:
+                if side != active:
+                    with self._host._lock:
+                        t.active_team = side
+                for card, png in by_side[side]:
+                    if side != active and t.shared_by_teams(card):
+                        continue
+                    res = self._host.set_texture(
+                        card, self._keep_apply(keeps.get(side), card, png)) or {}
+                    if 'error' in res:
+                        return False, res['error'], applied
+                    applied += 1
+        finally:
+            if t.active_team != active:
+                with self._host._lock:
+                    t.active_team = active
+        return True, '', applied
+
+    def _kit_vmts(self, kit: int, item: int, plans) -> Dict[str, Optional[str]]:
+        """
+        Материал War Paint по карточкам: текст правки VMT, None - стоковый
+        (см. services/paintkit_vmt). Свой материал игра надевает только туда,
+        куда кладёт War Paint сама, - на узор по деталям его нет
+        """
+        from src.data import paintkit_defs
+        from src.services import paintkit_vmt
+        from src.services.vtf_preview_service import open_vpks
+
+        out: Dict[str, Optional[str]] = {c: None for cards, *_ in plans for c in cards}
+        paths = self._host.tf2_paths()
+        defs = paintkit_defs.load(paths['root']) if 'error' not in paths else None
+        override = paintkit_vmt.override_path(defs, kit, item)
+        text = paintkit_vmt.read(open_vpks([paths['misc_vpk'], paths['textures_vpk']]),
+                                 override) if override else None
+        if not text:
+            return out
+        kit_obj = defs.kits.get(int(kit))
+        name = paintkit_defs.kit_name(paths['root'], kit_obj, 'en') if kit_obj else str(kit)
+        for cards, generic, _forced, _tag in plans:
+            if generic is not None:
+                continue
+            for card in cards:
+                state = self._host.materials.vmt_state(card)
+                if state:
+                    out[card] = paintkit_vmt.compose(text, state['game'], name)
+        return out
+
+    def _apply_kit_vmts(self, vmts: Dict[str, Optional[str]]) -> List[str]:
+        """
+        Кладёт материал War Paint правкой VMT карточек, а свой от прошлого War
+        Paint снимает. Правку человека не трогает: возвращает карточки, где
+        из-за неё материал War Paint не лёг
+        """
+        from src.services import paintkit_vmt
+
+        materials = self._host.materials
+        kept = []
+        for card, text in vmts.items():
+            state = materials.vmt_state(card)
+            if state is None:
+                continue
+            mine = paintkit_vmt.is_war_paint(state['edit'])
+            if state['edit'] and not mine:
+                if text:
+                    kept.append(card)
+                continue
+            if text:
+                res = materials.save_vmt(card, text, state['game'], autosave=False)
+                if 'error' in res:
+                    logger.warning(f"[paintkit] материал War Paint на {card}: {res['error']}")
+            elif mine:
+                materials.reset_vmt(card, autosave=False)
+        return kept
 
     def paintkit_layout(self, kit: int, item: int, layout: int = 0,
                         card: str = '') -> Dict[str, Any]:

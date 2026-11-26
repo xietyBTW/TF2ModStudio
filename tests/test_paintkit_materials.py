@@ -225,6 +225,54 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(self._apply(refuse=('scope',)), (False, ['body', 'scope'], [], [0]))
 
 
+class TeamTests(unittest.TestCase):
+    """War Paint ложится на обе команды: командная карточка - каждой своё,
+    общая - один раз, показанная команда после этого прежняя"""
+
+    def _editor(self, shared):
+        import threading
+        s = _session(['body', 'lens'])
+        t = s._host.preview.textures
+        t.shared_by_teams = shared
+        s._host._lock = threading.Lock()
+        return s, t
+
+    def test_sides(self):
+        from src.shared.constants import Team
+        plans = [(['body', 'lens'], None, None, 'x')]
+        s, _t = self._editor(lambda c: True)
+        self.assertEqual(s._sides(plans), [Team.RED])
+        s, _t = self._editor(lambda c: c == 'lens')
+        self.assertEqual(s._sides(plans), [Team.RED, Team.BLU])
+
+    def test_lay_each_team(self):
+        from src.shared.constants import Team
+        s, t = self._editor(lambda c: c == 'lens')
+        log = []
+        s._host.set_texture = lambda card, png: log.append((t.active_team, card, png)) or {}
+        res = s._lay({Team.RED: [('body', 'r.png'), ('lens', 'r.png')],
+                      Team.BLU: [('body', 'b.png'), ('lens', 'b.png')]},
+                     [Team.RED, Team.BLU], {})
+        self.assertEqual(res, (True, '', 3))
+        self.assertEqual(log, [(Team.RED, 'body', 'r.png'), (Team.RED, 'lens', 'r.png'),
+                               (Team.BLU, 'body', 'b.png')])
+        self.assertEqual(t.active_team, Team.RED)
+
+    def test_lay_restores_team_on_error(self):
+        from src.shared.constants import Team
+        s, t = self._editor(lambda c: False)
+
+        def refuse(card, png):
+            if t.active_team == Team.BLU:
+                raise RuntimeError('диск')
+            return {}
+        s._host.set_texture = refuse
+        with self.assertRaises(RuntimeError):
+            s._lay({Team.RED: [('body', 'r.png')], Team.BLU: [('body', 'b.png')]},
+                   [Team.RED, Team.BLU], {})
+        self.assertEqual(t.active_team, Team.RED)
+
+
 class UndoTests(unittest.TestCase):
     def test_held_edits_make_one_step(self):
         s = AppSession.__new__(AppSession)

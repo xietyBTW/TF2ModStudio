@@ -6,9 +6,9 @@
  * материалами карточки жмутся в колонку, пока половина модели стоит пустой,
  * а модель, наоборот, разглядывают крупно
  *
- * Своей разметки у границы нет - тянут за зазор сетки (`gap`), в котором и
- * так никого нет. Курсор над ним меняется на `col-resize`: это и есть
- * приглашение, отдельная полоска рисовала бы то, что уже видно
+ * Тянут за ручку - элемент на весь зазор сетки (`gap`), в котором и так
+ * никого нет. Вид и наведение у неё в style.css (`.work__grip`), видна она
+ * только там, где половины стоят рядом
  *
  * Доля левой половины живёт в `--split` (единицы `fr`, поэтому пропорция
  * переживает изменение размера окна), а между запусками - в общем конфиге
@@ -21,34 +21,17 @@ const work = document.querySelector('.work');
 const flat = work.querySelector('.half--flat');
 const model = work.querySelector('.half--model');
 
-//: Полоса захвата по обе стороны от границы
-const GRIP = 10;
 //: Уже этого половина бесполезна: в ней не помещается ни карточка, ни модель
 const MIN = 15;
 const MAX = 85;
 
-//: Пока не null - тянут (само значение не нужно, важен сам факт)
-let drag = null;
+const grip = document.createElement('div');
+grip.className = 'work__grip';
+grip.setAttribute('aria-hidden', 'true');
+work.append(grip);
 
 /** Ширина зазора сетки. Меряем, а не берём константой: на разных порогах своя */
 const gap = () => model.getBoundingClientRect().left - flat.getBoundingClientRect().right;
-
-/**
- * Середина зазора, либо null - тянуть нечего
- *
- * Половины стоят рядом только в режиме «Вместе» и только в широком окне: ниже
- * 1100px они ложатся друг под друга, и зазор между ними уже не вертикальный.
- */
-function line() {
-  if (work.dataset.view !== 'both') return null;
-  const g = gap();
-  return g > 0 ? flat.getBoundingClientRect().right + g / 2 : null;
-}
-
-const atGrip = (e) => {
-  const x = line();
-  return x !== null && Math.abs(e.clientX - x) <= GRIP;
-};
 
 /** Ставит долю левой половины в процентах. 0 - границу не трогали, поровну */
 export function setSplit(percent) {
@@ -69,34 +52,27 @@ function shareAt(clientX) {
   return Math.round((left / (box.width - g)) * 100);
 }
 
-work.addEventListener('pointerdown', (e) => {
-  // Только левая кнопка: правой на половинах открывают контекстные меню
-  if (e.button !== 0 || !atGrip(e)) return;
-  drag = true;
-  work.setPointerCapture(e.pointerId);
+// Пока тянут, мышь захвачена ручкой: события идут ей, даже когда курсор над
+// кадром модели, а полоска горит классом, а не наведением
+grip.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  grip.setPointerCapture(e.pointerId);
+  grip.classList.add('is-drag');
   e.preventDefault();               // иначе тянется выделение текста
 });
 
-work.addEventListener('pointermove', (e) => {
-  if (!drag) {
-    work.classList.toggle('is-split', atGrip(e));
-    return;
-  }
+grip.addEventListener('pointermove', (e) => {
+  if (!grip.classList.contains('is-drag')) return;
   setSplit(Math.min(MAX, Math.max(MIN, shareAt(e.clientX))));
 });
 
-work.addEventListener('pointerleave', () => {
-  if (!drag) work.classList.remove('is-split');
-});
-
 for (const done of ['pointerup', 'pointercancel']) {
-  work.addEventListener(done, (e) => {
+  grip.addEventListener(done, (e) => {
+    if (!grip.classList.contains('is-drag')) return;
+    grip.classList.remove('is-drag');
     // Пишем на ОТПУСКАНИИ: перетаскивание даёт сотню событий, и конфиг
     // переписывался бы сотню раз на одно движение
-    if (drag) {
-      api.setUiState('split_percent',
-                     Math.min(MAX, Math.max(MIN, shareAt(e.clientX))));
-    }
-    drag = null;
+    api.setUiState('split_percent',
+                   Math.min(MAX, Math.max(MIN, shareAt(e.clientX))));
   });
 }

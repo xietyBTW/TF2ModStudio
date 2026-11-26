@@ -227,6 +227,18 @@
 .wpanel__wear:first-child { margin-left: 0; }
 .wpanel__wear:hover { color: var(--ink); }
 .wpanel__wear.is-active { position: relative; background: var(--chosen); border-color: var(--ink); color: var(--chosen-ink); }
+/* Команда предпросмотра: у выбранной снизу полоса её цвета */
+.wpanel__teams { grid-template-columns: repeat(2, 51px); }
+.wpanel__team.is-active::after {
+  content: "";
+  position: absolute;
+  left: -1px; right: -1px; bottom: -1px;
+  height: 2px;
+  background: var(--team);
+}
+.wpanel__maketeam { flex: none; }
+.wpanel__team--red { --team: #b8383b; }
+.wpanel__team--blu { --team: #5885a2; }
 .wpanel__dice { flex: none; width: 26px; height: 26px; }
 .wpanel__seed { flex: 0 1 190px; min-width: 0; font-variant-numeric: tabular-nums; }
 .wpanel__status { margin: 0; min-height: 1.4em; font-size: 11.5px; color: var(--ink-mute); }

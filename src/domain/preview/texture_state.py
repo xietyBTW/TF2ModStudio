@@ -398,22 +398,22 @@ class PreviewTextureState:
                 slot.pop(mat, None)
             return
 
-        # Нейтральная текстура пишется в обе команды, чтобы карточка не пропадала
-        # при переключении команды. ИСКЛЮЧЕНИЕ - force_team: там пользователь
-        # намеренно задаёт РАЗНЫЕ текстуры RED/BLU, поэтому дублирование запрещено
-        # (иначе загрузка на BLU затирает RED). Дефолт «BLU как RED» до задания
-        # своей синей обеспечивает симметричный fallback в resolve_base().
-        # Австралий командой не делится и под force_team: сборка красит его
-        # одной текстурой для обеих команд (игра так и показывает)
         teams = [self.active_team]
-        if self.is_neutral(mat) and (not self.force_team
-                                     or self.is_variant_material(mat)):
+        if self.shared_by_teams(mat):
             teams.append(Team.BLU if self.active_team == Team.RED else Team.RED)
         for team in teams:
             if path:
                 self.textures.setdefault(team, {})[mat] = path
             else:
                 self.textures.get(team, {}).pop(mat, None)
+
+    def shared_by_teams(self, mat: str) -> bool:
+        """Одна текстура на обе команды: set_texture пишет нейтральную в оба
+        словаря, иначе она пропадала бы при смене команды. Под force_team RED и
+        BLU разные, копия затёрла бы RED (синяя до своей - «как красная»,
+        resolve_base). Австралий общий и там: игра красит его одной текстурой"""
+        return self.is_neutral(mat) and (not self.force_team
+                                         or self.is_variant_material(mat))
 
     # Синяя текстура командной карточки: игровая, как красная или своя
 

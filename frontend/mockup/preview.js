@@ -600,9 +600,9 @@ document.querySelector('.teams').addEventListener('click', async (e) => {
   const btn = e.target.closest('.tag');
   if (!btn || btn.id === 'paint') return;      // у краски свой список (paint.js)
   const key = btn.textContent.trim().toUpperCase();
-  applyView(key === 'RED' || key === 'BLU'
-    ? await api.setTeam(key)
-    : await api.setAustralium(!btn.classList.contains('is-active')));
+  const team = key === 'RED' || key === 'BLU';
+  applyView(team ? await api.setTeam(key) : await api.setAustralium(!btn.classList.contains('is-active')));
+  if (team) document.dispatchEvent(new Event('team:changed'));
   // Части красят то, что в кадре: с австралием - его карточку. Полоса
   // должна показать её покраску, а не главной
   await syncParts();
@@ -618,6 +618,8 @@ document.getElementById('maketeam').addEventListener('click', async () => {
   const on = !(lastView && lastView.force_team);
   const st = await api.forceTeam(on);
   applyView(st);
+  // Команд стало (или не стало) - панель War Paint перестраивает переключатель
+  document.dispatchEvent(new Event('team:changed'));
   // При включённом австралии казалось, что командным стал только он:
   // синим становятся оба стиля, у каждого своя синяя карточка
   if (!on) say(t('Командность убрана: предмет снова один на обе команды'));

@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent))
 
 from src.app import api  # noqa: E402  - после правки sys.path
+from src.shared.foreground import page_request  # noqa: E402
 from src.shared.paths import data_dir  # noqa: E402
 
 STATIC = ROOT / "mockup"
@@ -274,7 +275,8 @@ class Handler(SimpleHTTPRequestHandler):
 
         key = unquote(parse_qs(urlparse(self.path).query).get("key", [""])[0])
         try:
-            data = api.icon_png(key)
+            with page_request():
+                data = api.icon_png(key)
         except Exception as exc:                      # noqa: BLE001
             self.log_message("icon %s: %s", key, exc)
             data = None
@@ -302,8 +304,11 @@ class Handler(SimpleHTTPRequestHandler):
         from urllib.parse import parse_qs, unquote, urlparse
 
         wave = unquote(parse_qs(urlparse(self.path).query).get("wave", [""])[0])
+        # Отметка только на чтение из архива: отдачу медленно читающему плееру
+        # фон ждать не должен
         try:
-            data = api.sound_wave(wave)
+            with page_request():
+                data = api.sound_wave(wave)
         except Exception as exc:                      # noqa: BLE001
             self.log_message("sound %s: %s", wave, exc)
             data = None
@@ -403,7 +408,9 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
             params = json.loads(self.rfile.read(length) or b"{}")
-            self._json({"result": fn(**params)})
+            with page_request():
+                result = fn(**params)
+            self._json({"result": result})
         except TypeError as exc:              # не те аргументы - вина вызова
             self._json({"error": f"{name}: {exc}"}, status=400)
         except Exception as exc:              # noqa: BLE001 - граница транспорта

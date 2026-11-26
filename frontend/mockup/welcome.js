@@ -433,6 +433,9 @@ const ownDir = () => (draft.exportDir && draft.exportDir !== 'export'
  *  иначе они ушли бы в игру, которую человек только что сменил */
 function setGame(path, ok) {
   const was = customDir();
+  // Игра найдена - греем её, пока человек проходит окно. Не вышло - не
+  // беда: прогрев начнётся после сохранения, как раньше
+  if (ok && path !== draft.tf2) api.warmTf2(path).catch(() => {});
   Object.assign(draft, { tf2: path, tf2Ok: ok });
   if (was && draft.exportDir === was && customDir() !== was) draft.exportDir = 'export';
 }

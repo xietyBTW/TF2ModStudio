@@ -27,8 +27,35 @@
   width: 34px;
   height: 34px;
   object-fit: contain;
+  transition: opacity var(--dur);
 }
 .snd__icon[hidden] { display: none; }
+
+/* Место иконки - и кнопка «играть», как номер трека в музыкальных плеерах:
+   при наводке иконка гаснет и поверх встаёт треугольник, у звучащей строки
+   там эквалайзер, а при наводке на неё - пауза. Место держится и без иконки,
+   иначе столбцы строки съезжают */
+.snd__cover { display: grid; place-items: center; width: 34px; height: 34px; }
+.snd__cover > * { grid-area: 1 / 1; }
+/* Погашенная иконка (opacity < 1) рисуется своим слоем поверх соседей и
+   забирала щелчки у кнопки. Кнопке - свой слой выше, картинке - сквозь */
+.snd__cover > :not(.snd__ic) { pointer-events: none; }
+.snd .snd__cover .snd__ic {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  opacity: 0;
+  color: var(--ink);
+  background: none;
+  transition: opacity var(--dur), color var(--dur);
+}
+.snd .snd__cover .snd__ic:hover { color: var(--accent); }
+.snd:hover .snd__cover .snd__ic,
+.snd__cover .snd__ic:focus-visible { opacity: 1; }
+.snd:hover .snd__icon,
+.snd.is-playing .snd__icon,
+.snd__cover:focus-within .snd__icon { opacity: .18; }
 
 .snd__what  { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 /* Эквалайзер, название и метки - в одну строку, длинное название режется */
@@ -163,10 +190,13 @@
   color: var(--accent);
 }
 .snd.is-playing { background: var(--surface); }
+.snd__ic .ic-pause,
+.snd.is-playing [data-act="play"] .ic-play { display: none; }
+.snd.is-playing [data-act="play"] .ic-pause { display: inline; }
 .snd.is-playing .snd__title { color: var(--accent); }
 
 /* Строка, которая звучит: прогресс полосой по нижнему краю (--snd-p ставит
-   sounds.js -> tick) и три полоски эквалайзера перед названием */
+   sounds.js -> tick) и три полоски эквалайзера на месте иконки */
 .snd { position: relative; }
 .snd::after {
   content: "";
@@ -189,11 +219,10 @@
   display: inline-flex;
   align-items: flex-end;
   gap: 2px;
-  width: 11px;
-  height: 10px;
-  margin-right: 8px;
-  vertical-align: -1px;
+  width: 14px;
+  height: 13px;
 }
+.snd.is-playing:hover .snd__eq { display: none; }
 .snd__eq > i {
   flex: 1;
   height: 100%;

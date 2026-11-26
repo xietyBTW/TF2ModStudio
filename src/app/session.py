@@ -2199,17 +2199,19 @@ class AppSession:
         return bool(p.custom_smd_path or (p.custom_vpk_mode and p.custom_vpk_own_model))
 
 
-    def warm_up(self) -> None:
-        """Греет индексы игры в фоне (src/app/warm_up.py)"""
+    def warm_up(self, root: str = '') -> None:
+        """Греет индексы игры в фоне (src/app/warm_up.py). `root` - папка,
+        которую ещё не сохранили (встречающее окно), иначе из настроек"""
         from src.app import warm_up
-        warm_up.start(self)
+        warm_up.start(self, root)
 
     @staticmethod
-    def tf2_paths() -> Dict[str, Any]:
-        """Пути к игровым VPK или понятная ошибка, если игра не найдена"""
+    def tf2_paths(root: str = '') -> Dict[str, Any]:
+        """Пути к игровым VPK или понятная ошибка, если игра не найдена.
+        Папка из настроек, если `root` не задан"""
         from src.config.app_config import AppConfig
 
-        root = (AppConfig.load_config().get('tf2_game_folder') or '').strip()
+        root = (root or AppConfig.load_config().get('tf2_game_folder') or '').strip()
         if not root:
             return {'error': 'Папка Team Fortress 2 не задана в настройках'}
         try:

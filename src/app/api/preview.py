@@ -42,6 +42,21 @@ def check_tf2(path: str = '') -> Dict[str, object]:
 
 
 @endpoint
+def warm_tf2(path: str = '') -> Dict[str, object]:
+    """Греет годную папку игры, пока её ещё не сохранили: встречающее окно
+    человек читает десятки секунд, и к выходу из него каталог уже готов.
+    Только читает игру, в настройки ничего не пишет"""
+    from src.app.session import session
+    from src.services.tf2_paths import TF2Paths
+
+    path = (path or '').strip()
+    ok = TF2Paths.is_valid(path)
+    if ok:
+        session().warm_up(path)
+    return {'ok': ok}
+
+
+@endpoint
 def load_preview(mode: str, lang: str = '',  # noqa: PLR0913 - зеркало сеанса
                  model_key: Optional[str] = None,
                  per_class: Optional[Dict[str, str]] = None,

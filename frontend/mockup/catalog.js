@@ -662,6 +662,10 @@ export async function goSection(name) {
 document.querySelector('.chrome__nav').addEventListener('click', async (e) => {
   const btn = e.target.closest('.underlined');
   if (!btn) return;
+  // Щелчок по разделу, где уже стоишь, - не уход из него: настройка раздела
+  // прошла бы заново и стёрла заголовок открытого предмета, а сам предмет
+  // остался бы в кадре
+  if (btn.dataset.section === sel.section) return;
   // Ключ из data-section, а не подпись: подпись переводится
   if (await pickSection(btn.dataset.section) === false) return;
   document.querySelectorAll('.chrome__nav .underlined')

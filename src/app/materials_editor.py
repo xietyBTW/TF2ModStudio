@@ -531,6 +531,23 @@ class MaterialsEditor:
         return {'material': self._vmt_label(edit_key, material), 'content': original,
                 'original': original, 'edited': False}
 
+    def vmt_state(self, material: str = '') -> Optional[Dict[str, Any]]:
+        """{'edit': текст правки или None, 'game': игровой VMT} материала
+        карточки - без побочных действий open_vmt. None - VMT у неё нет"""
+        from src.services.edited_vmt_service import EditedVMTService
+
+        target = self.vmt_target(material)
+        if isinstance(target, dict):
+            return None
+        weapon_key, edit_key = target
+        paths = self._host.tf2_paths()
+        if 'error' in paths:
+            return None
+        game = (EditedVMTService.read_original_backup(edit_key)
+                or self._vmt_original(getattr(self._host, '_mode', ''), weapon_key,
+                                      paths['root'], edit_key, 'ru'))
+        return {'edit': EditedVMTService.get_text(edit_key), 'game': game} if game else None
+
     def _vmt_original(self, mode: str, weapon_key: str, tf2_root: str,
                       edit_key: str, lang: str) -> Optional[str]:
         """

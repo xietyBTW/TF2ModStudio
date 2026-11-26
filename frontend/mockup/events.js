@@ -77,9 +77,16 @@ api.subscribe((ev) => {
       if (!ev.ok) { sayError(ev.message || 'War Paint не собрался'); refreshView(); break; }
       // Текстуру Python уже положил на карточку - перечитываем показ целиком
       refreshView();
-      say(ev.missing && ev.missing.length
-        ? t('В игре нет части текстур War Paint: {}').replace('{}', ev.missing.join(', '))
-        : '');
+      if (ev.missing && ev.missing.length) {
+        say(t('В игре нет части текстур War Paint: {}').replace('{}', ev.missing.join(', ')));
+      } else if (ev.kept_vmt && ev.kept_vmt.length) {
+        // Свой материал War Paint (глянец) идёт правкой VMT, а правку
+        // человека он не затирает - говорим, почему блеска в моде не будет
+        say(t('Материал War Paint не поставлен, у материала своя правка VMT: {}')
+          .replace('{}', ev.kept_vmt.join(', ')));
+      } else {
+        say('');
+      }
       document.dispatchEvent(new Event('texture:set'));
       break;
 

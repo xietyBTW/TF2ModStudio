@@ -29,6 +29,19 @@ logger = get_logger(__name__)
 _VERSION = 3
 _lock = threading.Lock()
 _memo: Dict[str, dict] = {}
+#: Сколько потоков ждут таблицу под замком. Пока ждут, строитель не
+#: уступает странице: ждущий - и есть тот, кому она нужна. Счётчик, а не
+#: флаг: флаг сбрасывал любой, кто брал замок, и второй ждущий оставался без
+#: отметки
+_waiters = 0
+_waiters_lock = threading.Lock()
+
+
+def _wanted() -> bool:
+    return _waiters > 0
+
+#: Через сколько моделей прогрев смотрит, не ждёт ли его страница
+_YIELD_EVERY = 200
 
 
 def build(pak, items_text: str = '') -> dict:
@@ -38,8 +51,15 @@ def build(pak, items_text: str = '') -> dict:
     from src.services.mdl_mesh import materials
     from src.services.mod_textures import vmt_references
 
+    from src.shared.foreground import yield_to_page
+
     used: Dict[tuple, Set[str]] = {}
-    for mdl in (p for p in pak if p.endswith('.mdl') and p.startswith('models/')):
+    mdls = (p for p in pak if p.endswith('.mdl') and p.startswith('models/'))
+    for n, mdl in enumerate(mdls):
+        # Четырнадцать тысяч моделей вразброс по архивам: с холодного HDD
+        # это полторы минуты, и диск нужен иконкам первого экрана
+        if n % _YIELD_EVERY == 0:
+            yield_to_page(_wanted)
         try:
             names, cds = materials(pak[mdl].read())
         except Exception:                                    # noqa: BLE001
@@ -92,7 +112,9 @@ def load(misc_vpk: str) -> dict:
     root = tf2_root_from_misc_vpk(misc_vpk) or ''
     items_path = os.path.join(root, 'tf', 'scripts', 'items', 'items_game.txt')
     stamp = f'{_VERSION}|{_stamp(misc_vpk, items_path)}'
-    with _lock:
+    if not _lock.acquire(blocking=False):
+        _wait_for_lock()
+    try:
         if _memo.get(misc_vpk, {}).get('stamp') == stamp:
             return _memo[misc_vpk]
         cache = data_dir() / 'cache' / 'texture_models.json'
@@ -105,6 +127,23 @@ def load(misc_vpk: str) -> dict:
             table = _rebuild(misc_vpk, items_path, stamp, cache)
         _memo[misc_vpk] = table
         return table
+    finally:
+        _lock.release()
+
+
+def _wait_for_lock() -> None:
+    """Берёт замок, отметившись ждущим: строитель перестаёт уступать"""
+    global _waiters
+    from src.shared.foreground import wake
+
+    with _waiters_lock:
+        _waiters += 1
+    wake()
+    try:
+        _lock.acquire()
+    finally:
+        with _waiters_lock:
+            _waiters -= 1
 
 
 def _rebuild(misc_vpk: str, items_path: str, stamp: str, cache) -> dict:

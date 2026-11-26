@@ -15,6 +15,7 @@ from src.services.particle_editor.pcf_format import (
     module_to_json)
 from src.services.tf2_paths import TF2Paths
 from src.services.vtf_preview_service import open_vpks
+from src.shared.foreground import mark_background, yield_to_page
 from src.shared.logging_config import get_logger
 from src.shared.paths import data_dir
 
@@ -258,6 +259,9 @@ def build_attr_catalog(cls, tf2_root_dir: str) -> None:
     pcfs = cls.list_game_pcfs(tf2_root_dir)
     try:
         for done, pcf in enumerate(pcfs):
+            # Скан со старта идёт фоном 13 с: между файлами пропускаем
+            # страницу вперёд (в потоке страницы это ничего не делает)
+            yield_to_page()
             # Счёт для полосы в списке эффектов: скан с нуля идёт 13 с
             cls._catalog_progress = (done, len(pcfs))
             _scan_pcf(cls, tf2_root_dir, pcf, catalog, canon, materials, systems, roots)
@@ -274,6 +278,11 @@ def build_attr_catalog(cls, tf2_root_dir: str) -> None:
             for key, names in canon.items()}
         cls._game_materials_cache = sorted(materials, key=str.lower)
         _save_disk_catalog(cls, tf2_root_dir)
+
+
+def _build_in_background(cls, tf2_root_dir: str) -> None:
+    mark_background()
+    build_attr_catalog(cls, tf2_root_dir)
 
 
 def catalog_progress(cls):
@@ -331,7 +340,7 @@ def system_index(cls, tf2_root_dir: str) -> Dict[str, str]:
         return cls._system_index
     if cls._catalog_thread is None or not cls._catalog_thread.is_alive():
         cls._catalog_thread = threading.Thread(
-            target=cls.build_attr_catalog, args=(tf2_root_dir,),
+            target=_build_in_background, args=(cls, tf2_root_dir),
             name='particle-catalog', daemon=True)
         cls._catalog_thread.start()
     return cls._system_index

@@ -14,7 +14,8 @@ const toastOpen = document.getElementById('snd-toast-open');
 
 //: Значки действий строки: SVG в разметке, цвет от текста, как у плеера
 const ACT_ICON = {
-  play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>',
+  play: '<path class="ic-play" d="M8 5.5v13l11-6.5z" fill="currentColor"/>'
+      + '<path class="ic-pause" d="M7.5 5.5h3v13h-3zM13.5 5.5h3v13h-3z" fill="currentColor"/>',
   orig: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4h4"/>',
   save: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
   own: '<path d="M12 15V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/>',

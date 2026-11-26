@@ -431,9 +431,10 @@ def _worn(mode: str) -> bool:
     return viewmodel_anims.is_worn(key, root)
 
 
-def icon_png(key: str) -> Optional[bytes]:
+def icon_png(key: str, paths: Optional[dict] = None) -> Optional[bytes]:
     """
-    PNG обложки предмета, либо None
+    PNG обложки предмета, либо None. `paths` - пути игры (по умолчанию из
+    настроек, см. AppSession.tf2_paths)
 
     Ключ - то, что каталог знает о предмете: ``icon`` из items_game, ключ
     оружия, путь к модели или `skybox/<имя>`
@@ -451,7 +452,7 @@ def icon_png(key: str) -> Optional[bytes]:
     from src.services import model_icons
     from src.services.backpack_icons import png_bytes
 
-    paths = session().tf2_paths()
+    paths = paths or session().tf2_paths()
     if 'error' in paths:
         return None
 
@@ -488,6 +489,29 @@ def icon_png(key: str) -> Optional[bytes]:
     if not mdl:
         return None
     return model_icons.model_png(mdl, paths['misc_vpk'], paths['textures_vpk'])
+
+
+#: Сколько иконок оружия прогрев готовит заранее: первый экран каталога и
+#: запас под ним
+FIRST_SCREEN_ICONS = 64
+
+
+def warm_icons(paths: dict, lang: str) -> None:
+    """Готовит иконки первого экрана каталога оружия, пока страница не
+    спросила: на новом ПК каждая - чтение из архива и декодирование VTF, а
+    пять оружий ещё и ждут разбора items_game"""
+    from src.shared.foreground import yield_to_page
+
+    seen = []
+    for item in _weapon_items(None, None, lang):
+        key = item.get('icon') or item['key']
+        if key not in seen:
+            seen.append(key)
+        if len(seen) >= FIRST_SCREEN_ICONS:
+            break
+    for key in seen:
+        yield_to_page()
+        icon_png(key, paths)
 
 
 #: Сколько иконок отдаём одним ответом. Страница просит по шестнадцать, предел

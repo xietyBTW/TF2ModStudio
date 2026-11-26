@@ -238,13 +238,51 @@
      Пока не тянул - поровну. В `fr`, а не в точках: пропорция должна
      пережить изменение размера окна */
   grid-template-columns: minmax(0, var(--split, 1fr)) minmax(0, 1fr);
-  gap: 30px;
+  --work-gap: 30px;
+  gap: var(--work-gap);
   min-width: 0;
   min-height: 0;
 }
-/* Курсор над зазором - единственное приглашение потянуть: рисовать там
-   полоску незачем, граница половин и так видна */
-.work.is-split { cursor: col-resize; }
+/* Ручка границы (split.js): одного курсора было мало, что зазор тянется,
+   никто не догадывался. Элемент на весь зазор, посередине короткая полоска,
+   под мышью - длиннее и цвета акцента. Наведение - `:hover`, а не расчёт по
+   координатам: из зазора мышь уходит прямо в кадр модели (iframe), и
+   страница не получала ни движения, ни ухода, полоска оставалась гореть.
+   Ручка стоит в ячейке модели, поэтому половинам нужны явные места: иначе
+   автораскладка обошла бы занятую ячейку */
+.work__grip { display: none; }
+@media (min-width: 1101px) {
+  :root:not([data-expanded="1"]) .work[data-view="both"] > .half--flat  { grid-area: 1 / 1; }
+  :root:not([data-expanded="1"]) .work[data-view="both"] > .half--model { grid-area: 1 / 2; }
+  :root:not([data-expanded="1"]) .work[data-view="both"] > .work__grip {
+    display: block;
+    grid-area: 1 / 2;
+    justify-self: start;
+    position: relative;
+    z-index: 1;
+    width: var(--work-gap);
+    margin-left: calc(var(--work-gap) * -1);
+    cursor: col-resize;
+    touch-action: none;
+  }
+}
+.work__grip::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--hairline-strong);
+  transform: translate(-50%, -50%);
+  transition: height var(--dur), background-color var(--dur);
+}
+.work__grip:hover::after,
+.work__grip.is-drag::after {
+  height: 56px;
+  background: var(--accent);
+}
 .work[data-view="flat"],
 .work[data-view="model"] { grid-template-columns: minmax(0, 1fr); }
 .work[data-view="flat"]  .half--model { display: none; }
